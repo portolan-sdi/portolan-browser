@@ -643,6 +643,11 @@ export default class StacMapLayer {
     this._clearLayers();
     this._removeCogLayers();
     this._removePmtilesLayers();
+    // We've just torn everything down, so the upcoming setAssets() must rebuild
+    // from scratch. Clear the idempotency signature it uses to skip unchanged
+    // asset sets — otherwise re-adding the same assets after a style change is a
+    // no-op and the tile/COG layers never come back (issue #13 regression).
+    this._assetsSig = null;
     if (stac) {this.setStac(stac);}
     if (children) {this.setChildren(children);}
     if (assets) {
