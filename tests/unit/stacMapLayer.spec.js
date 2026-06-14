@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import StacMapLayer from '../../src/components/maps/StacMapLayer.js'
+import StacMapLayer, { isGlobalBbox } from '../../src/components/maps/StacMapLayer.js'
 
 // Minimal fake of a MapLibre GL map that faithfully reproduces the behavior
 // that surfaced the bug: addSource/addLayer throw when the id already exists,
@@ -191,6 +191,71 @@ describe('StacMapLayer', () => {
       for (const id of layer._pmtilesLayerIds) {
         expect(map.layers.has(id)).toBe(true)
       }
+    })
+  })
+
+  describe('isGlobalBbox', () => {
+    it('is true for a full-world bbox', () => {
+      expect(isGlobalBbox([-180, -84, 180, 84])).toBe(true)
+    })
+
+    it('is true for a near-global bbox', () => {
+      // The FTW global grid: -180..180 lon, -60..84 lat
+      expect(isGlobalBbox([-180, -60, 180, 84])).toBe(true)
+    })
+
+    it('is false for a country-sized bbox', () => {
+      // Netherlands-ish
+      expect(isGlobalBbox([3.3, 50.7, 7.2, 53.6])).toBe(false)
+    })
+
+    it('is false for a continent that is not full-width', () => {
+      // Africa spans ~75° of longitude — wide, but not global.
+      expect(isGlobalBbox([-20, -35, 55, 38])).toBe(false)
+    })
+
+    it('is false for missing/short bboxes', () => {
+      expect(isGlobalBbox(null)).toBe(false)
+      expect(isGlobalBbox([0, 0, 1])).toBe(false)
+    })
+  })
+
+  describe('fit', () => {
+    function fitMap() {
+      const calls = { fitBounds: [], jumpTo: [] }
+      return {
+        calls,
+        getLayoutProperty: () => undefined,
+        setLayoutProperty: () => {},
+        // A deliberately far-north center, as web-mercator cameraForBounds
+        // returns for global bounds — fit() should not use this latitude.
+        cameraForBounds: () => ({ center: [0, 45], zoom: 1 }),
+        fitBounds: (bounds, opts) => calls.fitBounds.push({ bounds, opts }),
+        jumpTo: (opts) => calls.jumpTo.push(opts),
+      }
+    }
+    const stacWith = bbox => ({ getBoundingBox: () => bbox })
+
+    it('zooms a global dataset in 2 levels past the fit zoom', () => {
+      const m = fitMap()
+      const l = new StacMapLayer(m)
+      l.stac = stacWith([-180, -60, 180, 84])
+      l.fit()
+      expect(m.calls.jumpTo).toHaveLength(1)
+      expect(m.calls.jumpTo[0].zoom).toBe(3) // cameraForBounds zoom 1 + 2
+      // Centered on the geographic midpoint of the bbox, not the far-north
+      // mercator center: midLon 0, midLat (-60 + 84) / 2 = 12.
+      expect(m.calls.jumpTo[0].center).toEqual([0, 12])
+      expect(m.calls.fitBounds).toHaveLength(0)
+    })
+
+    it('uses plain fitBounds for a non-global dataset', () => {
+      const m = fitMap()
+      const l = new StacMapLayer(m)
+      l.stac = stacWith([3.3, 50.7, 7.2, 53.6])
+      l.fit()
+      expect(m.calls.fitBounds).toHaveLength(1)
+      expect(m.calls.jumpTo).toHaveLength(0)
     })
   })
 

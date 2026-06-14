@@ -61,6 +61,17 @@ function pickDisplayAsset(cogAssets) {
   return [...cogAssets].sort((a, b) => score(b) - score(a))[0];
 }
 
+// A near-global dataset spans most of the world's longitude. At the zoom that
+// fits such bounds the web-mercator map repeats horizontally and the full
+// latitude range fits the viewport, which locks vertical panning. We detect
+// this from the bbox alone (driven by longitude span) so fit() can start a
+// couple of zoom levels in instead.
+export function isGlobalBbox(bbox) {
+  if (!Array.isArray(bbox) || bbox.length < 4) {return false;}
+  const lonSpan = Math.abs(bbox[2] - bbox[0]);
+  return lonSpan >= 300;
+}
+
 function isCogAsset(asset) {
   const type = asset.type || '';
   return COG_MIME_TYPES.some(mt => type.includes(mt));
@@ -633,10 +644,27 @@ export default class StacMapLayer {
     if (!this.stac || !this.map) {return;}
     const bbox = this.stac.getBoundingBox();
     if (!bbox || bbox.length < 4) {return;}
-    this.map.fitBounds(
-      [[bbox[0], bbox[1]], [bbox[2], bbox[3]]],
-      { padding, maxZoom: 16 }
-    );
+    const bounds = [[bbox[0], bbox[1]], [bbox[2], bbox[3]]];
+
+    // For global/near-global data, fitBounds lands at z0–1 where the world
+    // repeats and vertical panning is locked. Start 2 levels in: compute the
+    // fit camera and jump there with a higher zoom.
+    if (isGlobalBbox(bbox) && typeof this.map.cameraForBounds === 'function') {
+      const cam = this.map.cameraForBounds(bounds, { padding });
+      if (cam && cam.center) {
+        // Center on the geographic midpoint of the bbox. cameraForBounds'
+        // own center sits far north because web-mercator stretches high
+        // latitudes, which leaves the view looking too northern.
+        const center = [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
+        this.map.jumpTo({
+          center,
+          zoom: Math.min((cam.zoom ?? 0) + 2, 16),
+        });
+        return;
+      }
+    }
+
+    this.map.fitBounds(bounds, { padding, maxZoom: 16 });
   }
 
   isEmpty() {
