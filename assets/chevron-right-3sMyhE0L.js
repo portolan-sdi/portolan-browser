@@ -1,2 +1,0 @@
-import{a5 as o,C as n,N as t,G as a}from"./index-BKpHzfeA.js";const r={viewBox:"0 0 16 16",width:"1.2em",height:"1.2em"};function l(i,e){return n(),t("svg",r,[...e[0]||(e[0]=[a("path",{fill:"currentColor","fill-rule":"evenodd",d:"M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8L4.646 2.354a.5.5 0 0 1 0-.708"},null,-1)])])}const c=o({name:"bi-chevron-right",render:l});export{c as _};
-//# sourceMappingURL=chevron-right-3sMyhE0L.js.map
