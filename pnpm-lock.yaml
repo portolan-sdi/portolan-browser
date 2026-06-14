@@ -23,6 +23,9 @@ importers:
       '@developmentseed/deck.gl-geotiff':
         specifier: ^0.7.0
         version: 0.7.0(1d221fb0e7382ba956bd17aecda839f2)
+      '@developmentseed/geotiff':
+        specifier: ^0.7.0
+        version: 0.7.0
       '@musement/iso-duration':
         specifier: ^1.0.0
         version: 1.0.0
