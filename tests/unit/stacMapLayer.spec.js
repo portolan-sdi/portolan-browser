@@ -62,6 +62,25 @@ function xyzVectorAsset() {
   }
 }
 
+// A Cloud-Optimized GeoTIFF asset. The deck.gl render path is guarded off when
+// the (fake) map has no addControl, so these exercise the list/visibility logic
+// without network or WebGL.
+function cogAsset(key, opts = {}) {
+  return {
+    type: 'image/tiff; application=geotiff; profile=cloud-optimized',
+    title: opts.title,
+    roles: opts.roles || ['data'],
+    bands: [],
+    getKey: () => key,
+    getAbsoluteUrl: () => `https://example.com/${key}.tif`,
+    href: `https://example.com/${key}.tif`,
+  }
+}
+
+function fakeStac(assets) {
+  return { getAssets: () => assets, toGeoJSON: () => null }
+}
+
 describe('StacMapLayer', () => {
   let map
   let layer
@@ -69,6 +88,71 @@ describe('StacMapLayer', () => {
   beforeEach(() => {
     map = createFakeMap()
     layer = new StacMapLayer(map)
+  })
+
+  describe('COG layer list', () => {
+    const cogOverlays = l =>
+      l.getAssetOverlays().filter(o => o.type === 'deckgl')
+    const cogIds = l => cogOverlays(l).map(o => o.id)
+    const visibleCogIds = l =>
+      cogOverlays(l).filter(o => o.visible).map(o => o.id)
+
+    it('lists every COG asset of the item, not just the active one', async () => {
+      const assets = ['a', 'b', 'c', 'd', 'e', 'f'].map(k => cogAsset(k))
+      layer.setStac(fakeStac(assets))
+      await layer.setAssets([assets[0]])
+      expect(cogIds(layer)).toEqual(['a', 'b', 'c', 'd', 'e', 'f'])
+    })
+
+    it('shows exactly one COG (the active one) on by default', async () => {
+      const assets = ['a', 'b', 'c'].map(k => cogAsset(k))
+      layer.setStac(fakeStac(assets))
+      await layer.setAssets([assets[1]])
+      expect(visibleCogIds(layer)).toEqual(['b'])
+    })
+
+    it('caps the list at 8 COGs', async () => {
+      const assets = Array.from({ length: 10 }, (_, i) => cogAsset(`c${i}`))
+      layer.setStac(fakeStac(assets))
+      await layer.setAssets([assets[0]])
+      expect(cogIds(layer)).toHaveLength(8)
+    })
+
+    it('setCogVisible toggles by id and allows multiple visible at once', async () => {
+      const assets = ['a', 'b', 'c'].map(k => cogAsset(k))
+      layer.setStac(fakeStac(assets))
+      await layer.setAssets([assets[0]])
+      layer.setCogVisible('b', true)
+      expect(visibleCogIds(layer)).toEqual(['a', 'b'])
+      layer.setCogVisible('a', false)
+      expect(visibleCogIds(layer)).toEqual(['b'])
+    })
+
+    it('show-on-map solos: re-selecting one asset turns the others off', async () => {
+      const assets = ['a', 'b', 'c'].map(k => cogAsset(k))
+      layer.setStac(fakeStac(assets))
+      await layer.setAssets([assets[0]])
+      layer.setCogVisible('b', true)
+      layer.setCogVisible('c', true)
+      await layer.setAssets([assets[1]])
+      expect(visibleCogIds(layer)).toEqual(['b'])
+    })
+
+    it('swaps a not-listed COG into the capped list, evicting the last entry', async () => {
+      const assets = Array.from({ length: 9 }, (_, i) => cogAsset(`c${i}`))
+      layer.setStac(fakeStac(assets))
+      await layer.setAssets([assets[0]])
+      expect(cogIds(layer)).toEqual([
+        'c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7',
+      ])
+
+      await layer.setAssets([assets[8]])
+      const ids = cogIds(layer)
+      expect(ids).toHaveLength(8)
+      expect(ids).toContain('c8')
+      expect(ids).not.toContain('c7')
+      expect(visibleCogIds(layer)).toEqual(['c8'])
+    })
   })
 
   describe('readdAfterStyleChange', () => {
