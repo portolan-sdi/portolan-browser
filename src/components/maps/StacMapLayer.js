@@ -1,6 +1,7 @@
 import { STACReference } from 'stac-js';
 import { PMTiles, SharedPromiseCache } from 'pmtiles';
 import { pmtilesProtocol } from './MapMixin.js';
+import { resolveRenders, makeRenderTileLoader } from '../../utils/renders.js';
 
 const sharedCache = new SharedPromiseCache(300);
 
@@ -31,6 +32,24 @@ const MVT_MIME_TYPES = [
 
 function assetHref(asset) {
   return asset.getAbsoluteUrl?.() || asset.href || '';
+}
+
+// Pick the cheapest COG asset to display. Prefers display-optimized assets:
+// the `visual`/`overview` role, Web Mercator (EPSG:3857 → no client reprojection),
+// and an 8-bit data type (cheap decode). Higher score wins; ties keep input order.
+function pickDisplayAsset(cogAssets) {
+  const score = (a) => {
+    let s = 0;
+    const roles = a.roles || [];
+    if (roles.includes('visual')) {s += 8;}
+    if (roles.includes('overview')) {s += 4;}
+    const code = a['proj:code'] || a.proj_code;
+    if (code === 'EPSG:3857') {s += 2;}
+    const dtype = (a.bands || [])[0]?.data_type;
+    if (dtype === 'uint8') {s += 1;}
+    return s;
+  };
+  return [...cogAssets].sort((a, b) => score(b) - score(a))[0];
 }
 
 // Normalize a PMTiles source URL for comparison. Strips the `pmtiles://`
@@ -93,6 +112,9 @@ export default class StacMapLayer {
     this.sourceIds = [];
     this._cogLayers = [];
     this._cogAssetMeta = [];
+    this._cogRenderOptions = [];
+    this._activeRenderId = null;
+    this._assetsSig = null;
     this._deckOverlay = null;
     this._pmtilesLayerIds = [];
     this._pmtilesSourceIds = [];
@@ -226,6 +248,13 @@ export default class StacMapLayer {
   }
 
   async setAssets(assets) {
+    // Idempotent: MapView calls this from both addStacLayer() and the `assets`
+    // watcher, which would otherwise tear down and recreate the deck overlay and
+    // abort in-flight COG tiles. Skip when the asset set is unchanged.
+    const sig = (assets || []).map(a => assetHref(a)).sort().join('|');
+    if (sig && sig === this._assetsSig) {return;}
+    this._assetsSig = sig;
+
     this.assets = assets;
     this._removeCogLayers();
     this._removePmtilesLayers();
@@ -394,34 +423,109 @@ export default class StacMapLayer {
 
     if (cogAssets.length === 0) {return;}
 
+    // STAC render extension: each render names a colormap/rescale + the asset(s) it
+    // applies to. We display the passed (selected) asset, preferring a display-
+    // optimized `visual` asset (8-bit, web-mercator -> small + no reprojection), and
+    // use renders only for the colormap. Picker options list the named renders.
+    const renders = resolveRenders(this.stac);
+    const options = Object.entries(renders).map(([id, render]) => ({ id, title: render.title || id, render }));
+
+    const display = pickDisplayAsset(cogAssets);
+    const chosen = this._resolveCogRender(display, renders);
+
+    this._cogRenderOptions = options;
+    this._activeRenderId = chosen.id;
+    await this._renderCog(chosen);
+  }
+
+  /**
+   * Resolve which render (colormap/rescale) to apply to a display asset. Uses a
+   * render that explicitly targets the asset; otherwise synthesises one from the
+   * item's first render, stretched to the asset's own band statistics so an 8-bit
+   * `visual` asset matches the colours of its full-resolution source.
+   */
+  _resolveCogRender(asset, renders) {
+    const key = asset.getKey();
+    const entries = Object.entries(renders);
+    const direct = entries.find(([, r]) => (r.assets || []).includes(key));
+    if (direct) {
+      return { id: direct[0], asset, render: direct[1], title: direct[1].title || direct[0] };
+    }
+    const first = entries[0]?.[1];
+    if (first) {
+      const band0 = (asset.bands || [])[0] || {};
+      const min = band0.statistics?.minimum ?? 0;
+      const max = band0.statistics?.maximum ?? 255;
+      // Drop both the source render's "empty" sentinel (e.g. 0) and the display
+      // asset's own physical no-data, so a rescaled 8-bit visual matches the
+      // full-res render (otherwise empty cells colour as the ramp's low end).
+      const nodata = [...new Set([first.nodata, band0.nodata].flat().filter(v => v != null))];
+      const render = {
+        colormap_name: first.colormap_name,
+        colormap: first.colormap,
+        rescale: [[min, max]],
+        nodata,
+        bidx: [1],
+      };
+      return { id: null, asset, render, title: asset.title || key };
+    }
+    return { id: null, asset, render: null, title: asset.title || key };
+  }
+
+  async _renderCog({ asset, render, title }) {
     try {
       const [{ MapboxOverlay }, { COGLayer }] = await Promise.all([
         import('@deck.gl/mapbox'),
         import('@developmentseed/deck.gl-geotiff'),
       ]);
 
-      this._cogAssetMeta = cogAssets.map((asset, i) => ({
-        title: asset.title || asset.key || `COG ${i + 1}`,
-      }));
-
-      const layers = cogAssets.map((asset, i) => {
-        const url = asset.getAbsoluteUrl?.() || asset.href;
-        return new COGLayer({
-          id: `stac-cog-${i}`,
-          geotiff: url,
-        });
-      });
+      const url = asset.getAbsoluteUrl?.() || asset.href;
+      const props = {
+        id: 'stac-cog',
+        geotiff: url,
+        opacity: 0.9,
+        // Drop ancestor/overview tiles once the current level loads, instead of
+        // leaving blurry coarse tiles layered under the data.
+        refinementStrategy: 'no-overlap',
+        maxCacheSize: 64,
+      };
+      if (render) {
+        const { getTileData, renderTile } = makeRenderTileLoader(render);
+        props.getTileData = getTileData;
+        props.renderTile = renderTile;
+      }
+      const layer = new COGLayer(props);
 
       if (this._deckOverlay) {
         this.map.removeControl(this._deckOverlay);
       }
-
-      this._deckOverlay = new MapboxOverlay({ layers });
+      this._deckOverlay = new MapboxOverlay({ interleaved: false, layers: [layer] });
       this.map.addControl(this._deckOverlay);
-      this._cogLayers = layers;
+      this._cogLayers = [layer];
+      this._cogAssetMeta = [{ title: title || asset.title || asset.getKey?.() || 'COG' }];
     } catch (err) {
-      console.warn('Failed to load COG layers via deck.gl', err);
+      console.warn('Failed to load COG layer via deck.gl', err);
     }
+  }
+
+  /** Render options (named STAC renders) available for the current COG assets. */
+  getCogRenderOptions() {
+    return (this._cogRenderOptions || []).map(o => ({
+      id: o.id, title: o.title, active: o.id === this._activeRenderId,
+    }));
+  }
+
+  /** Switch the active render (style picker): display the render's target asset. */
+  async setActiveRender(id) {
+    const opt = (this._cogRenderOptions || []).find(o => o.id === id);
+    if (!opt) {return;}
+    const all = typeof this.stac.getAssets === 'function' ? this.stac.getAssets() : [];
+    const byKey = new Map(all.map(a => [a.getKey(), a]));
+    const targetKey = (opt.render.assets || []).find(k => byKey.has(k));
+    const asset = targetKey ? byKey.get(targetKey) : (this._cogLayers[0] && null);
+    if (!asset) {return;}
+    this._activeRenderId = id;
+    await this._renderCog({ id, asset, render: opt.render, title: opt.title });
   }
 
   fit(padding = { top: 160, bottom: 50, left: 50, right: 50 }) {
@@ -617,6 +721,8 @@ export default class StacMapLayer {
     }
     this._cogLayers = [];
     this._cogAssetMeta = [];
+    this._cogRenderOptions = [];
+    this._activeRenderId = null;
   }
 
   _removePmtilesLayers() {
