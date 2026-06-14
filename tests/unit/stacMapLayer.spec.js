@@ -77,9 +77,50 @@ function cogAsset(key, opts = {}) {
   }
 }
 
-function fakeStac(assets) {
-  return { getAssets: () => assets, toGeoJSON: () => null }
+function fakeStac(assets, renders) {
+  return { getAssets: () => assets, toGeoJSON: () => null, renders }
 }
+
+// A COG asset that exposes only `.key` (no getKey()), as some stac-js asset
+// shapes do. Exercises the cogKey() fallback end-to-end.
+function cogAssetKeyOnly(key) {
+  return {
+    type: 'image/tiff; application=geotiff; profile=cloud-optimized',
+    roles: ['data'],
+    bands: [],
+    key,
+    getAbsoluteUrl: () => `https://example.com/${key}.tif`,
+    href: `https://example.com/${key}.tif`,
+  }
+}
+
+// A deck.gl backend test double + a map that accepts a deck overlay control, so
+// the COG render reconciliation (_syncCogLayers / _makeCogLayer / cache) can be
+// exercised without WebGL. Inject via `layer._loadDeckDeps`.
+function fakeDeckDeps() {
+  class FakeCOGLayer {
+    constructor(props) { this.props = props }
+  }
+  class FakeOverlay {
+    constructor(props) { this.props = props; this.setPropsCount = 0 }
+    setProps(props) { this.props = { ...this.props, ...props }; this.setPropsCount++ }
+  }
+  class FakeDecoderPool {
+    constructor(opts) { this.opts = opts }
+  }
+  return async () => ({ MapboxOverlay: FakeOverlay, COGLayer: FakeCOGLayer, DecoderPool: FakeDecoderPool })
+}
+
+function createDeckCapableMap() {
+  const map = createFakeMap()
+  map.controls = []
+  map.addControl = (c) => { map.controls.push(c) }
+  map.removeControl = (c) => { map.controls = map.controls.filter(x => x !== c) }
+  return map
+}
+
+const overlayLayerIds = layer =>
+  (layer._deckOverlay?.props.layers || []).map(l => l.props.id)
 
 describe('StacMapLayer', () => {
   let map
@@ -268,6 +309,87 @@ describe('StacMapLayer', () => {
 
       expect(map.sources.get('stac-tile-0').tiles).toEqual(['b'])
       expect(layer._pmtilesSourceIds).toEqual(['stac-tile-0'])
+    })
+  })
+
+  // Exercises the actual deck.gl reconciliation (_syncCogLayers / _makeCogLayer /
+  // cache) by injecting a deck backend test double — no WebGL needed.
+  describe('COG render reconciliation (deck path)', () => {
+    let dmap, dlayer
+    beforeEach(() => {
+      dmap = createDeckCapableMap()
+      dlayer = new StacMapLayer(dmap)
+      dlayer._loadDeckDeps = fakeDeckDeps()
+    })
+
+    it('renders only the active COG as a deck layer', async () => {
+      const assets = ['a', 'b', 'c'].map(k => cogAsset(k))
+      dlayer.setStac(fakeStac(assets))
+      await dlayer.setAssets([assets[1]])
+      expect(overlayLayerIds(dlayer)).toEqual(['stac-cog-b'])
+      expect(dmap.controls).toHaveLength(1)
+    })
+
+    it('reuses the cached COGLayer instance when toggling another COG on', async () => {
+      const assets = ['a', 'b'].map(k => cogAsset(k))
+      dlayer.setStac(fakeStac(assets))
+      await dlayer.setAssets([assets[0]])
+      const firstA = dlayer._cogLayerCache.get('a')
+      await dlayer.setCogVisible('b', true)
+      // 'a' must be the same instance — re-creating it would abort its tiles.
+      expect(dlayer._cogLayerCache.get('a')).toBe(firstA)
+      expect(overlayLayerIds(dlayer).sort()).toEqual(['stac-cog-a', 'stac-cog-b'])
+    })
+
+    it('prunes cached layers that drop off the list', async () => {
+      const assets = Array.from({ length: 9 }, (_, i) => cogAsset(`c${i}`))
+      dlayer.setStac(fakeStac(assets))
+      await dlayer.setAssets([assets[0]])
+      expect(dlayer._cogLayerCache.has('c0')).toBe(true)
+      // 8 actives (c1..c8) fill the cap, so c0 falls off the list entirely.
+      await dlayer.setAssets(assets.slice(1, 9))
+      expect(dlayer._cogLayerCache.has('c0')).toBe(false)
+      expect([...dlayer._cogLayerCache.keys()].sort())
+        .toEqual(['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8'])
+    })
+
+    it('removes the overlay when the last COG is hidden', async () => {
+      const assets = [cogAsset('a')]
+      dlayer.setStac(fakeStac(assets))
+      await dlayer.setAssets([assets[0]])
+      expect(dmap.controls).toHaveLength(1)
+      await dlayer.setCogVisible('a', false)
+      expect(dmap.controls).toHaveLength(0)
+      expect(dlayer._deckOverlay).toBeNull()
+    })
+
+    it('rebuilds COG layers after a style change re-adds the same assets', async () => {
+      const assets = [cogAsset('a')]
+      dlayer.setStac(fakeStac(assets))
+      await dlayer.setAssets([assets[0]])
+      expect(overlayLayerIds(dlayer)).toEqual(['stac-cog-a'])
+      // Basemap/style change tears everything down then re-adds identical assets.
+      dlayer.assets = assets
+      await dlayer.readdAfterStyleChange()
+      expect(overlayLayerIds(dlayer)).toEqual(['stac-cog-a'])
+    })
+
+    it('handles COG assets that expose only .key (no getKey)', async () => {
+      const assets = [cogAssetKeyOnly('k1'), cogAssetKeyOnly('k2')]
+      dlayer.setStac(fakeStac(assets))
+      await dlayer.setAssets([assets[0]])
+      expect(overlayLayerIds(dlayer)).toEqual(['stac-cog-k1'])
+    })
+
+    it('synthesizes a render from the first declared render for an untargeted asset', async () => {
+      const assets = [cogAsset('disp')]
+      const renders = {
+        alpha: { colormap_name: 'viridis', assets: ['other'] },
+        beta: { colormap_name: 'magma', assets: ['other'] },
+      }
+      dlayer.setStac(fakeStac(assets, renders))
+      await dlayer.setAssets([assets[0]])
+      expect(dlayer._cogList[0].render.colormap_name).toBe('viridis')
     })
   })
 })

@@ -42,12 +42,21 @@ export function resolveRenders(stac) {
   return renders && typeof renders === 'object' ? renders : {};
 }
 
+// A colormap is well-formed when every stop is [t:number, [r, g, b, ...]] with a
+// color array of at least three channels. Catalog-supplied colormaps are
+// untrusted, so a malformed one must fall back to a built-in rather than produce
+// NaN channels (which silently clamp to black).
+function isValidStops(stops) {
+  return Array.isArray(stops) && stops.length > 0 && stops.every(s =>
+    Array.isArray(s) && typeof s[0] === 'number' && Array.isArray(s[1]) && s[1].length >= 3
+    && s[1].slice(0, 3).every(c => typeof c === 'number'));
+}
+
 /** Build a 256x RGBA lookup table (Uint8ClampedArray) from a render definition. */
 function buildLut(render) {
   let stops = COLORMAPS[render.colormap_name];
   // Allow an explicit linear-gradient colormap: [[t,[r,g,b(,a)]], ...]
-  if (!stops && Array.isArray(render.colormap)
-      && Array.isArray(render.colormap[0]) && typeof render.colormap[0][0] === 'number') {
+  if (!stops && isValidStops(render.colormap)) {
     stops = render.colormap;
   }
   if (!stops) {stops = COLORMAPS.viridis;}
@@ -73,6 +82,16 @@ function buildLut(render) {
  * Build COGLayer `getTileData`/`renderTile` callbacks that colormap a single band
  * on the CPU into an ImageData, per a STAC render definition.
  */
+// The CPU colormap loop runs on the main thread (only tile *decode* is offloaded
+// to the decoder worker), so cap the per-tile pixel budget. Normal COG internal
+// tiles are 256–1024px square; anything past ~2048² (or an untiled/striped COG
+// returning a giant block) would freeze the UI or OOM the tab, so we skip it
+// (renders transparent) rather than trust the tile dimensions from the file.
+const MAX_TILE_PIXELS = 2048 * 2048;
+// A render's nodata list is untrusted; a real one has a handful of sentinels.
+// Cap it so a hostile/garbage array can't build a huge Set.
+const MAX_NODATA_VALUES = 256;
+
 export function makeRenderTileLoader(render) {
   const lut = buildLut(render);
   const [min, max] = (render.rescale && render.rescale[0]) || [0, 1];
@@ -80,16 +99,16 @@ export function makeRenderTileLoader(render) {
   const band = ((render.bidx && render.bidx[0]) || 1) - 1; // 1-based -> 0-based
   // nodata may be a single value or an array (e.g. a display asset that should
   // drop both "empty" (0) and its physical no-data sentinel).
-  const nodataSet = new Set((Array.isArray(render.nodata) ? render.nodata : [render.nodata]).filter(v => v != null));
+  const nodataSet = new Set(
+    (Array.isArray(render.nodata) ? render.nodata : [render.nodata])
+      .filter(v => v != null)
+      .slice(0, MAX_NODATA_VALUES));
 
   // deck.gl-geotiff 0.7 COGLayer callbacks. The default GPU pipeline only supports
   // unsigned-integer COGs, so for float (and to apply a colormap) we read the tile
   // ourselves and CPU-colormap a single band into an ImageData, returned via the
   // RenderTileResult `image` field (which accepts any TextureSource).
   const getTileData = async (image, { x, y, signal }) => {
-    // NB: do NOT pass the worker decoder `pool` — its web workers don't resolve
-    // in this build context, which hangs decode (bytes download but the tile
-    // never settles). Main-thread decode is reliable; COG tiles are small.
     const tile = await image.fetchTile(x, y, { boundless: false, signal });
     const arr = tile.array;
     const { data, width: w, height: h } = arr;
@@ -97,6 +116,14 @@ export function makeRenderTileLoader(render) {
       throw new Error('band-separate COGs are not supported by the render colormap loader');
     }
     const npix = w * h;
+    // Guard against degenerate or pathologically large tiles before allocating
+    // or looping (see MAX_TILE_PIXELS) — render nothing rather than freeze.
+    if (!(w > 0) || !(h > 0) || npix > MAX_TILE_PIXELS) {
+      if (npix > MAX_TILE_PIXELS) {
+        console.warn(`COG tile ${w}x${h} exceeds the colormap budget; skipping`);
+      }
+      return null;
+    }
     const stride = Math.max(1, Math.round(data.length / npix)); // samples per pixel (interleaved)
     const out = new Uint8ClampedArray(npix * 4);
     for (let i = 0; i < npix; i++) {
@@ -115,14 +142,4 @@ export function makeRenderTileLoader(render) {
 
   const renderTile = (data) => (data ? { image: data.colorImage } : null);
   return { getTileData, renderTile };
-}
-
-/**
- * Resolve which renders apply to a given asset key, in stable order.
- * Returns [{ id, render }] where render.assets includes assetKey.
- */
-export function rendersForAsset(renders, assetKey) {
-  return Object.entries(renders)
-    .filter(([, r]) => Array.isArray(r.assets) && r.assets.includes(assetKey))
-    .map(([id, render]) => ({ id, render }));
 }

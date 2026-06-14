@@ -2,16 +2,37 @@ import { STACReference } from 'stac-js';
 import { PMTiles, SharedPromiseCache } from 'pmtiles';
 import { pmtilesProtocol } from './MapMixin.js';
 import { resolveRenders, makeRenderTileLoader } from '../../utils/renders.js';
+// Import the @developmentseed/geotiff decode worker via Vite's `?worker` suffix
+// (not a side-effect `import`): the library declares `sideEffects: false`, so a
+// bare re-export gets tree-shaken to an empty worker in production builds. The
+// `?worker` form makes the library's worker module the bundle entry, preserving
+// its top-level `self.addEventListener` handler. Vite emits it as a separate
+// chunk loaded only when a Worker is constructed. See getDecoderPool / vite.config.
+import CogDecoderWorker from '@developmentseed/geotiff/pool/worker?worker';
 
 const sharedCache = new SharedPromiseCache(300);
 
-// A single worker-less DecoderPool, shared across COGLayers. Passing `{}` (no
-// `createWorker`) makes the library decode tiles on the main thread instead of
-// spawning a worker it can't load under Vite. See `_makeCogLayer`.
-let _mainThreadPool = null;
-function getMainThreadPool(DecoderPool) {
-  if (!_mainThreadPool) {_mainThreadPool = new DecoderPool({});}
-  return _mainThreadPool;
+// A single DecoderPool shared across COGLayers. We decode tiles off the main
+// thread via the bundled CogDecoderWorker so codec decompression doesn't block
+// the UI. The library's own `defaultDecoderPool()` can't be used because its
+// `new Worker(new URL('./worker.js', import.meta.url))` lives inside the dep and
+// Vite can't bundle it (the tiles then hang). If the Worker can't be constructed
+// (e.g. no `Worker` global, SSR, older browser) we fall back to a worker-less
+// pool that decodes on the main thread.
+const DECODER_POOL_SIZE = 4;
+let _decoderPool = null;
+function getDecoderPool(DecoderPool) {
+  if (_decoderPool) {return _decoderPool;}
+  try {
+    _decoderPool = new DecoderPool({
+      size: DECODER_POOL_SIZE,
+      createWorker: () => new CogDecoderWorker(),
+    });
+  } catch (err) {
+    console.warn('COG decoder worker unavailable; decoding on the main thread', err);
+    _decoderPool = new DecoderPool({});
+  }
+  return _decoderPool;
 }
 
 const STAC_SOURCE = 'stac-footprint';
@@ -145,8 +166,6 @@ export default class StacMapLayer {
     this.sourceIds = [];
     this._cogList = [];
     this._cogLayerCache = new Map();
-    this._cogRenderOptions = [];
-    this._activeRenderId = null;
     this._assetsSig = null;
     this._deckOverlay = null;
     this._pmtilesLayerIds = [];
@@ -286,11 +305,13 @@ export default class StacMapLayer {
     // abort in-flight COG tiles. Skip when the asset set is unchanged.
     const sig = (assets || []).map(a => assetHref(a)).sort().join('|');
     if (sig && sig === this._assetsSig) {return;}
-    this._assetsSig = sig;
 
     this.assets = assets;
+    // Teardown resets `_assetsSig` (see _removeCogLayers), so record the new
+    // signature *after* tearing down — otherwise the reset would clobber it.
     this._removeCogLayers();
     this._removePmtilesLayers();
+    this._assetsSig = sig;
 
     if (!assets || assets.length === 0) {return;}
 
@@ -466,14 +487,10 @@ export default class StacMapLayer {
     }
 
     // STAC render extension: each render names a colormap/rescale + the asset(s)
-    // it applies to. Renders are used only for the colormap; the picker lists
-    // named renders. `assets` carries the selection ("show on map"); when none
-    // is a COG we default to the display-optimized asset.
+    // it applies to. Renders are used only for the colormap. `assets` carries the
+    // selection ("show on map"); when none is a COG we default to the
+    // display-optimized asset.
     const renders = resolveRenders(this.stac);
-    this._cogRenderOptions = Object.entries(renders)
-      .map(([id, render]) => ({ id, title: render.title || id, render }));
-    this._activeRenderId = null;
-
     const activeCogs = (assets || []).filter(isCogAsset);
     const active = activeCogs.length ? activeCogs : [pickDisplayAsset(allCogs)];
 
@@ -516,9 +533,14 @@ export default class StacMapLayer {
    * render that explicitly targets the asset; otherwise synthesises one from the
    * item's first render, stretched to the asset's own band statistics so an 8-bit
    * `visual` asset matches the colours of its full-resolution source.
+   *
+   * "First render" means the first in the render extension's declaration order
+   * (`renders` is a JSON object whose key order is preserved through parsing).
+   * This is deterministic for a given document; multi-render items where no
+   * render targets the display asset fall back to that first declared render.
    */
   _resolveCogRender(asset, renders) {
-    const key = asset.getKey();
+    const key = cogKey(asset);
     const entries = Object.entries(renders);
     const direct = entries.find(([, r]) => (r.assets || []).includes(key));
     if (direct) {
@@ -545,13 +567,25 @@ export default class StacMapLayer {
     return { id: null, asset, render: null, title: asset.title || key };
   }
 
+  // Lazily load the deck.gl backend (overlay + COG layer + decoder pool). Split
+  // out as an overridable seam so unit tests can inject a test double and
+  // exercise the reconciliation below without WebGL.
+  async _loadDeckDeps() {
+    const [{ MapboxOverlay }, { COGLayer }, { DecoderPool }] = await Promise.all([
+      import('@deck.gl/mapbox'),
+      import('@developmentseed/deck.gl-geotiff'),
+      import('@developmentseed/geotiff'),
+    ]);
+    return { MapboxOverlay, COGLayer, DecoderPool };
+  }
+
   // Reconcile the deck.gl overlay with `_cogList`: one COGLayer per visible
   // descriptor, reusing cached instances so toggling one COG doesn't abort
   // another's in-flight tiles. Off descriptors stay in the picker but aren't
   // rendered (lazy), so listing 8 COGs only decodes the ones turned on.
   async _syncCogLayers() {
-    // No deck.gl/WebGL under unit tests (the fake map has no addControl); the
-    // `_cogList` state is what the layer picker reads, so skip rendering.
+    // A deck overlay needs a map that can host a control. Tests exercise the
+    // reconciliation by supplying such a map plus an injected `_loadDeckDeps`.
     if (!this.map || typeof this.map.addControl !== 'function') {return;}
 
     const visible = this._cogList.filter(d => d.visible);
@@ -565,11 +599,7 @@ export default class StacMapLayer {
     }
 
     try {
-      const [{ MapboxOverlay }, { COGLayer }, { DecoderPool }] = await Promise.all([
-        import('@deck.gl/mapbox'),
-        import('@developmentseed/deck.gl-geotiff'),
-        import('@developmentseed/geotiff'),
-      ]);
+      const { MapboxOverlay, COGLayer, DecoderPool } = await this._loadDeckDeps();
 
       // Drop cached layers no longer listed (e.g. evicted by the cap).
       const liveIds = new Set(this._cogList.map(d => d.id));
@@ -603,15 +633,20 @@ export default class StacMapLayer {
     const props = {
       id: `stac-cog-${descriptor.id}`,
       geotiff: url,
-      // Decode on the main thread. The library's default pool spawns a worker
-      // via `new Worker(new URL('./worker.js', import.meta.url))`, which Vite
-      // can't serve from a pre-bundled dep (404 -> tiles silently never decode).
-      pool: getMainThreadPool(DecoderPool),
+      // Off-main-thread codec decode via a first-party worker pool (see
+      // getDecoderPool). The CPU colormap loop in makeRenderTileLoader still runs
+      // on the main thread, so it stays bounded there (see renders.js).
+      pool: getDecoderPool(DecoderPool),
       opacity: 0.9,
-      // Drop ancestor/overview tiles once the current level loads, instead of
-      // leaving blurry coarse tiles layered under the data.
-      refinementStrategy: 'no-overlap',
-      maxCacheSize: 64,
+      // Keep the best-available coarser tiles visible until the finer level has
+      // decoded, rather than blanking the area while decode is in flight.
+      refinementStrategy: 'best-available',
+      // Bound tile-fetch concurrency per layer so a viewport change across
+      // several visible COGs doesn't flood the decoder pool.
+      maxRequests: 4,
+      // Bound cache by bytes, not tile count: a few large-tile COGs would blow a
+      // count-based budget. ~64 MB of decoded RGBA per layer.
+      maxCacheByteSize: 64 * 1024 * 1024,
     };
     if (render) {
       const { getTileData, renderTile } = makeRenderTileLoader(render);
@@ -619,25 +654,6 @@ export default class StacMapLayer {
       props.renderTile = renderTile;
     }
     return new COGLayer(props);
-  }
-
-  /** Render options (named STAC renders) available for the current COG assets. */
-  getCogRenderOptions() {
-    return (this._cogRenderOptions || []).map(o => ({
-      id: o.id, title: o.title, active: o.id === this._activeRenderId,
-    }));
-  }
-
-  /** Switch the active render (style picker): solo the render's target asset. */
-  async setActiveRender(id) {
-    const opt = (this._cogRenderOptions || []).find(o => o.id === id);
-    if (!opt) {return;}
-    const byKey = new Map(this._collectCogAssets().map(a => [cogKey(a), a]));
-    const targetKey = (opt.render.assets || []).find(k => byKey.has(k));
-    const asset = targetKey ? byKey.get(targetKey) : null;
-    if (!asset) {return;}
-    await this._addCogAssets([asset]);
-    this._activeRenderId = id;
   }
 
   fit(padding = { top: 160, bottom: 50, left: 50, right: 50 }) {
@@ -718,7 +734,7 @@ export default class StacMapLayer {
     const descriptor = this._cogList.find(d => d.id === id);
     if (!descriptor || descriptor.visible === visible) {return;}
     descriptor.visible = visible;
-    this._syncCogLayers();
+    return this._syncCogLayers();
   }
 
   setFootprintVisible(visible) {
@@ -754,14 +770,12 @@ export default class StacMapLayer {
     // first: the helpers iterate them to know what to remove, so clearing them
     // early leaks the sources and makes the re-add throw "source already
     // exists" (e.g. stac-tile-0 for PMTiles assets).
+    // _removeCogLayers() clears the setAssets idempotency signature, so the
+    // upcoming setAssets() rebuilds from scratch rather than no-opping on the
+    // unchanged asset set (which would leave layers gone — issue #13 regression).
     this._clearLayers();
     this._removeCogLayers();
     this._removePmtilesLayers();
-    // We've just torn everything down, so the upcoming setAssets() must rebuild
-    // from scratch. Clear the idempotency signature it uses to skip unchanged
-    // asset sets — otherwise re-adding the same assets after a style change is a
-    // no-op and the tile/COG layers never come back (issue #13 regression).
-    this._assetsSig = null;
     if (stac) {this.setStac(stac);}
     if (children) {this.setChildren(children);}
     if (assets) {
@@ -854,8 +868,10 @@ export default class StacMapLayer {
     }
     this._cogList = [];
     this._cogLayerCache.clear();
-    this._cogRenderOptions = [];
-    this._activeRenderId = null;
+    // Invalidate the setAssets idempotency signature here so every teardown path
+    // (setAssets, remove, readdAfterStyleChange) forces the next setAssets to
+    // rebuild. setAssets re-records the signature *after* calling this.
+    this._assetsSig = null;
   }
 
   _removePmtilesLayers() {
