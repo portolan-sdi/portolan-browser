@@ -5,6 +5,15 @@ import { resolveRenders, makeRenderTileLoader } from '../../utils/renders.js';
 
 const sharedCache = new SharedPromiseCache(300);
 
+// A single worker-less DecoderPool, shared across COGLayers. Passing `{}` (no
+// `createWorker`) makes the library decode tiles on the main thread instead of
+// spawning a worker it can't load under Vite. See `_renderCog`.
+let _mainThreadPool = null;
+function getMainThreadPool(DecoderPool) {
+  if (!_mainThreadPool) {_mainThreadPool = new DecoderPool({});}
+  return _mainThreadPool;
+}
+
 const STAC_SOURCE = 'stac-footprint';
 const STAC_FILL_LAYER = 'stac-footprint-fill';
 const STAC_LINE_LAYER = 'stac-footprint-line';
@@ -474,15 +483,20 @@ export default class StacMapLayer {
 
   async _renderCog({ asset, render, title }) {
     try {
-      const [{ MapboxOverlay }, { COGLayer }] = await Promise.all([
+      const [{ MapboxOverlay }, { COGLayer }, { DecoderPool }] = await Promise.all([
         import('@deck.gl/mapbox'),
         import('@developmentseed/deck.gl-geotiff'),
+        import('@developmentseed/geotiff'),
       ]);
 
       const url = asset.getAbsoluteUrl?.() || asset.href;
       const props = {
         id: 'stac-cog',
         geotiff: url,
+        // Decode on the main thread. The library's default pool spawns a worker
+        // via `new Worker(new URL('./worker.js', import.meta.url))`, which Vite
+        // can't serve from a pre-bundled dep (404 -> tiles silently never decode).
+        pool: getMainThreadPool(DecoderPool),
         opacity: 0.9,
         // Drop ancestor/overview tiles once the current level loads, instead of
         // leaving blurry coarse tiles layered under the data.
