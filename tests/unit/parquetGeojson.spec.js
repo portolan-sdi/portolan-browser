@@ -3,12 +3,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // Mock hyparquet so loadGeoJsonFromParquet can be exercised without network
 // or real parquet files. Kept in a separate spec file from parquet.spec.js,
 // which tests against the real (unmocked) module.
-vi.mock('hyparquet', () => ({
-  asyncBufferFromUrl: vi.fn(),
-  parquetMetadataAsync: vi.fn(),
-  parquetRead: vi.fn(),
-  parquetSchema: vi.fn(),
-}))
+vi.mock('hyparquet', () => {
+  const parquetRead = vi.fn()
+  return {
+    asyncBufferFromUrl: vi.fn(),
+    parquetMetadataAsync: vi.fn(),
+    parquetRead,
+    // Mirrors the real parquetReadObjects: a promise wrapper over parquetRead
+    // forcing object rows — so tests keep asserting on parquetRead's options.
+    parquetReadObjects: vi.fn(options => new Promise((resolve, reject) => {
+      parquetRead({ ...options, rowFormat: 'object', onComplete: resolve }).catch(reject)
+    })),
+    parquetSchema: vi.fn(),
+  }
+})
 vi.mock('hyparquet-compressors', () => ({ compressors: {} }))
 
 import { asyncBufferFromUrl, parquetMetadataAsync, parquetRead, parquetSchema } from 'hyparquet'
@@ -18,6 +26,7 @@ import {
   getBboxForRow,
   bboxFromGeoJson,
   MAX_MAP_FEATURES,
+  MAX_MAP_PARQUET_BYTES,
 } from '../../src/utils/parquet.js'
 
 const POLYGON = {
@@ -28,7 +37,7 @@ const POLYGON = {
 // Wires the hyparquet mocks so that loadParquetMetadata sees a GeoParquet
 // file with a `geometry` column, `numRows` rows, and (optionally) a CRS, and
 // parquetRead delivers `rows` in whatever format the caller asked for.
-function mockParquetFile({ numRows, rows = [], crs = null, geo = true, columns = ['geometry', 'name'] }) {
+function mockParquetFile({ numRows, rows = [], crs = null, geo = true, columns = ['geometry', 'name'], byteLength = 1000 }) {
   const geoMeta = {
     primary_column: 'geometry',
     columns: { geometry: crs ? { crs } : {} },
@@ -37,7 +46,7 @@ function mockParquetFile({ numRows, rows = [], crs = null, geo = true, columns =
     num_rows: BigInt(numRows),
     key_value_metadata: geo ? [{ key: 'geo', value: JSON.stringify(geoMeta) }] : [],
   }
-  asyncBufferFromUrl.mockResolvedValue({ byteLength: 1000 })
+  asyncBufferFromUrl.mockResolvedValue({ byteLength })
   parquetMetadataAsync.mockResolvedValue(metadata)
   parquetSchema.mockReturnValue({ children: columns.map(name => ({ element: { name } })) })
   parquetRead.mockImplementation(async (opts) => { opts.onComplete(rows) })
@@ -51,23 +60,46 @@ describe('loadGeoJsonFromParquet', () => {
   it('returns exceeded without reading data when over the cap', async () => {
     mockParquetFile({ numRows: MAX_MAP_FEATURES + 1 })
     const result = await loadGeoJsonFromParquet('https://example.com/big.parquet')
-    expect(result).toEqual({ exceeded: true, totalRows: MAX_MAP_FEATURES + 1 })
+    expect(result).toEqual({ exceeded: true, reason: 'tooLarge', totalRows: MAX_MAP_FEATURES + 1 })
     expect(parquetRead).not.toHaveBeenCalled()
   })
 
-  it('respects a custom maxFeatures option', async () => {
-    mockParquetFile({ numRows: 50 })
-    const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', { maxFeatures: 10 })
-    expect(result.exceeded).toBe(true)
+  it('rejects a file whose actual byte length is over the size cap without reading data', async () => {
+    // STAC metadata can lie or be absent; the loader checks the real
+    // byteLength (from the HEAD/range probe) before reading any data pages.
+    const byteLength = MAX_MAP_PARQUET_BYTES + 1
+    mockParquetFile({ numRows: 5, byteLength })
+    const result = await loadGeoJsonFromParquet('https://example.com/huge.parquet')
+    expect(result).toEqual({ exceeded: true, reason: 'tooBig', byteLength })
     expect(parquetRead).not.toHaveBeenCalled()
   })
 
-  it('builds a FeatureCollection with properties minus the geometry column', async () => {
+  it('bounds the read with rowEnd so a lying footer num_rows cannot cause an unbounded read', async () => {
+    mockParquetFile({
+      numRows: 1, // footer under-declares; the real row groups hold more
+      rows: [{ geometry: POLYGON, name: 'a' }],
+    })
+    await loadGeoJsonFromParquet('https://example.com/liar.parquet')
+    expect(parquetRead).toHaveBeenCalledWith(expect.objectContaining({ rowStart: 0, rowEnd: MAX_MAP_FEATURES + 1 }))
+  })
+
+  it('returns exceeded when the reader delivers more rows than the footer declared', async () => {
+    const rows = Array.from({ length: MAX_MAP_FEATURES + 1 }, (_, i) => ({ geometry: POLYGON, name: `f${i}` }))
+    mockParquetFile({ numRows: 1, rows })
+    const result = await loadGeoJsonFromParquet('https://example.com/liar.parquet')
+    expect(result).toEqual({ exceeded: true, reason: 'tooLarge', totalRows: MAX_MAP_FEATURES + 1 })
+  })
+
+  it('builds a FeatureCollection reading only the geometry column, with empty properties', async () => {
+    // Attribute columns are pruned from the read (nothing on the map uses
+    // them), so features carry intentionally empty properties. The BigInt
+    // sanitizing the property path used to need is gone with it: int64
+    // attribute columns are never read, so nothing BigInt can reach MapLibre.
     mockParquetFile({
       numRows: 2,
       rows: [
-        { geometry: POLYGON, name: 'a', acres: 1.5 },
-        { geometry: POLYGON, name: 'b', acres: 2.5 },
+        { geometry: POLYGON },
+        { geometry: POLYGON },
       ],
     })
     const result = await loadGeoJsonFromParquet('https://example.com/data.parquet')
@@ -78,33 +110,35 @@ describe('loadGeoJsonFromParquet', () => {
     expect(result.featureCollection.features[0]).toEqual({
       type: 'Feature',
       geometry: POLYGON,
-      properties: { name: 'a', acres: 1.5 },
+      properties: {},
     })
+    expect(parquetRead).toHaveBeenCalledWith(expect.objectContaining({
+      columns: ['geometry'],
+      rowFormat: 'object',
+    }))
   })
 
   it('skips rows with null geometry', async () => {
     mockParquetFile({
       numRows: 2,
       rows: [
-        { geometry: null, name: 'a' },
-        { geometry: POLYGON, name: 'b' },
+        { geometry: null },
+        { geometry: POLYGON },
       ],
     })
     const result = await loadGeoJsonFromParquet('https://example.com/data.parquet')
     expect(result.featureCollection.features).toHaveLength(1)
-    expect(result.featureCollection.features[0].properties.name).toBe('b')
+    expect(result.featureCollection.features[0].geometry).toEqual(POLYGON)
   })
 
-  it('sanitizes BigInt properties for MapLibre', async () => {
-    mockParquetFile({
-      numRows: 1,
-      rows: [{ geometry: POLYGON, id: 42n, huge: 2n ** 60n }],
-      columns: ['geometry', 'id', 'huge'],
+  it('forwards an AbortSignal to hyparquet fetches via requestInit', async () => {
+    mockParquetFile({ numRows: 1, rows: [{ geometry: POLYGON }] })
+    const controller = new AbortController()
+    await loadGeoJsonFromParquet('https://example.com/data.parquet', { signal: controller.signal })
+    expect(asyncBufferFromUrl).toHaveBeenCalledWith({
+      url: 'https://example.com/data.parquet',
+      requestInit: { signal: controller.signal },
     })
-    const result = await loadGeoJsonFromParquet('https://example.com/data.parquet')
-    const props = result.featureCollection.features[0].properties
-    expect(props.id).toBe(42)
-    expect(props.huge).toBe((2n ** 60n).toString())
   })
 
   it('throws when the geometry column was not decoded (raw WKB bytes)', async () => {
@@ -123,6 +157,27 @@ describe('loadGeoJsonFromParquet', () => {
     })
     await expect(loadGeoJsonFromParquet('https://example.com/data.parquet'))
       .rejects.toThrow(/EPSG:2249/)
+  })
+
+  it('rejects a declared PROJJSON CRS without a recognizable authority/code', async () => {
+    // Legal per GeoParquet (some writers omit `id`), but it cannot be assumed
+    // to be lon/lat — defaulting to EPSG:4326 would plot projected meters raw.
+    mockParquetFile({
+      numRows: 1,
+      rows: [{ geometry: POLYGON, name: 'a' }],
+      crs: { type: 'ProjectedCRS', name: 'NAD83 / Massachusetts Mainland' },
+    })
+    await expect(loadGeoJsonFromParquet('https://example.com/data.parquet'))
+      .rejects.toThrow(/NAD83 \/ Massachusetts Mainland/)
+  })
+
+  it('renders when the file declares no CRS at all (GeoParquet default OGC:CRS84)', async () => {
+    mockParquetFile({
+      numRows: 1,
+      rows: [{ geometry: POLYGON, name: 'a' }],
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/data.parquet')
+    expect(result.featureCollection.features).toHaveLength(1)
   })
 
   it('accepts the OGC:CRS84 CRS', async () => {
@@ -180,9 +235,25 @@ describe('bboxFromGeoJson', () => {
     expect(bboxFromGeoJson(multi)).toEqual([-1, -1, 2, 2])
   })
 
+  it('computes the bbox of a GeometryCollection recursively', () => {
+    const collection = {
+      type: 'GeometryCollection',
+      geometries: [
+        { type: 'Point', coordinates: [5, 10] },
+        { type: 'LineString', coordinates: [[-3, 0], [1, 12]] },
+        {
+          type: 'GeometryCollection',
+          geometries: [{ type: 'Point', coordinates: [7, -2] }],
+        },
+      ],
+    }
+    expect(bboxFromGeoJson(collection)).toEqual([-3, -2, 7, 12])
+  })
+
   it('returns null for missing or empty geometry', () => {
     expect(bboxFromGeoJson(null)).toBeNull()
     expect(bboxFromGeoJson({ type: 'Point' })).toBeNull()
     expect(bboxFromGeoJson({ type: 'MultiPolygon', coordinates: [] })).toBeNull()
+    expect(bboxFromGeoJson({ type: 'GeometryCollection', geometries: [] })).toBeNull()
   })
 })

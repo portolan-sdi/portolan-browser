@@ -1,4 +1,34 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+
+// The tile-path race tests need a PMTiles whose getHeader()/getMetadata() can
+// be gated on a promise, so the module is mocked with a minimal double.
+// `pmtilesTestHooks.header`/`.metadata` let individual tests take over those
+// calls; null hooks fall back to instant defaults. The Protocol double keeps
+// MapMixin's module-level `new Protocol()` + `addProtocol` happy.
+const pmtilesTestHooks = vi.hoisted(() => ({ header: null, metadata: null }))
+vi.mock('pmtiles', () => {
+  class PMTiles {
+    constructor(url) {
+      this.url = url
+      this.source = { getKey: () => url }
+    }
+    async getHeader() {
+      return pmtilesTestHooks.header ? pmtilesTestHooks.header(this.url) : { tileType: 1 }
+    }
+    async getMetadata() {
+      return pmtilesTestHooks.metadata ? pmtilesTestHooks.metadata(this.url) : {}
+    }
+  }
+  class SharedPromiseCache {}
+  class Protocol {
+    constructor() {
+      this.tile = () => {}
+    }
+    add() {}
+  }
+  return { PMTiles, SharedPromiseCache, Protocol }
+})
+
 import StacMapLayer, { isGlobalBbox } from '../../src/components/maps/StacMapLayer.js'
 
 // Minimal fake of a MapLibre GL map that faithfully reproduces the behavior
@@ -218,18 +248,18 @@ describe('StacMapLayer', () => {
         id.startsWith('stac-tile-')
       )
       expect(tileSources).toEqual(['stac-tile-0'])
-      expect(layer._pmtilesSourceIds).toEqual(['stac-tile-0'])
+      expect(layer._overlaySourceIds).toEqual(['stac-tile-0'])
     })
 
     it('preserves the rendered tile layers after a style change', async () => {
       await layer.setAssets([xyzVectorAsset()])
-      const before = layer._pmtilesLayerIds.length
+      const before = layer._overlayLayerIds.length
       expect(before).toBeGreaterThan(0)
 
       await layer.readdAfterStyleChange()
 
-      expect(layer._pmtilesLayerIds.length).toBe(before)
-      for (const id of layer._pmtilesLayerIds) {
+      expect(layer._overlayLayerIds.length).toBe(before)
+      for (const id of layer._overlayLayerIds) {
         expect(map.layers.has(id)).toBe(true)
       }
     })
@@ -300,15 +330,15 @@ describe('StacMapLayer', () => {
     })
   })
 
-  describe('_addPmtilesSource', () => {
+  describe('_addOverlaySource', () => {
     it('replaces an existing source instead of throwing', () => {
-      layer._addPmtilesSource('stac-tile-0', { type: 'vector', tiles: ['a'] })
+      layer._addOverlaySource('stac-tile-0', { type: 'vector', tiles: ['a'] })
       expect(() =>
-        layer._addPmtilesSource('stac-tile-0', { type: 'vector', tiles: ['b'] })
+        layer._addOverlaySource('stac-tile-0', { type: 'vector', tiles: ['b'] })
       ).not.toThrow()
 
       expect(map.sources.get('stac-tile-0').tiles).toEqual(['b'])
-      expect(layer._pmtilesSourceIds).toEqual(['stac-tile-0'])
+      expect(layer._overlaySourceIds).toEqual(['stac-tile-0'])
     })
   })
 
@@ -391,6 +421,40 @@ describe('StacMapLayer', () => {
       await dlayer.setAssets([assets[0]])
       expect(dlayer._cogList[0].render.colormap_name).toBe('viridis')
     })
+
+    it('a stale COG sync cannot repoint the overlay after a newer setAssets', async () => {
+      // Race from todo 008 (deck path): call A suspends inside _loadDeckDeps;
+      // call B tears A down and renders COG 'b'. A's continuation captured its
+      // own visible list before the await — without the epoch check it would
+      // setProps B's overlay back to 'a' and re-cache A's stale layer.
+      let release
+      let reached
+      const depsStarted = new Promise(resolve => { reached = resolve })
+      const gate = new Promise(resolve => { release = resolve })
+      const loadDeps = fakeDeckDeps()
+      let depsCalls = 0
+      dlayer._loadDeckDeps = async () => {
+        depsCalls++
+        if (depsCalls === 1) {
+          reached()
+          await gate
+        }
+        return loadDeps()
+      }
+      const assets = ['a', 'b'].map(k => cogAsset(k))
+      dlayer.setStac(fakeStac(assets))
+
+      const first = dlayer.setAssets([assets[0]])
+      await depsStarted // first run is now suspended loading the deck backend
+      const second = dlayer.setAssets([assets[1]])
+      await second
+      release()
+      await first
+
+      expect(overlayLayerIds(dlayer)).toEqual(['stac-cog-b'])
+      expect(dmap.controls).toHaveLength(1)
+      expect([...dlayer._cogLayerCache.keys()]).toEqual(['b'])
+    })
   })
 
   // Exercises the GeoParquet fallback (_addParquetAssets) by injecting a
@@ -418,21 +482,33 @@ describe('StacMapLayer', () => {
 
     function injectParquetDeps(l, impl) {
       const calls = []
-      l._loadParquetDeps = async () => ({
-        MAX_MAP_FEATURES: 10000,
-        loadGeoJsonFromParquet: async (url) => {
-          calls.push(url)
-          return impl(url)
-        },
-      })
+      // depsLoads counts _loadParquetDeps invocations: in production each one
+      // downloads the lazy hyparquet chunk, so the declared-metadata gates
+      // must reject without ever incrementing it.
+      const depsLoads = { count: 0 }
+      l._loadParquetDeps = async () => {
+        depsLoads.count++
+        return {
+          loadGeoJsonFromParquet: async (url) => {
+            calls.push(url)
+            return impl(url)
+          },
+        }
+      }
+      calls.depsLoads = depsLoads
       return calls
     }
 
+    // `notices` records every onVectorNotice call, including the `null`
+    // clear that setAssets fires at the start of every real run — so tests
+    // assert the full lifecycle, not just the set half. `lastNotice()` mirrors
+    // what MapView would currently display.
     let notices
+    const lastNotice = () => notices[notices.length - 1]
 
     beforeEach(() => {
       notices = []
-      layer = new StacMapLayer(map, { onParquetNotice: n => notices.push(n) })
+      layer = new StacMapLayer(map, { onVectorNotice: n => notices.push(n) })
     })
 
     it('renders a parquet asset as a geojson source with default layers', async () => {
@@ -440,13 +516,13 @@ describe('StacMapLayer', () => {
       await layer.setAssets([parquetAsset()])
 
       expect(map.sources.get('stac-parquet-0')).toEqual({ type: 'geojson', data: FEATURE_COLLECTION })
-      const layerIds = layer._pmtilesLayerIds
+      const layerIds = layer._overlayLayerIds
       expect(layerIds).toHaveLength(3)
       for (const id of layerIds) {
         expect(map.layers.get(id)['source-layer']).toBeUndefined()
         expect(map.layers.get(id).source).toBe('stac-parquet-0')
       }
-      expect(notices).toHaveLength(0)
+      expect(notices).toEqual([null])
     })
 
     it('lists the rendered parquet in the layer picker as a maplibre overlay', async () => {
@@ -456,6 +532,59 @@ describe('StacMapLayer', () => {
       const overlays = layer.getAssetOverlays()
       expect(overlays).toHaveLength(1)
       expect(overlays[0]).toMatchObject({ id: 'stac-parquet-0', title: 'Test parquet', type: 'maplibre', visible: true })
+    })
+
+    it('renders only the first passing asset when several parquet assets exist', async () => {
+      // First-passing-asset-wins cap: the data-role sort ranks the candidates
+      // and the first one through the gates renders; the rest are never
+      // downloaded (bounds the multi-asset worst case to one full download).
+      const calls = injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
+      await layer.setAssets([
+        parquetAsset({ href: 'https://example.com/no-role.parquet', roles: [] }),
+        parquetAsset({ href: 'https://example.com/data-role.parquet' }),
+      ])
+
+      // The data-role asset ranks first and wins; the other is not fetched.
+      expect([...calls]).toEqual(['https://example.com/data-role.parquet'])
+      expect(map.sources.has('stac-parquet-0')).toBe(true)
+      expect(map.sources.has('stac-parquet-1')).toBe(false)
+      expect(layer._overlayAssetMeta).toHaveLength(1)
+    })
+
+    it('falls through to the next asset when the best-ranked one fails', async () => {
+      const calls = injectParquetDeps(layer, (url) => {
+        if (url.includes('broken')) { throw new Error('boom') }
+        return { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        await layer.setAssets([
+          parquetAsset({ href: 'https://example.com/broken.parquet' }),
+          parquetAsset({ href: 'https://example.com/ok.parquet' }),
+        ])
+      } finally {
+        warn.mockRestore()
+      }
+
+      expect([...calls]).toEqual(['https://example.com/broken.parquet', 'https://example.com/ok.parquet'])
+      expect(map.sources.has('stac-parquet-1')).toBe(true)
+      // A later success suppresses the earlier failure's notice.
+      expect(lastNotice()).toBeNull()
+    })
+
+    it('refuses non-http(s) parquet hrefs without fetching', async () => {
+      const calls = injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        await layer.setAssets([parquetAsset({ href: 'data:application/octet-stream;base64,AAAA' })])
+      } finally {
+        warn.mockRestore()
+      }
+
+      expect(calls).toHaveLength(0)
+      expect(calls.depsLoads.count).toBe(0)
+      expect(map.sources.has('stac-parquet-0')).toBe(false)
+      expect(notices).toEqual([null, { format: 'geoparquet', reason: 'error' }])
     })
 
     it('never touches parquet when a tile asset is present', async () => {
@@ -472,24 +601,36 @@ describe('StacMapLayer', () => {
       await layer.setAssets([parquetAsset({ 'geoparquet:feature_count': 20000 })])
 
       expect(calls).toHaveLength(0)
+      expect(calls.depsLoads.count).toBe(0)
       expect(map.sources.has('stac-parquet-0')).toBe(false)
-      expect(notices).toEqual([{ reason: 'tooLarge', totalRows: 20000, max: 10000 }])
+      expect(notices).toEqual([null, { format: 'geoparquet', reason: 'tooLarge', totalRows: 20000, max: 10000 }])
     })
 
     it('skips loading when the declared file size is over the byte guard', async () => {
+      const declared = 200 * 1024 * 1024
       const calls = injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
-      await layer.setAssets([parquetAsset({ 'file:size': 200 * 1024 * 1024 })])
+      await layer.setAssets([parquetAsset({ 'file:size': declared })])
 
       expect(calls).toHaveLength(0)
-      expect(notices).toEqual([{ reason: 'tooLarge', totalRows: null, max: 10000 }])
+      expect(calls.depsLoads.count).toBe(0)
+      expect(notices).toEqual([null, { format: 'geoparquet', reason: 'tooBig', byteLength: declared, maxBytes: 50 * 1024 * 1024 }])
     })
 
     it('notifies when the parquet footer row count exceeds the cap', async () => {
-      injectParquetDeps(layer, () => ({ exceeded: true, totalRows: 123456 }))
+      injectParquetDeps(layer, () => ({ exceeded: true, reason: 'tooLarge', totalRows: 123456 }))
       await layer.setAssets([parquetAsset()])
 
       expect(map.sources.has('stac-parquet-0')).toBe(false)
-      expect(notices).toEqual([{ reason: 'tooLarge', totalRows: 123456, max: 10000 }])
+      expect(notices).toEqual([null, { format: 'geoparquet', reason: 'tooLarge', totalRows: 123456, max: 10000 }])
+    })
+
+    it('notifies with tooBig when the loader rejects on actual byte length', async () => {
+      const byteLength = 90 * 1024 * 1024
+      injectParquetDeps(layer, () => ({ exceeded: true, reason: 'tooBig', byteLength }))
+      await layer.setAssets([parquetAsset()])
+
+      expect(map.sources.has('stac-parquet-0')).toBe(false)
+      expect(notices).toEqual([null, { format: 'geoparquet', reason: 'tooBig', byteLength, maxBytes: 50 * 1024 * 1024 }])
     })
 
     it('notifies with an error and does not crash when loading fails', async () => {
@@ -497,19 +638,82 @@ describe('StacMapLayer', () => {
       await expect(layer.setAssets([parquetAsset()])).resolves.not.toThrow()
 
       expect(map.sources.has('stac-parquet-0')).toBe(false)
-      expect(notices).toEqual([{ reason: 'error' }])
+      expect(notices).toEqual([null, { format: 'geoparquet', reason: 'error' }])
     })
 
     it('survives a basemap change without duplicating the source', async () => {
       injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
       await layer.setAssets([parquetAsset()])
-      const before = layer._pmtilesLayerIds.length
+      const before = layer._overlayLayerIds.length
 
       await expect(layer.readdAfterStyleChange()).resolves.not.toThrow()
 
       const parquetSources = [...map.sources.keys()].filter(id => id.startsWith('stac-parquet-'))
       expect(parquetSources).toEqual(['stac-parquet-0'])
-      expect(layer._pmtilesLayerIds.length).toBe(before)
+      expect(layer._overlayLayerIds.length).toBe(before)
+    })
+
+    it('re-renders from the instance cache instead of re-downloading on a basemap switch', async () => {
+      // readdAfterStyleChange clears the setAssets signature so the asset set
+      // is rebuilt — but the rebuild must come from the instance result
+      // cache, not a second full download/decode of the file.
+      const calls = injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
+      await layer.setAssets([parquetAsset()])
+      await layer.readdAfterStyleChange()
+
+      expect(calls).toHaveLength(1)
+      expect(calls.depsLoads.count).toBe(1)
+      expect(map.sources.get('stac-parquet-0')).toEqual({ type: 'geojson', data: FEATURE_COLLECTION })
+      expect(layer._overlayLayerIds).toHaveLength(3)
+    })
+
+    it('caches over-cap results per URL and re-emits the notice without re-downloading', async () => {
+      // Over-cap is deterministic for a given URL, so it is cached too. A
+      // repeat run (no signature guard: the failed run never recorded one)
+      // hits the cache and still surfaces the notice.
+      const calls = injectParquetDeps(layer, () => ({ exceeded: true, reason: 'tooLarge', totalRows: 123456 }))
+      await layer.setAssets([parquetAsset()])
+      await layer.setAssets([parquetAsset()])
+
+      expect(calls).toHaveLength(1)
+      expect(map.sources.has('stac-parquet-0')).toBe(false)
+      expect(lastNotice()).toEqual({ format: 'geoparquet', reason: 'tooLarge', totalRows: 123456, max: 10000 })
+    })
+
+    it('aborts the in-flight download when a newer setAssets supersedes it, without an error notice', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        let reached
+        const loadStarted = new Promise(resolve => { reached = resolve })
+        const signals = []
+        layer._loadParquetDeps = async () => ({
+          loadGeoJsonFromParquet: (url, { signal } = {}) => new Promise((resolve, reject) => {
+            signals.push(signal)
+            if (url.includes('slow')) {
+              reached()
+              // Simulate fetch: reject with AbortError when the signal fires.
+              signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+              return
+            }
+            resolve({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 })
+          }),
+        })
+
+        const first = layer.setAssets([parquetAsset({ href: 'https://example.com/slow.parquet' })])
+        await loadStarted // call A is suspended inside its download
+        const second = layer.setAssets([parquetAsset({ href: 'https://example.com/fast.parquet' })])
+        await Promise.all([first, second])
+
+        // The teardown in the second call aborted the first call's download.
+        expect(signals[0].aborted).toBe(true)
+        // The aborted run bails silently — no error notice, no console.warn —
+        // and the newer run's source is on the map.
+        expect(notices.filter(n => n?.reason === 'error')).toHaveLength(0)
+        expect(warn).not.toHaveBeenCalled()
+        expect(map.sources.has('stac-parquet-0')).toBe(true)
+      } finally {
+        warn.mockRestore()
+      }
     })
 
     it('does not duplicate meta/layers when two setAssets calls race across the load', async () => {
@@ -518,7 +722,6 @@ describe('StacMapLayer', () => {
       let release
       const gate = new Promise(resolve => { release = resolve })
       layer._loadParquetDeps = async () => ({
-        MAX_MAP_FEATURES: 10000,
         loadGeoJsonFromParquet: async (url) => {
           if (url.includes('slow')) { await gate }
           return { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
@@ -531,8 +734,81 @@ describe('StacMapLayer', () => {
       release()
       await first
 
-      expect(layer._pmtilesAssetMeta).toHaveLength(1)
-      expect(layer._pmtilesLayerIds).toHaveLength(3)
+      expect(layer._overlayAssetMeta).toHaveLength(1)
+      expect(layer._overlayLayerIds).toHaveLength(3)
+    })
+
+    it('a superseded run never reaches the COG stage after its parquet load resolves', async () => {
+      // Race from todo 002: autoload starts a slow parquet download (call A);
+      // the user picks a COG (call B). A's parquet stage bails on the stale
+      // epoch — the setAssets tail must bail too, or A rebuilds the COG list
+      // from its stale asset set and silently reverts B's selection back to
+      // the default COG.
+      const dmap = createDeckCapableMap()
+      const dlayer = new StacMapLayer(dmap)
+      dlayer._loadDeckDeps = fakeDeckDeps()
+
+      let release
+      let reached
+      const loadStarted = new Promise(resolve => { reached = resolve })
+      const gate = new Promise(resolve => { release = resolve })
+      dlayer._loadParquetDeps = async () => ({
+        loadGeoJsonFromParquet: async () => {
+          reached()
+          await gate
+          return { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
+        },
+      })
+
+      const parquet = parquetAsset()
+      const cogs = ['a', 'b'].map(k => cogAsset(k))
+      dlayer.setStac(fakeStac([parquet, ...cogs]))
+
+      const first = dlayer.setAssets([parquet])
+      await loadStarted // call A is now suspended inside the parquet download
+      const second = dlayer.setAssets([cogs[1]]) // the user picks COG 'b'
+      await second
+      release()
+      await first
+
+      // The newer call's selection survives — not the default pick ('a') that
+      // A's stale tail would have rebuilt from its parquet-only asset list.
+      expect(dlayer._cogList.filter(d => d.visible).map(d => d.id)).toEqual(['b'])
+      expect(overlayLayerIds(dlayer)).toEqual(['stac-cog-b'])
+      // And A's parquet result was not grafted onto B's state either.
+      expect(dlayer._overlayAssetMeta).toHaveLength(0)
+    })
+
+    it('retries an identical asset set after a failed load instead of no-oping', async () => {
+      // A transient failure (e.g. a 503 on the download) must not cache the
+      // asset signature as success — the next identical call has to retry.
+      let fail = true
+      const calls = injectParquetDeps(layer, () => {
+        if (fail) { throw new Error('503') }
+        return { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
+      })
+
+      await layer.setAssets([parquetAsset()])
+      expect(map.sources.has('stac-parquet-0')).toBe(false)
+      expect(notices).toEqual([null, { format: 'geoparquet', reason: 'error' }])
+
+      fail = false
+      await layer.setAssets([parquetAsset()])
+      expect(calls).toHaveLength(2)
+      expect(map.sources.has('stac-parquet-0')).toBe(true)
+      // The retry is a new run: its clear-at-start removes the prior error
+      // notice, and the successful load never re-emits one.
+      expect(lastNotice()).toBeNull()
+    })
+
+    it('still no-ops an identical repeat call after a successful load', async () => {
+      const calls = injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
+
+      await layer.setAssets([parquetAsset()])
+      await layer.setAssets([parquetAsset()])
+
+      expect(calls).toHaveLength(1)
+      expect(layer._overlayLayerIds).toHaveLength(3)
     })
 
     it('autoLoadVisualAssets falls back to parquet only when no tile asset exists', async () => {
@@ -548,6 +824,141 @@ describe('StacMapLayer', () => {
       await layer2.autoLoadVisualAssets(layer2.stac)
       expect(calls).toHaveLength(0)
       expect(map2.sources.has('stac-tile-0')).toBe(true)
+    })
+
+    it('clears a prior notice when a later run renders tiles', async () => {
+      // Repro from todo 003: parquet over cap shows a banner, then the user
+      // selects a tile asset — the banner must not outlive the parquet state.
+      injectParquetDeps(layer, () => ({ exceeded: true, reason: 'tooLarge', totalRows: 123456 }))
+      await layer.setAssets([parquetAsset()])
+      expect(lastNotice()).toEqual({ format: 'geoparquet', reason: 'tooLarge', totalRows: 123456, max: 10000 })
+
+      await layer.setAssets([xyzVectorAsset()])
+
+      expect(map.sources.has('stac-tile-0')).toBe(true)
+      expect(lastNotice()).toBeNull()
+    })
+
+    it('a stale run cannot set a notice over a newer successful run', async () => {
+      // Call A suspends inside the parquet download and eventually fails;
+      // call B supersedes it and renders. A's failure notice must not fire on
+      // the stale epoch, and each run's clear-at-start happens synchronously
+      // (current-epoch by construction), so B's state is left untouched.
+      let release
+      let reached
+      const loadStarted = new Promise(resolve => { reached = resolve })
+      const gate = new Promise(resolve => { release = resolve })
+      layer._loadParquetDeps = async () => ({
+        loadGeoJsonFromParquet: async (url) => {
+          if (url.includes('slow')) {
+            reached()
+            await gate
+            throw new Error('503 after supersession')
+          }
+          return { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
+        },
+      })
+
+      const first = layer.setAssets([parquetAsset({ href: 'https://example.com/slow.parquet' })])
+      await loadStarted // call A is suspended inside its parquet download
+      const second = layer.setAssets([parquetAsset({ href: 'https://example.com/fast.parquet' })])
+      await second
+      release()
+      await first
+
+      // One synchronous clear per run, and no error notice from stale A.
+      expect(notices).toEqual([null, null])
+      expect(map.sources.has('stac-parquet-0')).toBe(true)
+    })
+
+    describe('applyGlStyle with a parquet-backed geojson source', () => {
+      // A style whose vector source would positionally match any loaded
+      // overlay source; its layer carries `source-layer`, which MapLibre
+      // rejects on a geojson source.
+      const pmtilesStyle = () => ({
+        version: 8,
+        sources: { data: { type: 'vector', url: 'pmtiles://https://example.com/tiles.pmtiles' } },
+        layers: [{ id: 'styled-fill', type: 'fill', source: 'data', 'source-layer': 'parks', paint: {} }],
+      })
+
+      it('keeps the parquet default layers and does not bind style layers to the geojson source', async () => {
+        injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
+        await layer.setAssets([parquetAsset()])
+        const defaultLayerIds = [...layer._overlayLayerIds]
+        expect(defaultLayerIds).toHaveLength(3)
+
+        layer.applyGlStyle(pmtilesStyle())
+
+        expect(layer._overlayLayerIds).toEqual(defaultLayerIds)
+        for (const id of defaultLayerIds) {
+          expect(map.layers.has(id)).toBe(true)
+          expect(map.layers.get(id).source).toBe('stac-parquet-0')
+        }
+        // The style layer was not positionally bound to the geojson source.
+        expect(map.layers.has('styled-fill')).toBe(false)
+      })
+
+      it('still maps style sources positionally onto tile-backed sources', async () => {
+        await layer.setAssets([xyzVectorAsset()])
+
+        layer.applyGlStyle(pmtilesStyle())
+
+        expect(map.layers.has('styled-fill')).toBe(true)
+        expect(map.layers.get('styled-fill').source).toBe('stac-tile-0')
+        // The default layers were replaced by the style's own layers.
+        expect(layer._overlayLayerIds).toEqual(['styled-fill'])
+      })
+    })
+  })
+
+  // Exercises the epoch guard in the tile path (_addTileAssets and helpers) by
+  // gating the mocked pm.getHeader() on a promise — the same interleaving the
+  // parquet race test pins, but across the PMTiles awaits (todo 008).
+  describe('tile path epoch race', () => {
+    beforeEach(() => {
+      pmtilesTestHooks.header = null
+      pmtilesTestHooks.metadata = null
+    })
+
+    it('a stale PMTiles continuation cannot replace the newer call\'s source and layers', async () => {
+      let release
+      let reached
+      const headerStarted = new Promise(resolve => { reached = resolve })
+      const gate = new Promise(resolve => { release = resolve })
+      pmtilesTestHooks.header = async (url) => {
+        if (url.includes('slow')) {
+          reached()
+          await gate
+        }
+        return { tileType: 1 }
+      }
+      pmtilesTestHooks.metadata = async () => ({ vector_layers: [{ id: 'roads' }] })
+
+      const slowPmtiles = {
+        href: 'https://example.com/slow.pmtiles',
+        type: 'application/vnd.pmtiles',
+        title: 'Slow PMTiles',
+      }
+      const first = layer.setAssets([slowPmtiles])
+      await headerStarted // call A is now suspended inside pm.getHeader()
+      const second = layer.setAssets([xyzVectorAsset()])
+      await second
+      release()
+      await first
+
+      // The newer call's state wins: its meta entry, its XYZ source spec (not
+      // a stale pmtiles:// re-add), and exactly its three default layers —
+      // no duplicates pushed by A's continuation.
+      expect(layer._overlayAssetMeta).toHaveLength(1)
+      expect(layer._overlayAssetMeta[0].title).toBe('Test tiles')
+      const tileSources = [...map.sources.keys()].filter(id => id.startsWith('stac-tile-'))
+      expect(tileSources).toEqual(['stac-tile-0'])
+      expect(map.sources.get('stac-tile-0').tiles).toEqual(['https://example.com/tiles/{z}/{x}/{y}.pbf'])
+      expect(layer._overlayLayerIds).toEqual([
+        'stac-tile-0-default-fill',
+        'stac-tile-0-default-line',
+        'stac-tile-0-default-point',
+      ])
     })
   })
 })

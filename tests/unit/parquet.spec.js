@@ -11,12 +11,22 @@ describe('parquet utilities', () => {
       expect(isParquetAsset({ type: 'application/x-parquet' })).toBe(true)
     })
 
+    it('returns true for a parameterized media type (substring match, like sibling predicates)', () => {
+      expect(isParquetAsset({ type: 'application/vnd.apache.parquet; charset=binary' })).toBe(true)
+    })
+
+    it('falls back to the href for untyped .parquet assets', () => {
+      expect(isParquetAsset({ href: 'https://example.com/data.parquet' })).toBe(true)
+      expect(isParquetAsset({ getAbsoluteUrl: () => 'https://example.com/data.parquet' })).toBe(true)
+      expect(isParquetAsset({ href: 'https://example.com/data.gpkg' })).toBe(false)
+    })
+
     it('returns false for other types', () => {
       expect(isParquetAsset({ type: 'application/json' })).toBe(false)
       expect(isParquetAsset({ type: 'image/tiff' })).toBe(false)
     })
 
-    it('returns false for missing type', () => {
+    it('returns false for missing type and href', () => {
       expect(isParquetAsset({})).toBe(false)
     })
   })

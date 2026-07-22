@@ -11,7 +11,7 @@
       />
       <TextControl v-if="empty" :text="$t('mapping.nodata')" />
       <TextControl v-else-if="!hasBasemap" :text="$t('mapping.nobasemap')" />
-      <TextControl v-else-if="parquetNoticeText" :text="parquetNoticeText" />
+      <TextControl v-else-if="vectorNoticeText" :text="vectorNoticeText" />
     </div>
     <div ref="target" class="popover-target" />
     <b-popover
@@ -40,6 +40,7 @@ import TerrainControl from './maps/TerrainControl.vue';
 import StylePicker from './maps/StylePicker.vue';
 import StacMapLayer from './maps/StacMapLayer.js';
 import { resolveStyles, loadStyleJson, extractLegend } from '../utils/portolanStyles.js';
+import { VECTOR_NOTICE_TOO_BIG, VECTOR_NOTICE_TOO_LARGE } from '../utils/parquetShared.js';
 import { mapGetters } from 'vuex';
 import proj4 from 'proj4';
 
@@ -97,7 +98,7 @@ export default {
       availableStyles: [],
       activeStyleIndex: 0,
       activeLegend: [],
-      parquetNotice: null,
+      vectorNotice: null,
     };
   },
   computed: {
@@ -108,15 +109,22 @@ export default {
       }
       return '#stac-browser';
     },
-    parquetNoticeText() {
-      if (!this.parquetNotice) {return null;}
-      if (this.parquetNotice.reason === 'tooLarge') {
-        return this.$t('mapping.parquet.tooLarge', {
-          count: this.parquetNotice.totalRows ?? '?',
-          max: this.parquetNotice.max,
+    vectorNoticeText() {
+      if (!this.vectorNotice) {return null;}
+      if (this.vectorNotice.reason === VECTOR_NOTICE_TOO_LARGE) {
+        return this.$t('mapping.vectorFallback.tooLarge', {
+          count: this.vectorNotice.totalRows.toLocaleString(),
+          max: this.vectorNotice.max.toLocaleString(),
         });
       }
-      return this.$t('mapping.parquet.loadError');
+      if (this.vectorNotice.reason === VECTOR_NOTICE_TOO_BIG) {
+        const toMb = bytes => (bytes / (1024 * 1024)).toLocaleString(undefined, { maximumFractionDigits: 1 });
+        return this.$t('mapping.vectorFallback.tooBig', {
+          size: toMb(this.vectorNotice.byteLength),
+          maxSize: toMb(this.vectorNotice.maxBytes),
+        });
+      }
+      return this.$t('mapping.vectorFallback.loadError');
     },
   },
   watch: {
@@ -168,7 +176,7 @@ export default {
         this.availableStyles = [];
         this.activeStyleIndex = 0;
         this.activeLegend = [];
-        this.parquetNotice = null;
+        this.vectorNotice = null;
         if (this.stacLayer) {
           this.stacLayer.remove();
           this.stacLayer = null;
@@ -194,7 +202,7 @@ export default {
     async addStacLayer() {
       this.stacLayer = markRaw(new StacMapLayer(this.map, {
         ...this.stacLayerOptions,
-        onParquetNotice: (notice) => { this.parquetNotice = notice; },
+        onVectorNotice: (notice) => { this.vectorNotice = notice; },
       }));
 
       this.stacLayer.setStac(this.stac);
@@ -203,18 +211,25 @@ export default {
         this.stacLayer.setChildren(this.children);
       }
 
+      if (this.hideFootprint) {
+        this.stacLayer.setFootprintVisible(false);
+      }
+
+      // Fit before awaiting the asset load: fit() only reads the STAC
+      // bounding box, which setStac made available synchronously above, so
+      // the map zooms to the footprint immediately instead of sitting at
+      // world view for the whole download (e.g. a multi-MB GeoParquet).
+      this.stacLayer.fit();
+
       if (this.assets && this.assets.length > 0) {
         await this.stacLayer.setAssets(this.assets);
       } else {
         await this.stacLayer.autoLoadVisualAssets(this.stac);
       }
 
-      if (this.hideFootprint) {
-        this.stacLayer.setFootprintVisible(false);
-      }
-
+      // isEmpty() reads asset-backed state (_cogList, _overlayLayerIds), so
+      // it must wait for the load above.
       this.empty = this.stacLayer.isEmpty();
-      this.stacLayer.fit();
 
       this.$emit('changed', this.getShownData());
 

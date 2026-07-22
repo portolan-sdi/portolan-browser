@@ -74,7 +74,10 @@ export default {
           this.enable3D();
         }
         if (typeof this.onBasemapChanged === 'function') {
-          this.onBasemapChanged();
+          // Fire-and-forget by design, but readdAfterStyleChange can reject
+          // (e.g. applyGlStyle's map.addLayer) — surface it instead of an
+          // unhandled rejection.
+          Promise.resolve(this.onBasemapChanged()).catch(console.warn);
         }
       });
       this.map.setStyle(style);
@@ -117,7 +120,8 @@ export default {
       }
 
       if (typeof this.onBasemapChanged === 'function') {
-        this.onBasemapChanged();
+        // See _loadBasemapAsync: catch instead of an unhandled rejection.
+        Promise.resolve(this.onBasemapChanged()).catch(console.warn);
       }
     },
 

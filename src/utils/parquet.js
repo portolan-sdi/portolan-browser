@@ -1,22 +1,32 @@
-import { asyncBufferFromUrl, parquetMetadataAsync, parquetRead, parquetSchema } from 'hyparquet';
+import { asyncBufferFromUrl, parquetMetadataAsync, parquetRead, parquetReadObjects, parquetSchema } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
+import {
+  isParquetAsset,
+  MAX_MAP_FEATURES,
+  MAX_MAP_PARQUET_BYTES,
+  MAX_ROWS,
+  VECTOR_NOTICE_TOO_BIG,
+  VECTOR_NOTICE_TOO_LARGE,
+} from './parquetShared.js';
 
-const PARQUET_MEDIA_TYPES = [
-  'application/vnd.apache.parquet',
-  'application/x-parquet'
-];
-
-const MAX_ROWS = 10000;
-
-// Feature-count cap for rendering a GeoParquet directly on the map. Beyond
-// this the whole-file download and main-thread decode get expensive; MapLibre
-// handles the rendering itself fine (geojson-vt tiles client-side). Aligned
-// with MAX_ROWS so the table preview and map share one limit.
-export const MAX_MAP_FEATURES = 10000;
+export { isParquetAsset, MAX_MAP_FEATURES, MAX_MAP_PARQUET_BYTES, MAX_ROWS };
 
 // Coordinate reference systems we can put on the map without reprojection.
-// GeoParquet's default (absent `crs`) is OGC:CRS84, i.e. lon/lat like EPSG:4326.
-const MAP_RENDERABLE_CRS = [null, 'EPSG:4326', 'OGC:CRS84'];
+// `null` means the file declares no CRS at all — GeoParquet's default is then
+// OGC:CRS84 (lon/lat), which is renderable. A *declared* CRS must identify
+// itself as one of the lon/lat systems below; anything else — including
+// PROJJSON without a recognizable authority/code — is rejected for map
+// display (see detectGeometryInfo).
+const MAP_RENDERABLE_CRS = [null, 'OGC:CRS84', 'EPSG:4326'];
+
+// Promise wrapper around hyparquet's callback-style parquetRead, preserving
+// its default (array) row format. The object-format path uses hyparquet's own
+// parquetReadObjects instead.
+function readParquet(options) {
+  return new Promise((resolve, reject) => {
+    parquetRead({ ...options, onComplete: resolve }).catch(reject);
+  });
+}
 
 const WKB_TYPES = {
   0: 'Unknown',
@@ -28,10 +38,6 @@ const WKB_TYPES = {
   6: 'MultiPolygon',
   7: 'GeometryCollection',
 };
-
-export function isParquetAsset(asset) {
-  return PARQUET_MEDIA_TYPES.includes(asset.type);
-}
 
 export function findParquetAssets(assets) {
   return assets.filter(isParquetAsset);
@@ -72,15 +78,18 @@ function detectGeometryInfo(metadata, columnNames) {
       }
     }
 
-    let crs = 'EPSG:4326';
+    // Absent `crs` → null: GeoParquet's default is then OGC:CRS84 (lon/lat).
+    // A declared PROJJSON CRS without a recognizable authority/code is legal
+    // (some writers omit `id`) but cannot be assumed to be lon/lat, so it is
+    // reported by name (or as unidentified) and fails MAP_RENDERABLE_CRS
+    // instead of silently defaulting to EPSG:4326.
+    let crs = null;
     let crsDefinition = null;
     if (columnMeta?.crs) {
       const projjson = columnMeta.crs;
       const auth = projjson.id?.authority;
       const code = projjson.id?.code;
-      if (auth && code) {
-        crs = `${auth}:${code}`;
-      }
+      crs = auth && code ? `${auth}:${code}` : (projjson.name || 'unidentified');
       if (crs !== 'EPSG:4326' && crs !== 'EPSG:3857') {
         crsDefinition = projjson;
       }
@@ -94,8 +103,10 @@ function detectGeometryInfo(metadata, columnNames) {
     };
   }
 
+  // No GeoParquet `geo` metadata → no declared CRS (null); consumers apply
+  // the lon/lat default themselves.
   const geomCol = columnNames.find(n => n === 'geometry' || n === 'geom');
-  return geomCol ? { geometryColumn: geomCol, bboxMapping: null, crs: 'EPSG:4326', crsDefinition: null } : null;
+  return geomCol ? { geometryColumn: geomCol, bboxMapping: null, crs: null, crsDefinition: null } : null;
 }
 
 function detectBboxColumns(columnNames) {
@@ -127,7 +138,21 @@ export function parseWkbType(buffer) {
 }
 
 export function bboxFromGeoJson(geometry) {
-  if (!geometry || !geometry.coordinates) {return null;}
+  if (!geometry) {return null;}
+  // GeometryCollection carries `geometries` instead of `coordinates`; merge
+  // the bboxes of its members recursively.
+  if (Array.isArray(geometry.geometries)) {
+    let bbox = null;
+    for (const g of geometry.geometries) {
+      const b = bboxFromGeoJson(g);
+      if (!b) {continue;}
+      bbox = bbox
+        ? [Math.min(bbox[0], b[0]), Math.min(bbox[1], b[1]), Math.max(bbox[2], b[2]), Math.max(bbox[3], b[3])]
+        : b;
+    }
+    return bbox;
+  }
+  if (!geometry.coordinates) {return null;}
   let xmin = Infinity, ymin = Infinity, xmax = -Infinity, ymax = -Infinity;
   const visit = (coords) => {
     if (typeof coords[0] === 'number') {
@@ -249,8 +274,10 @@ export function bboxFromWkb(buffer) {
   }
 }
 
-export async function loadParquetMetadata(url) {
-  const file = await asyncBufferFromUrl({ url });
+export async function loadParquetMetadata(url, { signal } = {}) {
+  // hyparquet spreads `requestInit` into both its byte-length probe and every
+  // ranged fetch, so an AbortSignal here cancels the whole download.
+  const file = await asyncBufferFromUrl(signal ? { url, requestInit: { signal } } : { url });
   const metadata = await parquetMetadataAsync(file);
   const schema = parquetSchema(metadata);
   const columnNames = schema.children.map(e => e.element.name);
@@ -270,30 +297,34 @@ export async function loadParquetMetadata(url) {
   };
 }
 
-// GeoJSON round-trips through JSON inside MapLibre, which throws on BigInt
-// (int64 columns). Downcast to Number when safe, else String.
-function sanitizePropertyValue(value) {
-  if (typeof value === 'bigint') {
-    return value >= Number.MIN_SAFE_INTEGER && value <= Number.MAX_SAFE_INTEGER
-      ? Number(value)
-      : value.toString();
-  }
-  return value;
-}
-
 /**
  * Load a GeoParquet file as a GeoJSON FeatureCollection for map display.
+ * Only the geometry column is read — every feature's `properties` is empty
+ * (see the `columns` option below for the rationale).
  *
  * Relies on hyparquet decoding WKB geometry columns to GeoJSON objects, which
  * it does for columns marked by the file's GeoParquet `geo` metadata (or a
- * GEOMETRY/GEOGRAPHY logical type). Returns `{ exceeded: true, totalRows }`
- * without reading any data when the row count is over `maxFeatures`. Throws
- * when the file has no geometry column, a CRS the map can't display, raw
- * (undecoded) geometry bytes, or on fetch/parse errors.
+ * GEOMETRY/GEOGRAPHY logical type). Enforces real bounds regardless of what
+ * STAC metadata or the parquet footer declare: returns
+ * `{ exceeded: true, reason: 'tooBig', byteLength }` when the file's actual
+ * size is over MAX_MAP_PARQUET_BYTES, and
+ * `{ exceeded: true, reason: 'tooLarge', totalRows }` when the row count is
+ * over MAX_MAP_FEATURES — in both cases without reading the data pages. The
+ * read itself is bounded via `rowEnd`, so a footer lying about `num_rows`
+ * cannot cause an unbounded read. Throws when the file has no geometry
+ * column, a CRS the map can't display, raw (undecoded) geometry bytes, or on
+ * fetch/parse errors. An optional `signal` (AbortSignal) is forwarded to
+ * every fetch hyparquet issues; aborting rejects with an `AbortError`.
  */
-export async function loadGeoJsonFromParquet(url, { maxFeatures = MAX_MAP_FEATURES } = {}) {
-  const { file, metadata, totalRows, geometryColumn, crs } = await loadParquetMetadata(url);
+export async function loadGeoJsonFromParquet(url, { signal } = {}) {
+  const maxFeatures = MAX_MAP_FEATURES;
+  const { file, metadata, totalRows, geometryColumn, crs } = await loadParquetMetadata(url, { signal });
 
+  // Authoritative size gate on the *actual* byte length (from the HEAD/range
+  // probe in asyncBufferFromUrl), not the self-declared STAC `file:size`.
+  if (file.byteLength > MAX_MAP_PARQUET_BYTES) {
+    return { exceeded: true, reason: VECTOR_NOTICE_TOO_BIG, byteLength: file.byteLength };
+  }
   if (!geometryColumn) {
     throw new Error('Parquet file has no geometry column');
   }
@@ -301,21 +332,37 @@ export async function loadGeoJsonFromParquet(url, { maxFeatures = MAX_MAP_FEATUR
     throw new Error(`GeoParquet CRS ${crs} is not supported for map display`);
   }
   if (totalRows > maxFeatures) {
-    return { exceeded: true, totalRows };
+    return { exceeded: true, reason: VECTOR_NOTICE_TOO_LARGE, totalRows };
   }
 
-  const rows = await new Promise((resolve, reject) => {
-    parquetRead({
-      file,
-      metadata,
-      compressors,
-      rowFormat: 'object',
-      onComplete: resolve,
-    }).catch(reject);
+  // `rowEnd` bounds the read even when the footer's `num_rows` understates
+  // the real row count (hyparquet never cross-checks it against the row
+  // groups). Reading one row past the cap detects the over-cap case.
+  const rows = await parquetReadObjects({
+    file,
+    metadata,
+    compressors,
+    // Only the geometry column is fetched and decoded. The rendered map
+    // layers use `$type` filters with static paint and nothing reads
+    // feature properties, so attribute columns would cost network, CPU and
+    // memory for no benefit — features intentionally get empty `properties`
+    // below. If a popup or attribute-driven style ever lands, the needed
+    // columns must be re-fetched at that point.
+    columns: [geometryColumn],
+    rowStart: 0,
+    rowEnd: maxFeatures + 1,
   });
+
+  if (rows.length > maxFeatures) {
+    // The footer under-declared its row count; report what we actually know.
+    return { exceeded: true, reason: VECTOR_NOTICE_TOO_LARGE, totalRows: Math.max(totalRows, rows.length) };
+  }
 
   const features = [];
   for (const row of rows) {
+    // Belt-and-braces: never build more than maxFeatures features, whatever
+    // the reader delivered.
+    if (features.length >= maxFeatures) {break;}
     const geometry = row[geometryColumn];
     if (geometry === null || geometry === undefined) {continue;}
     if (geometry instanceof Uint8Array || geometry instanceof ArrayBuffer) {
@@ -323,13 +370,9 @@ export async function loadGeoJsonFromParquet(url, { maxFeatures = MAX_MAP_FEATUR
       // geometry column, i.e. the file lacks GeoParquet `geo` metadata.
       throw new Error('Geometry column was not decoded (missing GeoParquet metadata)');
     }
-    const properties = {};
-    for (const [key, value] of Object.entries(row)) {
-      if (key !== geometryColumn) {
-        properties[key] = sanitizePropertyValue(value);
-      }
-    }
-    features.push({ type: 'Feature', geometry, properties });
+    // Properties are intentionally empty: attribute columns are pruned from
+    // the read above (see the `columns` option).
+    features.push({ type: 'Feature', geometry, properties: {} });
   }
 
   return {
@@ -344,78 +387,62 @@ export async function loadParquetRows(file, metadata, columnNames, geometryColum
   const rowEnd = Math.min(totalRows, MAX_ROWS);
   const columnsToRead = columnNames.filter(n => n !== geometryColumn);
 
-  return new Promise((resolve, reject) => {
-    parquetRead({
-      file,
-      metadata,
-      compressors,
-      columns: columnsToRead,
-      rowStart: 0,
-      rowEnd,
-      onComplete: rows => resolve({
-        rows,
-        loadedRows: rowEnd,
-        totalRows,
-        columns: columnsToRead,
-      }),
-    }).catch(reject);
+  const rows = await readParquet({
+    file,
+    metadata,
+    compressors,
+    columns: columnsToRead,
+    rowStart: 0,
+    rowEnd,
   });
+  return {
+    rows,
+    loadedRows: rowEnd,
+    totalRows,
+    columns: columnsToRead,
+  };
 }
 
 export async function loadGeometryTypesForRows(file, metadata, geometryColumn, rowEnd) {
   if (!geometryColumn) {return [];}
-  return new Promise((resolve, reject) => {
-    parquetRead({
-      file,
-      metadata,
-      compressors,
-      columns: [geometryColumn],
-      rowStart: 0,
-      rowEnd,
-      onComplete: rows => {
-        const types = rows.map(row => {
-          const geomValue = row[0];
-          if (geomValue instanceof Uint8Array || geomValue instanceof ArrayBuffer) {
-            return parseWkbType(geomValue);
-          }
-          // hyparquet >= 1.25 decodes marked geometry columns to GeoJSON objects
-          if (geomValue && typeof geomValue.type === 'string') {
-            return geomValue.type;
-          }
-          return 'Unknown';
-        });
-        resolve(types);
-      },
-    }).catch(reject);
+  const rows = await readParquet({
+    file,
+    metadata,
+    compressors,
+    columns: [geometryColumn],
+    rowStart: 0,
+    rowEnd,
+  });
+  return rows.map(row => {
+    const geomValue = row[0];
+    if (geomValue instanceof Uint8Array || geomValue instanceof ArrayBuffer) {
+      return parseWkbType(geomValue);
+    }
+    // hyparquet >= 1.25 decodes marked geometry columns to GeoJSON objects
+    if (geomValue && typeof geomValue.type === 'string') {
+      return geomValue.type;
+    }
+    return 'Unknown';
   });
 }
 
 export async function getBboxForRow(file, metadata, geometryColumn, rowIndex) {
-  return new Promise((resolve, reject) => {
-    parquetRead({
-      file,
-      metadata,
-      compressors,
-      columns: [geometryColumn],
-      rowStart: rowIndex,
-      rowEnd: rowIndex + 1,
-      onComplete: rows => {
-        if (rows.length === 0) {
-          resolve(null);
-          return;
-        }
-        const geomValue = rows[0][0];
-        if (geomValue instanceof Uint8Array || geomValue instanceof ArrayBuffer) {
-          resolve(bboxFromWkb(geomValue));
-        } else if (geomValue && geomValue.coordinates) {
-          // hyparquet >= 1.25 decodes marked geometry columns to GeoJSON objects
-          resolve(bboxFromGeoJson(geomValue));
-        } else {
-          resolve(null);
-        }
-      },
-    }).catch(reject);
+  const rows = await readParquet({
+    file,
+    metadata,
+    compressors,
+    columns: [geometryColumn],
+    rowStart: rowIndex,
+    rowEnd: rowIndex + 1,
   });
+  if (rows.length === 0) {return null;}
+  const geomValue = rows[0][0];
+  if (geomValue instanceof Uint8Array || geomValue instanceof ArrayBuffer) {
+    return bboxFromWkb(geomValue);
+  }
+  if (geomValue && (geomValue.coordinates || geomValue.geometries)) {
+    // hyparquet >= 1.25 decodes marked geometry columns to GeoJSON objects
+    return bboxFromGeoJson(geomValue);
+  }
+  return null;
 }
-
-export { MAX_ROWS };
