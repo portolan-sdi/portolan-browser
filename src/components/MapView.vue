@@ -39,7 +39,7 @@ import TextControl from './maps/TextControl.vue';
 import TerrainControl from './maps/TerrainControl.vue';
 import StylePicker from './maps/StylePicker.vue';
 import StacMapLayer from './maps/StacMapLayer.js';
-import { resolveStyles, loadStyleJson, extractLegend } from '../utils/portolanStyles.js';
+import { resolveStyles, loadStyleJson, extractLegend, extractStyleFields } from '../utils/portolanStyles.js';
 import { VECTOR_NOTICE_REPROJECTION, VECTOR_NOTICE_TOO_BIG, VECTOR_NOTICE_TOO_LARGE } from '../utils/parquetShared.js';
 import { createLonLatTransform } from '../utils/crs.js';
 import { mapGetters } from 'vuex';
@@ -227,6 +227,13 @@ export default {
       // world view for the whole download (e.g. a multi-MB GeoParquet).
       this.stacLayer.fit();
 
+      // Styles are loaded before the assets, not after: a GeoParquet asset
+      // rendered directly is read with its attribute columns pruned, and the
+      // set to keep is whatever the styles reference. Learning that after the
+      // read would mean downloading the file a second time. The style
+      // documents are a few KB each and fetched in parallel.
+      await this.loadStyles();
+
       if (this.assets && this.assets.length > 0) {
         await this.stacLayer.setAssets(this.assets);
       } else {
@@ -243,10 +250,15 @@ export default {
         this._setupClickInteraction();
       }
 
-      await this.resolveAndApplyStyles();
+      await this.applyStyleAtIndex(0);
     },
 
-    async resolveAndApplyStyles() {
+    // Resolve the collection's styles and fetch every style document, so the
+    // union of the attribute fields they read is known before the assets load.
+    // A style that fails to fetch or parse is dropped rather than blocking the
+    // others.
+    async loadStyles() {
+      if (!this.stac || !this.stacLayer) {return;}
       // core.md scopes styles to collections: they describe how to draw that
       // collection's own data. An Item map, or a search map rendering results
       // from elsewhere, is not what these styles were authored for.
@@ -261,8 +273,26 @@ export default {
         return;
       }
       if (styles.length === 0) {return;}
-      this.availableStyles = styles;
-      await this.applyStyleAtIndex(0);
+
+      await Promise.all(styles.map(async entry => {
+        try {
+          // markRaw: the style document is handed straight to MapLibre, which
+          // has no use for a reactive proxy over every nested expression.
+          entry._cached = markRaw(await loadStyleJson(entry.href));
+        } catch (err) {
+          console.warn('Failed to load style:', entry.name, err);
+        }
+      }));
+
+      const loaded = styles.filter(entry => entry._cached);
+      if (loaded.length === 0) {return;}
+      this.availableStyles = loaded;
+
+      const fields = new Set();
+      for (const entry of loaded) {
+        for (const field of extractStyleFields(entry._cached)) {fields.add(field);}
+      }
+      this.stacLayer.setStyleFields([...fields]);
     },
 
     async applyStyleAtIndex(index) {
@@ -270,9 +300,9 @@ export default {
       if (!styleEntry || !this.stacLayer) {return;}
       try {
         if (!styleEntry._cached) {
-          styleEntry._cached = await loadStyleJson(styleEntry.href);
+          styleEntry._cached = markRaw(await loadStyleJson(styleEntry.href));
         }
-        this.stacLayer.applyGlStyle(styleEntry._cached);
+        this.stacLayer.applyGlStyle(styleEntry._cached, styleEntry.href);
         this.activeStyleIndex = index;
         this.activeLegend = extractLegend(styleEntry._cached);
       } catch (err) {

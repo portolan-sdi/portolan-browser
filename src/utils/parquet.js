@@ -303,10 +303,39 @@ export async function loadParquetMetadata(url, { signal } = {}) {
   };
 }
 
+// Coerce one parquet cell into a value MapLibre can evaluate in a style
+// expression. Returns `undefined` for anything that isn't a usable scalar, and
+// the caller then omits the property entirely.
+//
+// BigInt matters here: hyparquet returns int64 columns (a GeoParquet `fid` is
+// typically one) as BigInt, which throws "Do not know how to serialize a
+// BigInt" the moment MapLibre's worker structured-clones or JSON-stringifies
+// the feature. Struct and binary columns are dropped rather than stringified —
+// a style can't match on them, and a `bbox` struct on every feature would
+// bloat the source for nothing.
+function toStyleValue(value) {
+  if (value === null || value === undefined) {return undefined;}
+  const type = typeof value;
+  if (type === 'string' || type === 'boolean') {return value;}
+  if (type === 'number') {return Number.isFinite(value) ? value : undefined;}
+  if (type === 'bigint') {
+    // Past Number.MAX_SAFE_INTEGER the numeric value is a lie; keep the exact
+    // digits as a string so an equality match still works.
+    return value >= -9007199254740991n && value <= 9007199254740991n
+      ? Number(value)
+      : value.toString();
+  }
+  if (value instanceof Date) {return value.toISOString();}
+  return undefined;
+}
+
 /**
  * Load a GeoParquet file as a GeoJSON FeatureCollection for map display.
- * Only the geometry column is read — every feature's `properties` is empty
- * (see the `columns` option below for the rationale).
+ *
+ * By default only the geometry column is read and every feature's `properties`
+ * is empty. Pass `fields` (see the option below) to also read named attribute
+ * columns, which is what lets a MapLibre style's `["get", …]` expressions
+ * evaluate against a parquet-backed source.
  *
  * Relies on hyparquet decoding WKB geometry columns to GeoJSON objects, which
  * it does for columns marked by the file's GeoParquet `geo` metadata (or a
@@ -326,10 +355,16 @@ export async function loadParquetMetadata(url, { signal } = {}) {
  * (`reprojectedFrom` names the source CRS when that happened). Features whose
  * coordinates fall outside the transform's domain are dropped and counted in
  * `droppedFeatures` rather than drawn in the wrong place.
+ *
+ * `fields` is the attribute columns to read alongside the geometry, normally
+ * the union of what the collection's styles reference (see
+ * `extractStyleFields`). Names the file doesn't have are ignored rather than
+ * erroring, so a style may reference attributes that only some of a
+ * collection's assets carry.
  */
-export async function loadGeoJsonFromParquet(url, { signal } = {}) {
+export async function loadGeoJsonFromParquet(url, { signal, fields = [] } = {}) {
   const maxFeatures = MAX_MAP_FEATURES;
-  const { file, metadata, totalRows, geometryColumn, crs, crsDefinition } =
+  const { file, metadata, totalRows, geometryColumn, crs, crsDefinition, columnNames } =
     await loadParquetMetadata(url, { signal });
 
   // Authoritative size gate on the *actual* byte length (from the HEAD/range
@@ -355,6 +390,17 @@ export async function loadGeoJsonFromParquet(url, { signal } = {}) {
     return { exceeded: true, reason: VECTOR_NOTICE_TOO_LARGE, totalRows };
   }
 
+  // Columns are pruned to the geometry plus whatever the caller asked for:
+  // with no `fields`, the default vector layers use `$type` filters and static
+  // paint, so attribute columns would cost network, CPU and memory for no
+  // benefit. Unknown names are dropped here — hyparquet throws on a column
+  // that isn't in the schema, and a style referencing an attribute this
+  // particular file lacks should degrade to its fallback paint, not fail the
+  // whole render.
+  const attributeColumns = fields.filter(
+    name => name !== geometryColumn && columnNames.includes(name)
+  );
+
   // `rowEnd` bounds the read even when the footer's `num_rows` understates
   // the real row count (hyparquet never cross-checks it against the row
   // groups). Reading one row past the cap detects the over-cap case.
@@ -362,13 +408,7 @@ export async function loadGeoJsonFromParquet(url, { signal } = {}) {
     file,
     metadata,
     compressors,
-    // Only the geometry column is fetched and decoded. The rendered map
-    // layers use `$type` filters with static paint and nothing reads
-    // feature properties, so attribute columns would cost network, CPU and
-    // memory for no benefit — features intentionally get empty `properties`
-    // below. If a popup or attribute-driven style ever lands, the needed
-    // columns must be re-fetched at that point.
-    columns: [geometryColumn],
+    columns: [geometryColumn, ...attributeColumns],
     rowStart: 0,
     rowEnd: maxFeatures + 1,
   });
@@ -410,9 +450,13 @@ export async function loadGeoJsonFromParquet(url, { signal } = {}) {
       droppedFeatures++;
       continue;
     }
-    // Properties are intentionally empty: attribute columns are pruned from
-    // the read above (see the `columns` option).
-    features.push({ type: 'Feature', geometry, properties: {} });
+    // Empty unless `fields` asked for columns (see the `columns` option).
+    const properties = {};
+    for (const name of attributeColumns) {
+      const value = toStyleValue(row[name]);
+      if (value !== undefined) {properties[name] = value;}
+    }
+    features.push({ type: 'Feature', geometry, properties });
   }
 
   return {

@@ -486,16 +486,21 @@ describe('StacMapLayer', () => {
       // downloads the lazy hyparquet chunk, so the declared-metadata gates
       // must reject without ever incrementing it.
       const depsLoads = { count: 0 }
+      // The loader options of each call, so tests can assert which attribute
+      // columns the layer asked for (see setStyleFields).
+      const opts = []
       l._loadParquetDeps = async () => {
         depsLoads.count++
         return {
-          loadGeoJsonFromParquet: async (url) => {
+          loadGeoJsonFromParquet: async (url, options = {}) => {
             calls.push(url)
+            opts.push(options)
             return impl(url)
           },
         }
       }
       calls.depsLoads = depsLoads
+      calls.opts = opts
       return calls
     }
 
@@ -955,30 +960,131 @@ describe('StacMapLayer', () => {
     })
 
     describe('applyGlStyle with a parquet-backed geojson source', () => {
-      // A style whose vector source would positionally match any loaded
-      // overlay source; its layer carries `source-layer`, which MapLibre
-      // rejects on a geojson source.
+      // A Portolan style as published: authored against the collection's
+      // PMTiles asset, with a `source-layer` naming a layer inside the tiles
+      // and a paint expression reading a feature attribute.
       const pmtilesStyle = () => ({
         version: 8,
         sources: { data: { type: 'vector', url: 'pmtiles://https://example.com/tiles.pmtiles' } },
-        layers: [{ id: 'styled-fill', type: 'fill', source: 'data', 'source-layer': 'parks', paint: {} }],
+        layers: [{
+          id: 'styled-fill',
+          type: 'fill',
+          source: 'data',
+          'source-layer': 'parks',
+          paint: { 'fill-color': ['match', ['get', 'name'], 'park', '#0f0', '#f00'] },
+        }],
       })
 
-      it('keeps the parquet default layers and does not bind style layers to the geojson source', async () => {
-        injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
-        await layer.setAssets([parquetAsset()])
-        const defaultLayerIds = [...layer._overlayLayerIds]
-        expect(defaultLayerIds).toHaveLength(3)
+      const loadedParquet = async (l = layer) => {
+        const calls = injectParquetDeps(l, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
+        await l.setAssets([parquetAsset()])
+        return calls
+      }
+
+      it('binds the style to the geojson source with source-layer stripped', async () => {
+        await loadedParquet()
+        expect(layer._overlayLayerIds).toHaveLength(3)
 
         layer.applyGlStyle(pmtilesStyle())
 
+        // The style's own layer replaces the three default layers.
+        expect(layer._overlayLayerIds).toEqual(['styled-fill'])
+        const styled = map.layers.get('styled-fill')
+        expect(styled.source).toBe('stac-parquet-0')
+        // MapLibre rejects `source-layer` on a geojson source, so it is
+        // dropped; the paint the publisher authored is kept verbatim.
+        expect(styled['source-layer']).toBeUndefined()
+        expect(styled.paint).toEqual(pmtilesStyle().layers[0].paint)
+        // The default layers it superseded are gone from the map, not just
+        // from the id list.
+        expect([...map.layers.keys()]).toEqual(['styled-fill'])
+      })
+
+      it('reads the attribute columns the style needs when they were requested up front', async () => {
+        layer.setStyleFields(['name'])
+        const calls = await loadedParquet()
+
+        expect(calls.opts[0].fields).toEqual(['name'])
+      })
+
+      it('leaves the parquet source with default styling when the style never reaches it', async () => {
+        // An inline-sources-only style: nothing maps onto the loaded asset
+        // source, which would otherwise be left invisible after the clear.
+        await loadedParquet()
+        const defaultLayerIds = [...layer._overlayLayerIds]
+
+        layer.applyGlStyle({
+          version: 8,
+          sources: { notes: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } } },
+          layers: [{ id: 'notes-fill', type: 'fill', source: 'notes', paint: {} }],
+        })
+
         expect(layer._overlayLayerIds).toEqual(defaultLayerIds)
         for (const id of defaultLayerIds) {
-          expect(map.layers.has(id)).toBe(true)
           expect(map.layers.get(id).source).toBe('stac-parquet-0')
         }
-        // The style layer was not positionally bound to the geojson source.
+        // The style's inline source is added under its own name alongside.
+        expect(map.sources.has('notes')).toBe(true)
+        expect(map.layers.get('notes-fill').source).toBe('notes')
+      })
+
+      it('restores default styling when every style layer fails to add', async () => {
+        // A symbol layer against a basemap with no glyphs is the real case:
+        // MapLibre throws on addLayer. One unusable layer must not leave the
+        // data invisible.
+        await loadedParquet()
+        const defaultLayerIds = [...layer._overlayLayerIds]
+        const realAddLayer = map.addLayer.bind(map)
+        map.addLayer = (spec) => {
+          if (spec.id === 'styled-fill') { throw new Error('missing glyphs') }
+          return realAddLayer(spec)
+        }
+
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        try {
+          layer.applyGlStyle(pmtilesStyle())
+        } finally {
+          warn.mockRestore()
+        }
+
         expect(map.layers.has('styled-fill')).toBe(false)
+        expect(layer._overlayLayerIds).toEqual(defaultLayerIds)
+      })
+
+      it('survives a basemap change with the style still applied to the geojson source', async () => {
+        await loadedParquet()
+        layer.applyGlStyle(pmtilesStyle(), 'https://example.com/styles/default.json')
+
+        await layer.readdAfterStyleChange()
+
+        expect(layer._overlayLayerIds).toEqual(['styled-fill'])
+        expect(map.layers.get('styled-fill').source).toBe('stac-parquet-0')
+        expect(map.layers.get('styled-fill')['source-layer']).toBeUndefined()
+      })
+
+      it('binds a style that was applied before the source finished loading', async () => {
+        // The normal order, not an edge case: MapView resolves the styles up
+        // front because the GeoParquet reader needs their attribute names
+        // before it reads, so the apply can land while the file is still
+        // downloading. Without the re-bind, the data draws in default blue.
+        layer.applyGlStyle(pmtilesStyle(), 'https://example.com/styles/default.json')
+        expect(layer._overlayLayerIds).toEqual([])
+
+        await loadedParquet()
+
+        expect(layer._overlayLayerIds).toEqual(['styled-fill'])
+        expect(map.layers.get('styled-fill').source).toBe('stac-parquet-0')
+        expect(map.layers.get('styled-fill')['source-layer']).toBeUndefined()
+      })
+
+      it('does not warn about a source-count mismatch when no assets have loaded yet', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        try {
+          layer.applyGlStyle(pmtilesStyle())
+          expect(warn).not.toHaveBeenCalled()
+        } finally {
+          warn.mockRestore()
+        }
       })
 
       it('still maps style sources positionally onto tile-backed sources', async () => {
@@ -988,8 +1094,31 @@ describe('StacMapLayer', () => {
 
         expect(map.layers.has('styled-fill')).toBe(true)
         expect(map.layers.get('styled-fill').source).toBe('stac-tile-0')
-        // The default layers were replaced by the style's own layers.
+        // A tile source keeps `source-layer` — it names a layer in the tiles.
+        expect(map.layers.get('styled-fill')['source-layer']).toBe('parks')
         expect(layer._overlayLayerIds).toEqual(['styled-fill'])
+      })
+
+      it('resolves a style-relative pmtiles URL against the style href, not the page', async () => {
+        // formats.md: `sources.data.url` is the relative path from `styles/`
+        // to the data, so `pmtiles://../x.pmtiles` is relative to the style
+        // document. Two loaded sources make the match, not position, decide.
+        const pmtilesAsset = href => ({ href, type: 'application/vnd.pmtiles', roles: ['visual'] })
+        await layer.setAssets([
+          pmtilesAsset('https://example.com/other/decoys.pmtiles'),
+          pmtilesAsset('https://example.com/data/tiles.pmtiles'),
+        ])
+        // The style's target is the second asset, so a positional match would
+        // pick the wrong source.
+        expect(map.sources.get('stac-tile-1').url).toBe('pmtiles://https://example.com/data/tiles.pmtiles')
+
+        layer.applyGlStyle({
+          version: 8,
+          sources: { data: { type: 'vector', url: 'pmtiles://../data/tiles.pmtiles' } },
+          layers: [{ id: 'styled-fill', type: 'fill', source: 'data', 'source-layer': 'parks', paint: {} }],
+        }, 'https://example.com/styles/default.json')
+
+        expect(map.layers.get('styled-fill').source).toBe('stac-tile-1')
       })
     })
   })

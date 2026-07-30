@@ -158,10 +158,9 @@ describe('loadGeoJsonFromParquet', () => {
   })
 
   it('builds a FeatureCollection reading only the geometry column, with empty properties', async () => {
-    // Attribute columns are pruned from the read (nothing on the map uses
-    // them), so features carry intentionally empty properties. The BigInt
-    // sanitizing the property path used to need is gone with it: int64
-    // attribute columns are never read, so nothing BigInt can reach MapLibre.
+    // With no `fields`, attribute columns are pruned from the read: the
+    // default vector layers filter on `$type` and paint statically, so the
+    // attributes would cost network, CPU and memory for nothing.
     mockParquetFile({
       numRows: 2,
       rows: [
@@ -265,6 +264,119 @@ describe('loadGeoJsonFromParquet', () => {
     mockParquetFile({ numRows: 1, geo: false, columns: ['name', 'value'] })
     await expect(loadGeoJsonFromParquet('https://example.com/data.parquet'))
       .rejects.toThrow(/no geometry column/)
+  })
+
+  // `fields` is what lets a MapLibre style's ["get", …] expressions evaluate
+  // against a parquet-backed source: the named columns are read alongside the
+  // geometry and land in each feature's properties.
+  describe('fields', () => {
+    it('reads the named attribute columns into feature properties', async () => {
+      mockParquetFile({
+        numRows: 1,
+        columns: ['geometry', 'naam', 'inwoners', 'notes'],
+        rows: [{ geometry: POLYGON, naam: 'Utrecht', inwoners: 1361093 }],
+      })
+      const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', {
+        fields: ['naam', 'inwoners'],
+      })
+
+      expect(parquetRead).toHaveBeenCalledWith(expect.objectContaining({
+        columns: ['geometry', 'naam', 'inwoners'],
+      }))
+      expect(result.featureCollection.features[0].properties).toEqual({
+        naam: 'Utrecht',
+        inwoners: 1361093,
+      })
+    })
+
+    it('ignores names the file does not have instead of failing the render', async () => {
+      // hyparquet throws on a column that isn't in the schema. A style may
+      // reference an attribute only some of a collection's assets carry, and
+      // that should degrade to the style's fallback paint, not a blank map.
+      mockParquetFile({
+        numRows: 1,
+        columns: ['geometry', 'naam'],
+        rows: [{ geometry: POLYGON, naam: 'Utrecht' }],
+      })
+      const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', {
+        fields: ['naam', 'nope'],
+      })
+
+      expect(parquetRead).toHaveBeenCalledWith(expect.objectContaining({
+        columns: ['geometry', 'naam'],
+      }))
+      expect(result.featureCollection.features[0].properties).toEqual({ naam: 'Utrecht' })
+    })
+
+    it('never reads the geometry column twice when a style references it by name', async () => {
+      mockParquetFile({
+        numRows: 1,
+        columns: ['geometry', 'naam'],
+        rows: [{ geometry: POLYGON, naam: 'Utrecht' }],
+      })
+      await loadGeoJsonFromParquet('https://example.com/data.parquet', {
+        fields: ['geometry', 'naam'],
+      })
+
+      expect(parquetRead).toHaveBeenCalledWith(expect.objectContaining({
+        columns: ['geometry', 'naam'],
+      }))
+    })
+
+    it('converts a BigInt attribute to a number MapLibre can serialize', async () => {
+      // hyparquet returns int64 columns (a GeoParquet `fid` is typically one)
+      // as BigInt, which throws "Do not know how to serialize a BigInt" the
+      // moment MapLibre's worker structured-clones the feature.
+      mockParquetFile({
+        numRows: 1,
+        columns: ['geometry', 'fid'],
+        rows: [{ geometry: POLYGON, fid: 42n }],
+      })
+      const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', { fields: ['fid'] })
+
+      const { properties } = result.featureCollection.features[0]
+      expect(properties).toEqual({ fid: 42 })
+      expect(() => structuredClone(properties)).not.toThrow()
+    })
+
+    it('keeps a BigInt past Number.MAX_SAFE_INTEGER exact by stringifying it', async () => {
+      const huge = 9007199254740993n // MAX_SAFE_INTEGER + 2
+      mockParquetFile({
+        numRows: 1,
+        columns: ['geometry', 'fid'],
+        rows: [{ geometry: POLYGON, fid: huge }],
+      })
+      const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', { fields: ['fid'] })
+
+      // Number(huge) would silently round; an equality match on the exact
+      // digits still works against the string.
+      expect(result.featureCollection.features[0].properties).toEqual({ fid: '9007199254740993' })
+    })
+
+    it('drops values a style expression cannot use', async () => {
+      // A `bbox` struct on every feature would bloat the source for nothing,
+      // and NaN/null are not matchable. Dates become ISO strings.
+      mockParquetFile({
+        numRows: 1,
+        columns: ['geometry', 'bbox', 'missing', 'broken', 'updated', 'naam'],
+        rows: [{
+          geometry: POLYGON,
+          bbox: { xmin: 0, ymin: 0, xmax: 1, ymax: 1 },
+          missing: null,
+          broken: NaN,
+          updated: new Date('2026-01-02T03:04:05Z'),
+          naam: 'Utrecht',
+        }],
+      })
+      const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', {
+        fields: ['bbox', 'missing', 'broken', 'updated', 'naam'],
+      })
+
+      expect(result.featureCollection.features[0].properties).toEqual({
+        updated: '2026-01-02T03:04:05.000Z',
+        naam: 'Utrecht',
+      })
+    })
   })
 })
 

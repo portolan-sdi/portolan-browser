@@ -190,6 +190,53 @@ function commonPrefix(strings) {
   return prefix;
 }
 
+/**
+ * Feature attribute names a style reads, as a sorted array.
+ *
+ * A style authored against vector tiles gets its attributes from the tiles.
+ * When the same style is bound to a GeoParquet-backed geojson source instead,
+ * those attributes have to be read out of the parquet file — and the reader
+ * prunes columns aggressively, so it needs to be told which ones matter. This
+ * walks the whole style document for `["get", <field>]` and `["has", <field>]`
+ * expressions, wherever they appear (paint, layout, filter, nested inside
+ * `match`/`step`/`case`).
+ *
+ * Only expression syntax is recognised. MapLibre's deprecated legacy filter
+ * form (`["==", "naam", "Utrecht"]`) is not: telling its property operand
+ * apart from a literal is ambiguous, and Portolan styles are expression-based
+ * (formats.md pins MapLibre GL style spec v8). A style using legacy filters
+ * renders with its paint applied but those filters matching nothing.
+ */
+export function extractStyleFields(glStyle) {
+  const fields = new Set();
+
+  const walk = (node) => {
+    if (Array.isArray(node)) {
+      const [op, arg] = node;
+      if ((op === 'get' || op === 'has') && typeof arg === 'string' && node.length === 2) {
+        // The 2-argument form reads the feature's own properties. The
+        // 3-argument form (`["get", key, object]`) indexes into some other
+        // object, so the key is not a feature attribute.
+        fields.add(arg);
+        return;
+      }
+      for (const item of node) {walk(item);}
+      return;
+    }
+    if (node && typeof node === 'object') {
+      for (const value of Object.values(node)) {walk(value);}
+    }
+  };
+
+  for (const layer of glStyle?.layers || []) {
+    walk(layer.paint);
+    walk(layer.layout);
+    walk(layer.filter);
+  }
+
+  return [...fields].sort();
+}
+
 export function extractLegend(glStyle) {
   if (!glStyle?.layers) {return [];}
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import Collection from 'stac-js/src/collection.js'
-import { resolveStyles, extractLegend, loadStyleJson } from '../../src/utils/portolanStyles.js'
+import { resolveStyles, extractLegend, extractStyleFields, loadStyleJson } from '../../src/utils/portolanStyles.js'
 
 const COLLECTION_URL = 'https://example.com/boundaries/nl/collection.json'
 
@@ -420,6 +420,73 @@ describe('portolanStyles', () => {
       const result = resolveStyles(stac)
       expect(result).toHaveLength(1)
       expect(result[0].name).toBe('topLevel')
+    })
+  })
+
+  // The attribute names a style reads decide which parquet columns the
+  // GeoParquet reader keeps, so a missed field means unstyled features.
+  describe('extractStyleFields', () => {
+    it('returns nothing for a style with no attribute expressions', () => {
+      expect(extractStyleFields(null)).toEqual([])
+      expect(extractStyleFields({})).toEqual([])
+      expect(extractStyleFields({
+        layers: [{ id: 'a', type: 'fill', paint: { 'fill-color': '#f00' } }],
+      })).toEqual([])
+    })
+
+    it('finds fields in paint, layout and filter, sorted and deduplicated', () => {
+      const style = {
+        layers: [
+          {
+            id: 'fill',
+            type: 'fill',
+            paint: { 'fill-color': ['match', ['get', 'naam'], 'Utrecht', '#f00', '#ccc'] },
+            filter: ['==', ['get', 'soort'], 'provincie'],
+          },
+          {
+            id: 'label',
+            type: 'symbol',
+            layout: { 'text-field': ['get', 'naam'] },
+          },
+        ],
+      }
+      expect(extractStyleFields(style)).toEqual(['naam', 'soort'])
+    })
+
+    it('finds fields nested deep inside expressions', () => {
+      const style = {
+        layers: [{
+          id: 'fill',
+          type: 'fill',
+          paint: {
+            'fill-color': ['step', ['get', 'inwoners'], '#eee', 100000, '#999'],
+            'fill-opacity': ['case', ['has', 'flagged'], 0.9, ['*', 0.1, ['get', 'ratio']]],
+          },
+        }],
+      }
+      expect(extractStyleFields(style)).toEqual(['flagged', 'inwoners', 'ratio'])
+    })
+
+    it('ignores the three-argument get, which indexes another object', () => {
+      const style = {
+        layers: [{
+          id: 'fill',
+          type: 'fill',
+          paint: { 'fill-color': ['get', 'red', ['literal', { red: '#f00' }]] },
+        }],
+      }
+      expect(extractStyleFields(style)).toEqual([])
+    })
+
+    it('does not mistake a literal string for a field name', () => {
+      const style = {
+        layers: [{
+          id: 'fill',
+          type: 'fill',
+          paint: { 'fill-color': ['match', ['get', 'naam'], 'get', '#f00', '#ccc'] },
+        }],
+      }
+      expect(extractStyleFields(style)).toEqual(['naam'])
     })
   })
 

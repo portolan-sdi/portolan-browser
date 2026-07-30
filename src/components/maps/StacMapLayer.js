@@ -135,11 +135,19 @@ const COG_LAYER_CAP = 8;
 // Normalize a PMTiles source URL for comparison. Strips the `pmtiles://`
 // prefix and resolves relative URLs to absolute so that a style source URL
 // can be matched against a loaded source's URL regardless of form.
-function normalizePmtilesUrl(url) {
+//
+// `base` is the URL the relative form should resolve against. For a style
+// document that is the style's own href — formats.md specifies
+// `sources.data.url` as "the relative path from `styles/` to the data", so
+// `pmtiles://../x.pmtiles` is relative to the style file, not to the page.
+// Resolving against the page URL (the old behaviour, and still the fallback
+// for loaded sources, whose URLs MapLibre has already absolutized) points at
+// the browser's own origin and matches nothing.
+function normalizePmtilesUrl(url, base) {
   if (typeof url !== 'string' || url === '') {return null;}
   let u = url.startsWith('pmtiles://') ? url.slice('pmtiles://'.length) : url;
   try {
-    u = new URL(u, typeof window !== 'undefined' ? window.location.href : undefined).href;
+    u = new URL(u, base || (typeof window !== 'undefined' ? window.location.href : undefined)).href;
   } catch {
     /* leave as-is if it can't be resolved */
   }
@@ -239,6 +247,19 @@ export default class StacMapLayer {
     this._glStyleLayerIds = [];
     this._glStyleSourceIds = [];
     this._activeGlStyle = null;
+    this._activeGlStyleBaseUrl = null;
+    // Attribute columns the collection's styles read, so a GeoParquet asset
+    // rendered directly carries the properties those styles match on. Set by
+    // MapView before setAssets (see setStyleFields).
+    this._styleFields = [];
+  }
+
+  // The union of attribute names referenced by the collection's styles (see
+  // utils/portolanStyles.extractStyleFields). Must be set before setAssets:
+  // the GeoParquet reader prunes columns, and re-reading later would mean a
+  // second download of the whole file.
+  setStyleFields(fields) {
+    this._styleFields = Array.isArray(fields) ? [...fields].sort() : [];
   }
 
   setStac(stac) {
@@ -414,6 +435,17 @@ export default class StacMapLayer {
     if (parquetLoaded || this._cogList.some(d => d.visible)) {
       this._assetsSig = sig;
     }
+
+    // The active style outlives the asset set it was bound to: this run's
+    // teardown dropped the style's layers along with the old sources, and the
+    // stages above gave the new sources default paint. Re-bind, or a style
+    // applied before these sources existed silently stops being shown. That
+    // ordering is routine — MapView resolves the styles up front (the
+    // GeoParquet reader needs their attribute names before it reads), and a
+    // superseded run hands the tail off to whichever call is still current.
+    if (this._activeGlStyle) {
+      this.applyGlStyle(this._activeGlStyle, this._activeGlStyleBaseUrl);
+    }
   }
 
   // Lazily load the parquet utilities (hyparquet behind them). Split out as an
@@ -485,8 +517,11 @@ export default class StacMapLayer {
 
         // Consult the instance cache before downloading anything (or even
         // loading the hyparquet chunk): a basemap switch re-runs setAssets
-        // with the same URLs and must not re-fetch the file.
-        let result = this._parquetResultCache.get(url);
+        // with the same URLs and must not re-fetch the file. The requested
+        // columns are part of the key — a result decoded without a style's
+        // attributes can't satisfy a later run that needs them.
+        const cacheKey = `${url}\n${this._styleFields.join(',')}`;
+        let result = this._parquetResultCache.get(cacheKey);
         // Only a fresh load should report dropped features: a basemap switch
         // re-runs setAssets against the cache, and re-warning there would
         // repeat the same message for every toggle.
@@ -495,11 +530,14 @@ export default class StacMapLayer {
           if (!deps) {deps = await this._loadParquetDeps();}
           const controller = new AbortController();
           this._parquetAbort = controller;
-          result = await deps.loadGeoJsonFromParquet(url, { signal: controller.signal });
+          result = await deps.loadGeoJsonFromParquet(url, {
+            signal: controller.signal,
+            fields: this._styleFields,
+          });
           // Cache successful and over-cap results alike — both are
           // deterministic for a given URL. Errors throw past this line and
           // are never cached, so transient failures stay retryable.
-          this._parquetResultCache.set(url, result);
+          this._parquetResultCache.set(cacheKey, result);
         }
         if (epoch !== this._overlayEpoch) {return false;}
         if (result.exceeded) {
@@ -1023,7 +1061,7 @@ export default class StacMapLayer {
   }
 
   async readdAfterStyleChange() {
-    const { stac, children, assets, _activeGlStyle } = this;
+    const { stac, children, assets, _activeGlStyle, _activeGlStyleBaseUrl } = this;
     // A basemap/style change may leave some of our sources and layers behind
     // (MapLibre's setStyle does not always wipe imperatively-added sources).
     // Tear them down through the removal helpers, which both delete the map
@@ -1044,7 +1082,10 @@ export default class StacMapLayer {
     } else if (stac) {
       await this.autoLoadVisualAssets(stac);
     }
-    if (_activeGlStyle) {this.applyGlStyle(_activeGlStyle);}
+    // Usually redundant — the setAssets tail re-binds the style itself — but
+    // not always: a collection whose only renderable content is the style's
+    // own inline sources never reaches setAssets. Re-applying is idempotent.
+    if (_activeGlStyle) {this.applyGlStyle(_activeGlStyle, _activeGlStyleBaseUrl);}
   }
 
   _addSource(id, spec) {
@@ -1157,21 +1198,11 @@ export default class StacMapLayer {
     this._overlayAssetMeta = [];
   }
 
-  // `keepSourceIds` (a Set) preserves layers bound to those sources — used by
-  // applyGlStyle so the parquet fallback's default geojson layers survive
-  // style application instead of being cleared and never re-added.
-  _clearOverlayLayers(keepSourceIds = null) {
-    const kept = [];
+  _clearOverlayLayers() {
     for (const id of [...this._overlayLayerIds]) {
-      let source;
-      try { source = this.map.getLayer(id)?.source; } catch { source = undefined; }
-      if (keepSourceIds && source && keepSourceIds.has(source)) {
-        kept.push(id);
-        continue;
-      }
       try { if (this.map.getLayer(id)) {this.map.removeLayer(id);} } catch { /* ignore */ }
     }
-    this._overlayLayerIds = kept;
+    this._overlayLayerIds = [];
     this._clearGlStyleExtras();
   }
 
@@ -1186,30 +1217,38 @@ export default class StacMapLayer {
     this._glStyleSourceIds = [];
   }
 
-  applyGlStyle(glStyle) {
+  // Bind a MapLibre GL style document to the loaded overlay sources.
+  //
+  // Portolan styles are authored against the collection's PMTiles asset, but a
+  // collection may ship GeoParquet only, in which case the same data is on the
+  // map as a geojson source (see _addParquetAssets). Both kinds are bound
+  // here: the style's paint and layout are what the publisher intended for
+  // this data, independent of the transport it arrived over. The one
+  // incompatibility is `source-layer`, which names a layer inside a vector
+  // tile and which MapLibre rejects on a geojson source — it is dropped when
+  // the style layer lands on one. Attribute expressions (`["get", "naam"]`)
+  // work either way, provided the parquet was read with those columns; that is
+  // what setStyleFields arranges.
+  //
+  // `baseUrl` is the style document's own href, used to resolve its relative
+  // source URLs (see normalizePmtilesUrl).
+  applyGlStyle(glStyle, baseUrl = null) {
     if (!glStyle || !glStyle.layers) {return;}
 
-    // GeoParquet fallback sources are geojson and must not become candidates
-    // for style source mapping: styles are authored against tile sources, and
-    // their layers carry `source-layer`, which MapLibre rejects on a geojson
-    // source — binding them would blank the map. Those sources keep their
-    // default vector layers instead.
-    const geojsonSourceIds = new Set(
-      this._overlaySourceIds.filter(id => this.map.getSource(id)?.type === 'geojson')
-    );
-
-    this._clearOverlayLayers(geojsonSourceIds);
+    this._clearOverlayLayers();
 
     const sources = glStyle.sources || {};
     const styleSourceNames = Object.keys(sources);
+    const isGeojsonSource = (id) => this.map.getSource(id)?.type === 'geojson';
 
-    // Add non-PMTiles sources (currently geojson) directly. PMTiles sources
-    // in the style are matched positionally to the loaded PMTiles sources.
+    // A style may carry its own inline geojson source (an annotation overlay,
+    // say). Those are added as-is under their own name rather than mapped onto
+    // a loaded asset source.
     const directSourceIds = new Set();
-    const pmtilesStyleSourceNames = [];
+    const mappedStyleSourceNames = [];
     for (const name of styleSourceNames) {
       const src = sources[name];
-      if (src && src.type === 'geojson') {
+      if (src && src.type === 'geojson' && src.data) {
         try {
           this.map.addSource(name, src);
           this._glStyleSourceIds.push(name);
@@ -1218,17 +1257,23 @@ export default class StacMapLayer {
           console.warn(`Failed to add geojson source "${name}" from style`, err);
         }
       } else {
-        pmtilesStyleSourceNames.push(name);
+        mappedStyleSourceNames.push(name);
       }
     }
 
-    const mappableSourceIds = this._overlaySourceIds.filter(id => !geojsonSourceIds.has(id));
-    if (pmtilesStyleSourceNames.length > 0 && pmtilesStyleSourceNames.length !== mappableSourceIds.length) {
-      console.warn(`Style defines ${pmtilesStyleSourceNames.length} PMTiles-style source(s) but ${mappableSourceIds.length} PMTiles source(s) are loaded — mapping by position`);
+    const mappableSourceIds = [...this._overlaySourceIds];
+    // Zero loaded sources is not a mismatch worth reporting: MapView applies
+    // the style as soon as it has one, which can be while the assets are still
+    // downloading. The setAssets tail re-binds when they arrive.
+    if (mappedStyleSourceNames.length > 0 && mappableSourceIds.length > 0
+      && mappedStyleSourceNames.length !== mappableSourceIds.length) {
+      console.warn(`Style defines ${mappedStyleSourceNames.length} data source(s) but ${mappableSourceIds.length} asset source(s) are loaded — mapping by position`);
     }
 
-    // Build a lookup from each loaded PMTiles source's underlying URL to its
+    // Build a lookup from each loaded tile source's underlying URL to its
     // source ID, so style sources can be matched by URL when they specify one.
+    // Parquet-backed geojson sources have no URL and are only ever reached by
+    // the positional fallback below.
     const loadedUrlToSourceId = {};
     for (const sourceId of mappableSourceIds) {
       const loaded = this.map.getSource(sourceId);
@@ -1243,8 +1288,8 @@ export default class StacMapLayer {
     const sourceMapping = {};
     const usedSourceIds = new Set();
     const unmatchedStyleNames = [];
-    for (const name of pmtilesStyleSourceNames) {
-      const norm = normalizePmtilesUrl(sources[name] && sources[name].url);
+    for (const name of mappedStyleSourceNames) {
+      const norm = normalizePmtilesUrl(sources[name] && sources[name].url, baseUrl);
       const matched = norm ? loadedUrlToSourceId[norm] : undefined;
       if (matched) {
         sourceMapping[name] = matched;
@@ -1260,6 +1305,7 @@ export default class StacMapLayer {
       }
     }
 
+    const styledSourceIds = new Set();
     for (const layer of glStyle.layers) {
       let layerSpec;
       if (directSourceIds.has(layer.source)) {
@@ -1268,20 +1314,43 @@ export default class StacMapLayer {
         const mappedSource = sourceMapping[layer.source];
         if (!mappedSource) {continue;}
         layerSpec = { ...layer, source: mappedSource };
+        if (isGeojsonSource(mappedSource)) {
+          delete layerSpec['source-layer'];
+        }
       }
 
-      if (this.map.getLayer(layerSpec.id)) {
-        this.map.removeLayer(layerSpec.id);
+      try {
+        if (this.map.getLayer(layerSpec.id)) {
+          this.map.removeLayer(layerSpec.id);
+        }
+        this.map.addLayer(layerSpec);
+      } catch (err) {
+        // One unusable layer (a symbol layer when the basemap provides no
+        // glyphs, say) must not cost the rest of the style.
+        console.warn(`Failed to add style layer "${layerSpec.id}"`, err);
+        continue;
       }
-      this.map.addLayer(layerSpec);
       if (directSourceIds.has(layer.source)) {
         this._glStyleLayerIds.push(layerSpec.id);
       } else {
         this._overlayLayerIds.push(layerSpec.id);
+        styledSourceIds.add(layerSpec.source);
       }
     }
 
+    // A parquet-backed geojson source the style never reached — because the
+    // style only defines inline sources, or because its layers all failed to
+    // add — would be left invisible, since _clearOverlayLayers dropped the
+    // default layers it had. Give those their default styling back. Tile
+    // sources are not restored: their default layers need the source-layer
+    // names read from the tile metadata, which isn't available here.
+    for (const sourceId of mappableSourceIds) {
+      if (styledSourceIds.has(sourceId) || !isGeojsonSource(sourceId)) {continue;}
+      this._addDefaultVectorLayers(sourceId, [], { useSourceLayer: false });
+    }
+
     this._activeGlStyle = glStyle;
+    this._activeGlStyleBaseUrl = baseUrl;
   }
 
 }
