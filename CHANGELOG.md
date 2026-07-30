@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Discover MapLibre styles from assets with the `style` role, as Portolan's spec defines, instead of an obsolete `portolan:styles` manifest that no published collection carries
 - Handle state of downloads better and confirm leaving the page when downloading
 - Better error on request to the `/collections` or `.../items` endpoints
 - Collection list on Global Item Search was empty in certain situations
