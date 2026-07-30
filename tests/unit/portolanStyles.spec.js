@@ -100,6 +100,126 @@ describe('portolanStyles', () => {
       expect(resolveStyles(stac)).toEqual([])
     })
 
+    // Portolan core.md: styles are discovered by filtering collection assets
+    // on `roles: ["style"]`. No `portolan:styles` manifest exists any more.
+    describe('style-role assets', () => {
+      const styleAsset = (over = {}) => ({
+        type: 'application/vnd.mapbox.style+json',
+        roles: ['style'],
+        ...over,
+      })
+
+      it('discovers styles from assets with the style role', () => {
+        const stac = {
+          assets: {
+            data: { href: './d.parquet', roles: ['data'] },
+            'style-categorical': styleAsset({ href: './styles/categorical.json', title: 'Categorical MapLibre style' }),
+            'style-labeled': styleAsset({ href: './styles/labeled.json', title: 'Labeled MapLibre style' }),
+          },
+          getAbsoluteUrl: () => 'https://example.com/boundaries/nl/collection.json',
+        }
+        const result = resolveStyles(stac)
+        expect(result).toHaveLength(2)
+        expect(result[0]).toEqual({
+          name: 'style-categorical',
+          title: 'Categorical MapLibre style',
+          href: 'https://example.com/boundaries/nl/styles/categorical.json',
+        })
+        expect(result[1].href).toBe('https://example.com/boundaries/nl/styles/labeled.json')
+      })
+
+      it('preserves asset document order (the default is listed first)', () => {
+        const stac = {
+          assets: {
+            'style-a': styleAsset({ href: 'a.json' }),
+            'style-b': styleAsset({ href: 'b.json' }),
+          },
+          getAbsoluteUrl: () => 'https://example.com/c.json',
+        }
+        expect(resolveStyles(stac).map(s => s.name)).toEqual(['style-a', 'style-b'])
+      })
+
+      it('reads assets through getAssets() when stac-js provides it', () => {
+        const asset = {
+          ...styleAsset({ href: './styles/main.json', title: 'Main' }),
+          getKey: () => 'style-main',
+          getAbsoluteUrl: () => 'https://example.com/styles/main.json',
+        }
+        const stac = {
+          getAssets: () => [asset],
+          getAbsoluteUrl: () => 'https://example.com/collection.json',
+        }
+        const result = resolveStyles(stac)
+        expect(result).toEqual([
+          { name: 'style-main', title: 'Main', href: 'https://example.com/styles/main.json' },
+        ])
+      })
+
+      it('ignores assets without the style role', () => {
+        const stac = {
+          assets: {
+            visual: { href: './v.pmtiles', roles: ['visual'], type: 'application/vnd.pmtiles' },
+            thumbnail: { href: './t.png', roles: ['thumbnail'], type: 'image/png' },
+          },
+          getAbsoluteUrl: () => 'https://example.com/c.json',
+        }
+        expect(resolveStyles(stac)).toEqual([])
+      })
+
+      // Raster styling is still incubating in the spec with no decided format,
+      // so a style-role asset of some other media type must not reach MapLibre.
+      it('ignores style-role assets of a non-MapLibre media type', () => {
+        const stac = {
+          assets: {
+            'style-sld': { href: './styles/x.sld', roles: ['style'], type: 'application/vnd.ogc.sld+xml' },
+          },
+          getAbsoluteUrl: () => 'https://example.com/c.json',
+        }
+        expect(resolveStyles(stac)).toEqual([])
+      })
+
+      it('accepts a style-role asset that declares no media type', () => {
+        const stac = {
+          assets: { 'style-main': { href: './styles/main.json', roles: ['style'] } },
+          getAbsoluteUrl: () => 'https://example.com/c.json',
+        }
+        expect(resolveStyles(stac)).toHaveLength(1)
+      })
+
+      it('falls back to the asset key, minus the styles/ prefix, when untitled', () => {
+        const stac = {
+          assets: { 'styles/categorical': styleAsset({ href: './styles/categorical.json' }) },
+          getAbsoluteUrl: () => 'https://example.com/c.json',
+        }
+        expect(resolveStyles(stac)[0].title).toBe('categorical')
+      })
+
+      it('strips a common prefix across style-role asset titles', () => {
+        const stac = {
+          assets: {
+            s1: styleAsset({ href: 's1.json', title: 'Land Use - Residential' }),
+            s2: styleAsset({ href: 's2.json', title: 'Land Use - Commercial' }),
+          },
+          getAbsoluteUrl: () => 'https://example.com/c.json',
+        }
+        expect(resolveStyles(stac).map(s => s.title)).toEqual(['Residential', 'Commercial'])
+      })
+
+      // The legacy manifest is a fallback only: a catalog carrying both must
+      // follow the assets, which are what the spec defines.
+      it('prefers style-role assets over a legacy portolan:styles manifest', () => {
+        const stac = {
+          properties: { 'portolan:styles': ['legacy'] },
+          assets: {
+            legacy: { href: './styles/legacy.json', title: 'Legacy', getAbsoluteUrl: () => 'https://example.com/styles/legacy.json' },
+            'style-new': styleAsset({ href: './styles/new.json', title: 'New' }),
+          },
+          getAbsoluteUrl: () => 'https://example.com/c.json',
+        }
+        expect(resolveStyles(stac).map(s => s.name)).toEqual(['style-new'])
+      })
+    })
+
     it('returns empty array when styles is empty', () => {
       const stac = { properties: { 'portolan:styles': [] } }
       expect(resolveStyles(stac)).toEqual([])

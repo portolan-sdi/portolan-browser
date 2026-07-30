@@ -1,15 +1,61 @@
 import { toAbsolute } from 'stac-js/src/http.js';
 
-export function resolveStyles(stac) {
+// Media type of a MapLibre GL style file, per Portolan formats.md. Assets that
+// declare no type at all are still accepted (see isStyleAsset): the `style`
+// role is the normative signal and some writers omit `type`.
+const STYLE_MEDIA_TYPE = 'application/vnd.mapbox.style+json';
+
+// Portolan core.md: "each style MUST be registered as a collection-level asset
+// with `roles: ["style"]` … A client or agent discovers a collection's styles
+// by filtering assets on that role, so no separate manifest is needed and this
+// specification defines none."
+//
+// The media type is checked too, so a future non-MapLibre style asset (raster
+// styling is still incubating in the spec, format undecided) isn't handed to
+// MapLibre as if it were a GL style.
+function isStyleAsset(asset) {
+  const roles = Array.isArray(asset?.roles) ? asset.roles : [];
+  if (!roles.includes('style')) {return false;}
+  const type = asset.type;
+  return !type || type.includes(STYLE_MEDIA_TYPE);
+}
+
+// Assets as [key, asset] pairs, in document order. stac-js exposes getAssets()
+// on Collections and Items; the plain-object fallback keeps this usable with
+// bare STAC JSON (and in tests).
+function assetEntries(stac) {
+  const assets = stac?.assets;
+  if (typeof stac?.getAssets === 'function') {
+    return stac.getAssets().map(a => [a.getKey?.() ?? a.key, a]);
+  }
+  return assets ? Object.entries(assets) : [];
+}
+
+// Styles declared the spec way: collection assets with the `style` role, in
+// document order (core.md: "Where multiple styles exist, the default SHOULD be
+// listed first").
+function stylesFromAssets(stac, baseUrl) {
+  return assetEntries(stac)
+    .filter(([, asset]) => isStyleAsset(asset))
+    .map(([key, asset]) => ({
+      name: key,
+      title: asset.title || String(key).replace(/^styles\//, ''),
+      href: asset.getAbsoluteUrl?.() || toAbsolute(asset.href, baseUrl),
+    }));
+}
+
+// Pre-spec Portolan catalogs listed their styles in a `portolan:styles`
+// manifest instead of tagging the assets. The spec dropped that field and
+// defines no manifest, so it is only consulted when no `style`-role asset
+// exists — keeping already-published catalogs rendering.
+function stylesFromLegacyManifest(stac, baseUrl) {
   const styleEntries = stac.properties?.['portolan:styles']
     || stac['portolan:styles']
     || [];
 
   if (!Array.isArray(styleEntries) || styleEntries.length === 0) {return [];}
 
-  const baseUrl = stac.getAbsoluteUrl?.() || '';
-
-  const styles = styleEntries
+  return styleEntries
     .map(entry => {
       if (typeof entry === 'string') {
         const asset = stac.assets?.[entry];
@@ -33,6 +79,17 @@ export function resolveStyles(stac) {
       return null;
     })
     .filter(Boolean);
+}
+
+export function resolveStyles(stac) {
+  if (!stac) {return [];}
+  const baseUrl = stac.getAbsoluteUrl?.() || '';
+
+  const styles = stylesFromAssets(stac, baseUrl);
+  if (styles.length === 0) {
+    styles.push(...stylesFromLegacyManifest(stac, baseUrl));
+  }
+  if (styles.length === 0) {return [];}
 
   if (styles.length > 1) {
     const titles = styles.map(s => s.title);
