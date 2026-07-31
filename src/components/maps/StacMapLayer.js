@@ -16,6 +16,7 @@ import {
   MAX_MAP_FEATURES,
   MAX_MAP_PARQUET_BYTES,
   VECTOR_NOTICE_ERROR,
+  VECTOR_NOTICE_REPROJECTION,
   VECTOR_NOTICE_TOO_BIG,
   VECTOR_NOTICE_TOO_LARGE,
 } from '../../utils/parquetShared.js';
@@ -486,6 +487,10 @@ export default class StacMapLayer {
         // loading the hyparquet chunk): a basemap switch re-runs setAssets
         // with the same URLs and must not re-fetch the file.
         let result = this._parquetResultCache.get(url);
+        // Only a fresh load should report dropped features: a basemap switch
+        // re-runs setAssets against the cache, and re-warning there would
+        // repeat the same message for every toggle.
+        const firstLoad = !result;
         if (!result) {
           if (!deps) {deps = await this._loadParquetDeps();}
           const controller = new AbortController();
@@ -506,17 +511,21 @@ export default class StacMapLayer {
           continue;
         }
         if (result.droppedFeatures) {
-          // Reprojection put these outside the lon/lat domain, so either the
-          // coordinates fall outside the declared CRS's area of use or the
-          // declared CRS is wrong for the file. Drawing them would streak
-          // shapes across the map rather than fail visibly.
-          console.warn(
-            `Dropped ${result.droppedFeatures} feature(s) from ${url} that could not be reprojected from ${result.reprojectedFrom}`
-          );
+          // Reprojection put these outside the transform's usable domain, so
+          // either the coordinates fall outside the declared CRS's area of use
+          // or the declared CRS is wrong for the file. Drawing them would
+          // streak shapes across the map rather than fail visibly.
+          if (firstLoad) {
+            console.warn(
+              `Dropped ${result.droppedFeatures} feature(s) from ${url} that could not be reprojected from ${result.reprojectedFrom}`
+            );
+          }
           if (result.featureCollection.features.length === 0) {
             // Nothing survived — an empty source renders a blank map with no
-            // explanation, so surface it as a failure instead.
-            notice({ reason: VECTOR_NOTICE_ERROR });
+            // explanation, so surface it as a failure instead. This is not a
+            // load error: the file downloaded and parsed fine, so it gets its
+            // own reason rather than the generic one.
+            notice({ reason: VECTOR_NOTICE_REPROJECTION, crs: result.reprojectedFrom });
             continue;
           }
         }

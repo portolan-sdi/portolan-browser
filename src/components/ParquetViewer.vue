@@ -176,8 +176,9 @@ export default {
     },
     async onSelectRow({ origIndex, bbox }) {
       const crs = this.geoInfo.crs || 'EPSG:4326';
+      const crsDefinition = this.geoInfo.crsDefinition;
       if (bbox) {
-        this.$emit('highlight-bbox', { bbox, crs });
+        this.$emit('highlight-bbox', { bbox, crs, crsDefinition });
         return;
       }
       if (this.geoInfo.geometryColumn && this.parquetFile && this.parquetMetadata) {
@@ -187,7 +188,7 @@ export default {
             this.geoInfo.geometryColumn, origIndex
           );
           if (parsedBbox) {
-            this.$emit('highlight-bbox', { bbox: parsedBbox, crs });
+            this.$emit('highlight-bbox', { bbox: parsedBbox, crs, crsDefinition });
           }
         } catch (err) {
           console.warn('Failed to parse geometry for highlight', err);
@@ -196,8 +197,9 @@ export default {
     },
     async onZoomToFeature({ origIndex, bbox }) {
       const crs = this.geoInfo.crs || 'EPSG:4326';
+      const crsDefinition = this.geoInfo.crsDefinition;
       if (bbox) {
-        this.$emit('zoom-to-bbox', { bbox, crs });
+        this.$emit('zoom-to-bbox', { bbox, crs, crsDefinition });
         this.scrollToMap();
         return;
       }
@@ -208,7 +210,7 @@ export default {
             this.geoInfo.geometryColumn, origIndex
           );
           if (parsedBbox) {
-            this.$emit('zoom-to-bbox', { bbox: parsedBbox, crs });
+            this.$emit('zoom-to-bbox', { bbox: parsedBbox, crs, crsDefinition });
             this.scrollToMap();
           }
         } catch (err) {

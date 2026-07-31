@@ -1,6 +1,11 @@
 import { asyncBufferFromUrl, parquetMetadataAsync, parquetRead, parquetReadObjects, parquetSchema } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
-import proj4 from 'proj4';
+import {
+  createDomainGuard,
+  createLonLatTransform,
+  MAP_RENDERABLE_CRS,
+  reprojectGeometry,
+} from './crs.js';
 import {
   isParquetAsset,
   MAX_MAP_FEATURES,
@@ -11,106 +16,14 @@ import {
 } from './parquetShared.js';
 
 export { isParquetAsset, MAX_MAP_FEATURES, MAX_MAP_PARQUET_BYTES, MAX_ROWS };
+// Re-exported so callers (and tests) can reach the CRS layer through the
+// loader they already import.
+export { createDomainGuard, createLonLatTransform, reprojectGeometry };
 
-// Coordinate reference systems we can put on the map as-is. `null` means the
-// file declares no CRS at all — GeoParquet's default is then OGC:CRS84
-// (lon/lat). Anything else is reprojected to lon/lat before it reaches
-// MapLibre (see createLonLatTransform); a CRS we can neither pass through nor
-// build a transform for is rejected for map display.
-const MAP_RENDERABLE_CRS = [null, 'OGC:CRS84', 'EPSG:4326'];
-
-/**
- * Build a coordinate transform from a GeoParquet CRS to lon/lat, or return
- * null when neither input identifies a system proj4 can use.
- *
- * Prefers the file's own PROJJSON over its authority code: the definition is
- * self-contained, so it works for systems proj4 doesn't ship (it only has
- * WGS84 and Web Mercator built in) without a network round-trip. The code is
- * the fallback for files that declare `id` but whose PROJJSON proj4 rejects,
- * and it is what makes EPSG:3857 work — detectGeometryInfo deliberately
- * leaves `crsDefinition` null for it.
- *
- * proj4 ignores the axis order declared in a PROJJSON `coordinate_system`, so
- * it always emits lon/lat here — which matches the x/y order the WKB
- * coordinates were read in. Both directions of a lat/lon mix-up would need a
- * flip, so the two cancel out and nothing has to be swapped.
- */
-export function createLonLatTransform(crs, crsDefinition) {
-  for (const source of [crsDefinition, crs]) {
-    if (!source) {continue;}
-    try {
-      return proj4(source, 'EPSG:4326');
-    } catch {
-      // proj4 throws on any definition it can't resolve — including a bare
-      // name like 'unidentified' and PROJJSON missing a projection method.
-      // It throws bare strings rather than Errors, hence the argument-less
-      // catch. Fall through to the next candidate.
-    }
-  }
-  return null;
-}
-
-// A reprojected position is only usable if it lands inside the lon/lat domain.
-// The range test catches more than a finite test does: proj4 returns NaN,
-// Infinity *or* an out-of-range angle for much of the input that falls outside
-// a projection's area of use, and MapLibre draws NaN coordinates as invisible
-// gaps and out-of-range ones as spikes across the world.
-//
-// It is a guard, not a validator. Some out-of-domain input reprojects to a
-// perfectly well-formed lon/lat in the wrong place (1e18 metres in RD New
-// comes back as a real-looking point south of New Zealand); no coordinate-level
-// check can catch that, only comparing against the file's declared bbox could.
-function isLonLat(x, y) {
-  return Number.isFinite(x) && Number.isFinite(y)
-    && x >= -180 && x <= 180 && y >= -90 && y <= 90;
-}
-
-// Walk a GeoJSON coordinates value — a bare position, or arbitrarily nested
-// arrays of them — applying `transform` to each position. Returns null if any
-// position fails to reproject, which drops the whole geometry: a partly
-// transformed shape would render as a spike across the map.
-function mapPositions(node, transform) {
-  if (!Array.isArray(node)) {return null;}
-  if (typeof node[0] === 'number') {
-    const [x, y] = transform.forward([node[0], node[1]]);
-    if (!isLonLat(x, y)) {return null;}
-    // Preserve any third (and further) ordinates untouched; proj4 would pass
-    // z through unchanged for these 2D-to-2D transforms anyway.
-    return node.length > 2 ? [x, y, ...node.slice(2)] : [x, y];
-  }
-  const out = [];
-  for (const child of node) {
-    const mapped = mapPositions(child, transform);
-    if (mapped === null) {return null;}
-    out.push(mapped);
-  }
-  return out;
-}
-
-/**
- * Reproject a GeoJSON geometry into lon/lat, or return null if any of its
- * positions falls outside the transform's usable domain.
- */
-export function reprojectGeometry(geometry, transform) {
-  if (!geometry) {return null;}
-  if (Array.isArray(geometry.geometries)) {
-    const geometries = [];
-    for (const member of geometry.geometries) {
-      const mapped = reprojectGeometry(member, transform);
-      if (mapped === null) {return null;}
-      geometries.push(mapped);
-    }
-    return { ...geometry, geometries };
-  }
-  if (!geometry.coordinates) {return null;}
-  let coordinates;
-  try {
-    coordinates = mapPositions(geometry.coordinates, transform);
-  } catch {
-    return null;
-  }
-  return coordinates === null ? null : { ...geometry, coordinates };
-}
+// How long the reprojection loop may hold the main thread before yielding.
+// One frame at 60 Hz: long enough that the yields cost little, short enough
+// that the page keeps painting.
+const REPROJECT_YIELD_MS = 16;
 
 // Promise wrapper around hyparquet's callback-style parquetRead, preserving
 // its default (array) row format. The object-format path uses hyparquet's own
@@ -437,6 +350,7 @@ export async function loadGeoJsonFromParquet(url, { signal } = {}) {
   if (!MAP_RENDERABLE_CRS.includes(crs) && !transform) {
     throw new Error(`GeoParquet CRS ${crs} is not supported for map display`);
   }
+  const guard = transform ? createDomainGuard(crs, crsDefinition) : null;
   if (totalRows > maxFeatures) {
     return { exceeded: true, reason: VECTOR_NOTICE_TOO_LARGE, totalRows };
   }
@@ -466,10 +380,24 @@ export async function loadGeoJsonFromParquet(url, { signal } = {}) {
 
   const features = [];
   let droppedFeatures = 0;
+  let lastYield = Date.now();
   for (const row of rows) {
     // Belt-and-braces: never build more than maxFeatures features, whatever
     // the reader delivered.
     if (features.length >= maxFeatures) {break;}
+    // Reprojection is a per-position proj4 call, so a file near the byte cap
+    // is seconds of work. Hand the event loop back periodically so the page
+    // stays responsive and an abort can still interrupt us. Files that aren't
+    // reprojected never reach the yield, and neither do small ones.
+    if (transform && Date.now() - lastYield >= REPROJECT_YIELD_MS) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (signal?.aborted) {
+        const err = new Error('Aborted');
+        err.name = 'AbortError';
+        throw err;
+      }
+      lastYield = Date.now();
+    }
     const raw = row[geometryColumn];
     if (raw === null || raw === undefined) {continue;}
     if (raw instanceof Uint8Array || raw instanceof ArrayBuffer) {
@@ -477,7 +405,7 @@ export async function loadGeoJsonFromParquet(url, { signal } = {}) {
       // geometry column, i.e. the file lacks GeoParquet `geo` metadata.
       throw new Error('Geometry column was not decoded (missing GeoParquet metadata)');
     }
-    const geometry = transform ? reprojectGeometry(raw, transform) : raw;
+    const geometry = transform ? reprojectGeometry(raw, transform, guard) : raw;
     if (geometry === null) {
       droppedFeatures++;
       continue;

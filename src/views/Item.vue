@@ -83,14 +83,14 @@ export default defineComponent({
     }
   },
   methods: {
-    zoomToBbox({ bbox, crs }) {
+    zoomToBbox({ bbox, crs, crsDefinition }) {
       if (this.$refs.mapView?.zoomToBbox) {
-        this.$refs.mapView.zoomToBbox(bbox, crs);
+        this.$refs.mapView.zoomToBbox(bbox, crs, crsDefinition);
       }
     },
-    highlightBbox({ bbox, crs }) {
+    highlightBbox({ bbox, crs, crsDefinition }) {
       if (this.$refs.mapView?.highlightBbox) {
-        this.$refs.mapView.highlightBbox(bbox, crs);
+        this.$refs.mapView.highlightBbox(bbox, crs, crsDefinition);
       }
     }
   },

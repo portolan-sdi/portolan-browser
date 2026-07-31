@@ -23,6 +23,7 @@ import { asyncBufferFromUrl, parquetMetadataAsync, parquetRead, parquetSchema } 
 import {
   createLonLatTransform,
   loadGeoJsonFromParquet,
+  reprojectGeometry,
   loadGeometryTypesForRows,
   getBboxForRow,
   bboxFromGeoJson,
@@ -35,14 +36,21 @@ const POLYGON = {
   coordinates: [[[-71.1, 42.2], [-70.9, 42.2], [-70.9, 42.4], [-71.1, 42.2]]],
 }
 
-// EPSG:28992 (Amersfoort / RD New) as PROJJSON, the shape a GeoParquet writer
-// puts in the `geo` metadata. Self-contained: proj4 ships only WGS84 and Web
-// Mercator, so a file like this is only renderable via its own definition.
+// EPSG:28992 (Amersfoort / RD New) as PROJJSON, matching what a real writer
+// emits — including `base_crs.id` and `bbox`, both of which are load-bearing.
+// proj4 ships WGS84, NAD83, Web Mercator and the WGS84 UTM zones but no
+// national grid, so a file like this is only renderable via its own definition.
+//
+// `base_crs.id` is what lets proj4 look up the Amersfoort→WGS84 datum shift.
+// Without it the transform silently omits the shift and lands 113.8 m away,
+// which is close enough to look right on a country-wide screenshot — so an
+// abbreviated fixture would pin the wrong answer instead of catching that.
 const RD_NEW_PROJJSON = {
   type: 'ProjectedCRS',
   name: 'Amersfoort / RD New',
   base_crs: {
     name: 'Amersfoort',
+    id: { authority: 'EPSG', code: 4289 },
     datum: {
       type: 'GeodeticReferenceFrame',
       name: 'Amersfoort',
@@ -74,13 +82,24 @@ const RD_NEW_PROJJSON = {
       { name: 'Northing', abbreviation: 'Y', direction: 'north', unit: 'metre' },
     ],
   },
+  bbox: { south_latitude: 50.75, west_longitude: 3.2, north_latitude: 53.7, east_longitude: 7.22 },
   id: { authority: 'EPSG', code: 28992 },
 }
 
-// RD New's own origin: 155000/463000 metres is exactly 5.38763888888889 E,
-// 52.1561605555556 N by definition, which makes it a self-checking fixture.
+// RD New's own origin. 155000/463000 metres is 5.38763888888889 E,
+// 52.1561605555556 N *on the Amersfoort datum* — that is how the projection is
+// defined — but the transform's output is WGS84, so the expected value is that
+// point after the Amersfoort→WGS84 shift, 113.8 m to the south-west. Verified
+// against `+proj=sterea ... +ellps=bessel +towgs84=565.4171,50.3319,465.5524,
+// -0.398957,0.343988,-1.87740,4.0725`, which agrees to 0.00 m.
 const RD_ORIGIN = [155000, 463000]
-const RD_ORIGIN_LONLAT = [5.38763888888889, 52.1561605555556]
+const RD_ORIGIN_LONLAT = [5.387203504610944, 52.15517229274862]
+
+// A second point well inside the area of use, so the fixture is not only
+// exercised at the projection's own origin (where several kinds of error
+// cancel): Amsterdam, 121687/487484 m.
+const RD_AMSTERDAM = [121687, 487484]
+const RD_AMSTERDAM_LONLAT = [4.898009884440856, 52.37421815184261]
 
 // Wires the hyparquet mocks so that loadParquetMetadata sees a GeoParquet
 // file with a `geometry` column, `numRows` rows, and (optionally) a CRS, and
@@ -326,9 +345,10 @@ describe('loadGeoJsonFromParquet reprojection', () => {
   })
 
   it('drops and counts features whose coordinates leave the lon/lat domain', async () => {
-    // A Web Mercator easting of 1e9 metres is ~24 times around the world; it
-    // reprojects to a longitude of 8623°. (Northings saturate at exactly ±90
-    // instead of overflowing, so easting is the ordinate that shows this.)
+    // A Web Mercator easting of 1e9 metres is ~24 times around the world, so
+    // it falls outside the projection's own input domain and is rejected
+    // before proj4 sees it (see the domain-guard tests below for why the
+    // check has to happen on the way in).
     mockParquetFile({
       numRows: 2,
       rows: [
@@ -404,6 +424,270 @@ function closeToLonLat(actual, expected) {
   expect(actual[0]).toBeCloseTo(expected[0], 9)
   expect(actual[1]).toBeCloseTo(expected[1], 9)
 }
+
+// EPSG:27572 (NTF (Paris) / Lambert zone II), abridged from the real EPSG
+// PROJJSON. The prime meridian is Paris expressed in *grads*, which is the
+// interesting part: PROJJSON writes a non-degree unit as a `{value, unit}`
+// object, and proj4's parser multiplies that object by π/180 straight away,
+// yielding `from_greenwich = NaN`. Because proj4 then guards the offset with
+// `if (source.from_greenwich)` and NaN is falsy, it silently drops the whole
+// Paris meridian — 2.337°, about 171 km — and returns a well-formed lon/lat
+// that no coordinate-level check can flag.
+const NTF_PARIS_PROJJSON = {
+  type: 'ProjectedCRS',
+  name: 'NTF (Paris) / Lambert zone II',
+  base_crs: {
+    name: 'NTF (Paris)',
+    id: { authority: 'EPSG', code: 4807 },
+    datum: {
+      type: 'GeodeticReferenceFrame',
+      name: 'Nouvelle Triangulation Francaise (Paris)',
+      ellipsoid: { name: 'Clarke 1880 (IGN)', semi_major_axis: 6378249.2, semi_minor_axis: 6356515 },
+      prime_meridian: {
+        name: 'Paris',
+        longitude: {
+          value: 2.5969213,
+          unit: { type: 'AngularUnit', name: 'grad', conversion_factor: 0.0157079632679489 },
+        },
+      },
+    },
+  },
+  conversion: {
+    name: 'Lambert zone II',
+    method: { name: 'Lambert Conic Conformal (1SP)', id: { authority: 'EPSG', code: 9801 } },
+    parameters: [
+      { name: 'Latitude of natural origin', value: 52, unit: { type: 'AngularUnit', name: 'grad', conversion_factor: 0.0157079632679489 } },
+      { name: 'Longitude of natural origin', value: 0, unit: { type: 'AngularUnit', name: 'grad', conversion_factor: 0.0157079632679489 } },
+      { name: 'Scale factor at natural origin', value: 0.99987742, unit: 'unity' },
+      { name: 'False easting', value: 600000, unit: 'metre' },
+      { name: 'False northing', value: 2200000, unit: 'metre' },
+    ],
+  },
+  coordinate_system: {
+    subtype: 'Cartesian',
+    axis: [
+      { name: 'Easting', abbreviation: 'X', direction: 'east', unit: 'metre' },
+      { name: 'Northing', abbreviation: 'Y', direction: 'north', unit: 'metre' },
+    ],
+  },
+  bbox: { south_latitude: 42.33, west_longitude: -4.87, north_latitude: 51.14, east_longitude: 8.23 },
+  id: { authority: 'EPSG', code: 27572 },
+}
+
+describe('createLonLatTransform prime meridian handling', () => {
+  it('applies a prime meridian declared in grads', () => {
+    // Without the unit conversion the Paris offset is dropped entirely and
+    // longitude comes back as 0 — the Bay of Biscay instead of Paris.
+    const transform = createLonLatTransform('EPSG:27572', NTF_PARIS_PROJJSON)
+    const [lon, lat] = transform.forward([600000, 2428000])
+    expect(lon).toBeCloseTo(2.3372291699, 6)
+    expect(lat).toBeCloseTo(48.8504, 3)
+  })
+
+  it('refuses a definition whose prime meridian cannot be converted', () => {
+    // An angular unit with no conversion factor cannot be reduced to degrees.
+    // Handing it to proj4 anyway would silently skip the offset, so the
+    // definition is dropped and the (unresolvable) code refuses the file.
+    const broken = structuredClone(NTF_PARIS_PROJJSON)
+    broken.base_crs.datum.prime_meridian.longitude = { value: 2.5969213, unit: 'grad' }
+    expect(createLonLatTransform('EPSG:27572', broken)).toBeNull()
+  })
+
+  it('leaves a Greenwich-based definition alone', () => {
+    const transform = createLonLatTransform('EPSG:28992', RD_NEW_PROJJSON)
+    closeToLonLat(transform.forward(RD_ORIGIN), RD_ORIGIN_LONLAT)
+  })
+})
+
+describe('createLonLatTransform candidate priority', () => {
+  it('uses the file definition even when the authority code also resolves', () => {
+    // proj4 ships every WGS84 UTM zone, so EPSG:32633 resolves on its own.
+    // Pairing it with RD New's definition is deliberately mismatched: only
+    // definition-first ordering can produce the RD New answer, which is what
+    // makes this test able to detect the order being reversed.
+    const transform = createLonLatTransform('EPSG:32633', RD_NEW_PROJJSON)
+    closeToLonLat(transform.forward(RD_ORIGIN), RD_ORIGIN_LONLAT)
+  })
+
+  it('resolves a UTM zone from its authority code', () => {
+    const transform = createLonLatTransform('EPSG:32631', null)
+    const [lon, lat] = transform.forward([500000, 0])
+    expect(lon).toBeCloseTo(3, 9)
+    expect(lat).toBeCloseTo(0, 9)
+  })
+})
+
+describe('reprojection domain guard', () => {
+  // A stub transform pins the lon/lat range check exactly, without a real
+  // projection's arithmetic deciding which coordinates are reachable.
+  const fixedTransform = (out) => ({ forward: () => out })
+  const point = { type: 'Point', coordinates: [0, 0] }
+
+  it.each([
+    ['the north-east corner', [180, 90]],
+    ['the south-west corner', [-180, -90]],
+  ])('keeps a position on %s of the lon/lat domain', (_label, out) => {
+    expect(reprojectGeometry(point, fixedTransform(out))).not.toBeNull()
+  })
+
+  it.each([
+    ['longitude past +180', [180.0000001, 0]],
+    ['longitude past -180', [-180.0000001, 0]],
+    ['latitude past +90', [0, 90.0000001]],
+    ['latitude past -90', [0, -90.0000001]],
+    // NaN and ±Infinity are rejected by the range comparisons alone (every
+    // comparison against NaN is false), so the explicit finite check is
+    // belt-and-braces rather than load-bearing.
+    ['NaN', [NaN, 0]],
+    ['Infinity', [Infinity, 0]],
+    ['-Infinity', [0, -Infinity]],
+  ])('drops a position with %s', (_label, out) => {
+    expect(reprojectGeometry(point, fixedTransform(out))).toBeNull()
+  })
+
+  it('rejects Web Mercator input past the world extent instead of wrapping it', async () => {
+    // proj4 wraps an easting past the extent back across the antimeridian, so
+    // a line that runs off the edge would otherwise be drawn as a streak most
+    // of the way around the globe.
+    mockParquetFile({
+      numRows: 1,
+      rows: [{ geometry: { type: 'LineString', coordinates: [[19000000, 0], [20037508, 0], [20500000, 0]] } }],
+      crs: { id: { authority: 'EPSG', code: 3857 } },
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/webmerc.parquet')
+    expect(result.featureCollection.features).toHaveLength(0)
+    expect(result.droppedFeatures).toBe(1)
+  })
+
+  it('still renders legitimate data close to the antimeridian', async () => {
+    mockParquetFile({
+      numRows: 1,
+      rows: [{ geometry: { type: 'LineString', coordinates: [[19900000, -2000000], [20030000, -2000000]] } }],
+      crs: { id: { authority: 'EPSG', code: 3857 } },
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/fiji.parquet')
+    expect(result.droppedFeatures).toBe(0)
+    const [[lon1], [lon2]] = result.featureCollection.features[0].geometry.coordinates
+    expect(lon1).toBeCloseTo(178.765, 2)
+    expect(lon2).toBeCloseTo(179.933, 2)
+  })
+
+  it('rejects a Web Mercator northing past the world extent instead of saturating it', async () => {
+    // proj4 clamps an absurd northing to exactly ±90 rather than overflowing,
+    // so without an input check every such feature piles onto the pole.
+    mockParquetFile({
+      numRows: 1,
+      rows: [{ geometry: { type: 'Point', coordinates: [0, 1e18] } }],
+      crs: { id: { authority: 'EPSG', code: 3857 } },
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/webmerc.parquet')
+    expect(result.featureCollection.features).toHaveLength(0)
+    expect(result.droppedFeatures).toBe(1)
+  })
+
+  it('drops positions that land far outside the declared area of use', async () => {
+    // 1e9 metres in RD New reprojects to a well-formed lon/lat south of New
+    // Zealand. Only the declared area of use can catch that.
+    mockParquetFile({
+      numRows: 2,
+      rows: [
+        { geometry: { type: 'Point', coordinates: [1e9, 1e9] } },
+        { geometry: { type: 'Point', coordinates: RD_AMSTERDAM } },
+      ],
+      crs: RD_NEW_PROJJSON,
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/rd.parquet')
+    expect(result.droppedFeatures).toBe(1)
+    closeToLonLat(result.featureCollection.features[0].geometry.coordinates, RD_AMSTERDAM_LONLAT)
+  })
+
+  it('allows data that overhangs the area of use by a little', async () => {
+    // Area-of-use boxes are advisory; a dataset spilling just past its edge is
+    // normal and must not be dropped.
+    const justOutside = [155000, 700000] // ~54.3 N, north of the 53.7 N bound
+    mockParquetFile({
+      numRows: 1,
+      rows: [{ geometry: { type: 'Point', coordinates: justOutside } }],
+      crs: RD_NEW_PROJJSON,
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/rd.parquet')
+    expect(result.droppedFeatures).toBe(0)
+    expect(result.featureCollection.features[0].geometry.coordinates[1]).toBeGreaterThan(53.7)
+  })
+
+  it('drops positions moderately outside the area of use, not just absurd ones', async () => {
+    // 1e6 m past the RD origin lands at ~23.4 E, 16 degrees east of the
+    // declared 7.22 E bound. Pinning a case this close stops the margin from
+    // being widened until the check no longer does anything.
+    mockParquetFile({
+      numRows: 1,
+      rows: [{ geometry: { type: 'Point', coordinates: [1155000, 1463000] } }],
+      crs: RD_NEW_PROJJSON,
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/rd.parquet')
+    expect(result.featureCollection.features).toHaveLength(0)
+    expect(result.droppedFeatures).toBe(1)
+  })
+
+  it('drops a GeometryCollection when any member fails, rather than keeping a partial one', async () => {
+    mockParquetFile({
+      numRows: 1,
+      rows: [{
+        geometry: {
+          type: 'GeometryCollection',
+          geometries: [
+            { type: 'Point', coordinates: RD_ORIGIN },
+            { type: 'Point', coordinates: [1e9, 1e9] },
+          ],
+        },
+      }],
+      crs: RD_NEW_PROJJSON,
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/rd.parquet')
+    expect(result.featureCollection.features).toHaveLength(0)
+    expect(result.droppedFeatures).toBe(1)
+  })
+})
+
+describe('reprojection coordinate shape', () => {
+  it('preserves a fourth ordinate as well as a third', async () => {
+    mockParquetFile({
+      numRows: 1,
+      rows: [{ geometry: { type: 'Point', coordinates: [...RD_ORIGIN, 12.5, 99] } }],
+      crs: RD_NEW_PROJJSON,
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/rd.parquet')
+    expect(result.featureCollection.features[0].geometry.coordinates.slice(2)).toEqual([12.5, 99])
+  })
+
+  it('ignores the axis order a PROJJSON coordinate_system declares', () => {
+    // GeoParquet always stores x/y in WKB regardless of the CRS's declared
+    // axis order, and proj4 only honours `axis` when forward() is called with
+    // an explicit enforceAxis argument (which we never pass). Pinning this
+    // makes the assumption fail loudly if proj4 ever changes its default.
+    const northFirst = structuredClone(RD_NEW_PROJJSON)
+    northFirst.coordinate_system.axis = [
+      { name: 'Northing', abbreviation: 'Y', direction: 'north', unit: 'metre' },
+      { name: 'Easting', abbreviation: 'X', direction: 'east', unit: 'metre' },
+    ]
+    const eastFirst = createLonLatTransform('EPSG:28992', RD_NEW_PROJJSON)
+    const flipped = createLonLatTransform('EPSG:28992', northFirst)
+    expect(flipped.forward(RD_ORIGIN)).toEqual(eastFirst.forward(RD_ORIGIN))
+  })
+})
+
+describe('declared lon/lat CRSs are passed through, not reprojected', () => {
+  it('passes through an explicitly declared EPSG:4326', async () => {
+    mockParquetFile({
+      numRows: 1,
+      rows: [{ geometry: POLYGON }],
+      crs: { id: { authority: 'EPSG', code: 4326 } },
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/wgs84.parquet')
+    expect(result.reprojectedFrom).toBeNull()
+    expect(result.featureCollection.features[0].geometry).toEqual(POLYGON)
+  })
+})
 
 describe('decoded-GeoJSON geometry handling (hyparquet >= 1.25)', () => {
   beforeEach(() => {

@@ -30,6 +30,11 @@ export const MAX_MAP_PARQUET_BYTES = 50 * 1024 * 1024;
 export const VECTOR_NOTICE_TOO_LARGE = 'tooLarge';
 export const VECTOR_NOTICE_TOO_BIG = 'tooBig';
 export const VECTOR_NOTICE_ERROR = 'error';
+// Distinct from ERROR: the file downloaded and parsed fine, but every feature
+// reprojected outside the transform's usable domain, so there is nothing to
+// draw. Calling that a load failure points the user at the network when the
+// problem is the declared CRS or the coordinates themselves.
+export const VECTOR_NOTICE_REPROJECTION = 'reprojection';
 
 // Matches the sibling predicates in StacMapLayer (isCogAsset/isPmtilesAsset):
 // substring media-type match — so parameterized types like

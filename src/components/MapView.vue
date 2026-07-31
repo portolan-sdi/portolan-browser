@@ -40,7 +40,8 @@ import TerrainControl from './maps/TerrainControl.vue';
 import StylePicker from './maps/StylePicker.vue';
 import StacMapLayer from './maps/StacMapLayer.js';
 import { resolveStyles, loadStyleJson, extractLegend } from '../utils/portolanStyles.js';
-import { VECTOR_NOTICE_TOO_BIG, VECTOR_NOTICE_TOO_LARGE } from '../utils/parquetShared.js';
+import { VECTOR_NOTICE_REPROJECTION, VECTOR_NOTICE_TOO_BIG, VECTOR_NOTICE_TOO_LARGE } from '../utils/parquetShared.js';
+import { createLonLatTransform } from '../utils/crs.js';
 import { mapGetters } from 'vuex';
 import proj4 from 'proj4';
 
@@ -122,6 +123,11 @@ export default {
         return this.$t('mapping.vectorFallback.tooBig', {
           size: toMb(this.vectorNotice.byteLength),
           maxSize: toMb(this.vectorNotice.maxBytes),
+        });
+      }
+      if (this.vectorNotice.reason === VECTOR_NOTICE_REPROJECTION) {
+        return this.$t('mapping.vectorFallback.reprojectionFailed', {
+          crs: this.vectorNotice.crs || '',
         });
       }
       return this.$t('mapping.vectorFallback.loadError');
@@ -385,13 +391,31 @@ export default {
       return this.stacLayer.getVisibleStacReferences();
     },
 
-    async resolveExtent(bbox, sourceCrs) {
+    // `sourceDefinition` is the file's own PROJJSON when it carries one. It is
+    // preferred over the authority code for the same reasons the GeoParquet
+    // loader prefers it (see createLonLatTransform): it is self-contained, so
+    // it needs no network round-trip and it works for CRSs that have no
+    // resolvable code at all — including PROJJSON with no `id`, where
+    // `sourceCrs` is only a human-readable name and nothing else can place it.
+    async resolveExtent(bbox, sourceCrs, sourceDefinition = null) {
       if (!this.map || !bbox || bbox.length !== 4) {return null;}
 
       const fromCrs = sourceCrs || 'EPSG:4326';
 
       if (fromCrs === 'EPSG:4326') {
         return [[bbox[0], bbox[1]], [bbox[2], bbox[3]]];
+      }
+
+      if (sourceDefinition) {
+        const transform = createLonLatTransform(fromCrs, sourceDefinition);
+        if (transform) {
+          try {
+            return [transform.forward([bbox[0], bbox[1]]), transform.forward([bbox[2], bbox[3]])];
+          } catch (e) {
+            console.warn('CRS transform failed', e);
+            return null;
+          }
+        }
       }
 
       if (fromCrs !== 'EPSG:3857' && !proj4.defs(fromCrs)) {
@@ -523,9 +547,9 @@ export default {
       }, 50);
     },
 
-    async zoomToBbox(bbox, sourceCrs) {
+    async zoomToBbox(bbox, sourceCrs, sourceDefinition = null) {
       if (!this.map) {return;}
-      const bounds = await this.resolveExtent(bbox, sourceCrs);
+      const bounds = await this.resolveExtent(bbox, sourceCrs, sourceDefinition);
       if (!bounds) {return;}
 
       try {
@@ -538,8 +562,8 @@ export default {
       this.pulseExtent(bounds);
     },
 
-    async highlightBbox(bbox, sourceCrs) {
-      const bounds = await this.resolveExtent(bbox, sourceCrs);
+    async highlightBbox(bbox, sourceCrs, sourceDefinition = null) {
+      const bounds = await this.resolveExtent(bbox, sourceCrs, sourceDefinition);
       if (!bounds) {return;}
       this.pulseExtent(bounds);
     },
