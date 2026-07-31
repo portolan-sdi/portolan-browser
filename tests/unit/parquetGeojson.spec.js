@@ -676,6 +676,78 @@ describe('reprojection coordinate shape', () => {
   })
 })
 
+describe('other CRS families', () => {
+  it('reprojects a CRS whose axes are in US survey feet', () => {
+    // EPSG:2263 (NAD83 / New York Long Island, ftUS). A unit mix-up here
+    // would scale coordinates by 3.28 and put the data in the wrong ocean.
+    const nyLongIsland = {
+      type: 'ProjectedCRS',
+      name: 'NAD83 / New York Long Island (ftUS)',
+      base_crs: {
+        name: 'NAD83',
+        id: { authority: 'EPSG', code: 4269 },
+        datum: {
+          type: 'GeodeticReferenceFrame',
+          name: 'North American Datum 1983',
+          ellipsoid: { name: 'GRS 1980', semi_major_axis: 6378137, inverse_flattening: 298.257222101 },
+        },
+      },
+      conversion: {
+        name: 'SPCS83 New York Long Island zone (US survey foot)',
+        method: { name: 'Lambert Conic Conformal (2SP)', id: { authority: 'EPSG', code: 9802 } },
+        parameters: [
+          { name: 'Latitude of false origin', value: 40.1666666666667, unit: 'degree' },
+          { name: 'Longitude of false origin', value: -74, unit: 'degree' },
+          { name: 'Latitude of 1st standard parallel', value: 41.0333333333333, unit: 'degree' },
+          { name: 'Latitude of 2nd standard parallel', value: 40.6666666666667, unit: 'degree' },
+          { name: 'Easting at false origin', value: 984250, unit: { type: 'LinearUnit', name: 'US survey foot', conversion_factor: 0.304800609601219 } },
+          { name: 'Northing at false origin', value: 0, unit: { type: 'LinearUnit', name: 'US survey foot', conversion_factor: 0.304800609601219 } },
+        ],
+      },
+      coordinate_system: {
+        subtype: 'Cartesian',
+        axis: [
+          { name: 'Easting', abbreviation: 'X', direction: 'east', unit: { type: 'LinearUnit', name: 'US survey foot', conversion_factor: 0.304800609601219 } },
+          { name: 'Northing', abbreviation: 'Y', direction: 'north', unit: { type: 'LinearUnit', name: 'US survey foot', conversion_factor: 0.304800609601219 } },
+        ],
+      },
+      id: { authority: 'EPSG', code: 2263 },
+    }
+    const transform = createLonLatTransform('EPSG:2263', nyLongIsland)
+    // The false origin itself: 984250 ftUS easting, 0 northing.
+    const [lon, lat] = transform.forward([984250, 0])
+    expect(lon).toBeCloseTo(-74, 6)
+    expect(lat).toBeCloseTo(40.1666666666667, 6)
+  })
+
+  it('uses the horizontal half of a CompoundCRS', () => {
+    // EPSG:7415 is RD New paired with NAP height. proj4 cannot transform the
+    // pair, but the map only needs the horizontal component.
+    const compound = {
+      type: 'CompoundCRS',
+      name: 'Amersfoort / RD New + NAP height',
+      components: [
+        RD_NEW_PROJJSON,
+        { type: 'VerticalCRS', name: 'NAP height' },
+      ],
+      id: { authority: 'EPSG', code: 7415 },
+    }
+    const transform = createLonLatTransform('EPSG:7415', compound)
+    expect(transform).not.toBeNull()
+    closeToLonLat(transform.forward(RD_ORIGIN), RD_ORIGIN_LONLAT)
+  })
+
+  it('applies the datum shift for a GeographicCRS that is not WGS84', () => {
+    // NAD83 coordinates are already degrees, so nothing here is out of range
+    // — an omitted datum shift would simply move the data a metre or two with
+    // no other symptom.
+    const transform = createLonLatTransform('EPSG:4269', null)
+    const [lon, lat] = transform.forward([-74, 40.7])
+    expect(lon).toBeCloseTo(-74, 6)
+    expect(lat).toBeCloseTo(40.7, 6)
+  })
+})
+
 describe('declared lon/lat CRSs are passed through, not reprojected', () => {
   it('passes through an explicitly declared EPSG:4326', async () => {
     mockParquetFile({

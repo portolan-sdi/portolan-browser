@@ -75,6 +75,14 @@ function primeMeridianDegrees(longitude) {
  */
 function normalizeCrsDefinition(crsDefinition) {
   if (!crsDefinition || typeof crsDefinition !== 'object') {return crsDefinition;}
+  // A CompoundCRS pairs a horizontal CRS with a vertical one (3D national
+  // grids such as EPSG:7415, RD New + NAP). proj4 cannot build a transform
+  // from the pair, but the map only needs the horizontal half, which is the
+  // first component by definition.
+  if (crsDefinition.type === 'CompoundCRS') {
+    const horizontal = crsDefinition.components?.[0];
+    return horizontal ? normalizeCrsDefinition(horizontal) : null;
+  }
   // A ProjectedCRS keeps its datum under `base_crs`; a GeographicCRS carries
   // it directly. Either may use `datum_ensemble` in place of `datum`.
   const holder = crsDefinition.base_crs || crsDefinition;
@@ -142,7 +150,12 @@ export function createDomainGuard(crs, crsDefinition) {
   if (WEB_MERCATOR_CRS.includes(crs)) {
     guard.maxInputAbs = WEB_MERCATOR_EXTENT;
   }
-  const bbox = crsDefinition?.bbox;
+  // Match createLonLatTransform: for a CompoundCRS the transform comes from
+  // the horizontal component, so its area of use is the one that applies.
+  const definition = crsDefinition?.type === 'CompoundCRS'
+    ? crsDefinition.components?.[0]
+    : crsDefinition;
+  const bbox = definition?.bbox;
   const west = bbox?.west_longitude;
   const east = bbox?.east_longitude;
   const south = bbox?.south_latitude;
