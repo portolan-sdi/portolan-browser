@@ -828,6 +828,28 @@ describe('StacMapLayer', () => {
       expect(layer._overlayLayerIds).toHaveLength(3)
     })
 
+    it('reads the file once when two setAssets calls race before either read starts', async () => {
+      // The in-flight lookup and the read that follows a miss used to be
+      // separated by `await this._loadParquetDeps()`. Two calls in the same
+      // tick — autoLoadVisualAssets and the `assets` watcher both fire on load
+      // — therefore both missed and both read the same file. Overlapping reads
+      // corrupt each other inside hyparquet, and the loser's featureless
+      // result is what gets cached. Unlike the test above, neither call waits
+      // for the other to reach the reader: that wait is what hid the gap.
+      let loads = 0
+      layer._loadParquetDeps = async () => ({
+        loadGeoJsonFromParquet: async () => {
+          loads++
+          return { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
+        },
+      })
+
+      await Promise.all([layer.setAssets([parquetAsset()]), layer.setAssets([parquetAsset()])])
+
+      expect(loads).toBe(1)
+      expect(map.sources.get('stac-parquet-0')).toEqual({ type: 'geojson', data: FEATURE_COLLECTION })
+    })
+
     it('aborts an in-flight download when the layer is removed', async () => {
       // Nothing will ever read those bytes now, so keeping the fetch alive is
       // pure waste — the one case where aborting is still right.

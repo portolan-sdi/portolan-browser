@@ -539,12 +539,24 @@ export default class StacMapLayer {
 
   // Start a read and register it as in-flight, so a concurrent or superseding
   // run wanting the same key joins this download instead of restarting it.
-  _startParquetRead(deps, key, url) {
+  //
+  // The hyparquet chunk is loaded inside the registered promise rather than
+  // awaited by the caller, so the in-flight lookup and this registration are
+  // never separated by an await. They were: two setAssets calls in the same
+  // tick (autoLoadVisualAssets racing the `assets` watcher) both missed the
+  // map, both awaited the chunk, and both started a read of the same file.
+  // Overlapping reads share hyparquet's decompressors, and the loser decodes
+  // its geometry column to undefined — a featureless result that then lands in
+  // the cache and blanks the map for the rest of the session.
+  _startParquetRead(key, url) {
     const controller = new AbortController();
-    const promise = deps.loadGeoJsonFromParquet(url, {
+    // Read the fields now: they are part of `key`, and a later run may replace
+    // them before the chunk resolves.
+    const fields = this._styleFields;
+    const promise = this._loadParquetDeps().then(deps => deps.loadGeoJsonFromParquet(url, {
       signal: controller.signal,
-      fields: this._styleFields,
-    });
+      fields,
+    }));
     const pending = { promise, controller };
     this._parquetInflight.set(key, pending);
     promise.then(
@@ -622,10 +634,6 @@ export default class StacMapLayer {
     let rendered = 0;
     let firstNotice = null;
     const notice = (n) => { if (!firstNotice) {firstNotice = { format: 'geoparquet', ...n };} };
-    // The hyparquet chunk is loaded at most once per call, lazily: the
-    // declared-metadata gates must be able to reject every asset without
-    // ever downloading it.
-    let deps = null;
 
     for (let i = 0; i < sorted.length && rendered === 0; i++) {
       const asset = sorted[i];
@@ -666,12 +674,9 @@ export default class StacMapLayer {
         const firstLoad = !result;
         if (!result) {
           // A run this one superseded may already be downloading these exact
-          // bytes; join it rather than starting from zero.
-          let pending = this._parquetInflight.get(cacheKey);
-          if (!pending) {
-            if (!deps) {deps = await this._loadParquetDeps();}
-            pending = this._startParquetRead(deps, cacheKey, url);
-          }
+          // bytes; join it rather than starting from zero. No await between
+          // the lookup and the start — see _startParquetRead.
+          const pending = this._parquetInflight.get(cacheKey) ?? this._startParquetRead(cacheKey, url);
           result = await pending.promise;
         }
         if (epoch !== this._overlayEpoch) {return false;}
