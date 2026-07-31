@@ -488,6 +488,75 @@ describe('portolanStyles', () => {
       }
       expect(extractStyleFields(style)).toEqual(['naam'])
     })
+
+    // MapLibre expands "{naam}" to ["concat", ["get", "naam"]]. Seven of the
+    // published Portolan styles label exclusively this way, and missing it
+    // meant their parquet render carried no label column at all.
+    it('finds a field referenced only by a text-field token', () => {
+      const style = {
+        layers: [{
+          id: 'label',
+          type: 'symbol',
+          layout: { 'text-field': '{naam}', 'text-size': 11 },
+        }],
+      }
+      expect(extractStyleFields(style)).toEqual(['naam'])
+    })
+
+    it('finds every token interpolated into a longer label', () => {
+      const style = {
+        layers: [{
+          id: 'label',
+          type: 'symbol',
+          layout: { 'text-field': '{naam} ({code})' },
+        }],
+      }
+      expect(extractStyleFields(style)).toEqual(['code', 'naam'])
+    })
+
+    it('finds tokens in icon-image and in a format array section', () => {
+      const style = {
+        layers: [
+          { id: 'i', type: 'symbol', layout: { 'icon-image': '{soort}-marker' } },
+          { id: 'f', type: 'symbol', layout: { 'text-field': ['format', '{naam}', {}] } },
+        ],
+      }
+      expect(extractStyleFields(style)).toEqual(['naam', 'soort'])
+    })
+
+    it('combines a token label with expression-driven paint', () => {
+      // The real rijkswaterstaat/sluizen shape: paint reads one attribute by
+      // expression, the label reads another by token.
+      const style = {
+        layers: [{
+          id: 'sluizen',
+          type: 'symbol',
+          layout: { 'text-field': '{NAAM}' },
+          paint: { 'text-color': ['step', ['get', 'NR_KOLKEN'], '#eee', 2, '#f00'] },
+        }],
+      }
+      expect(extractStyleFields(style)).toEqual(['NAAM', 'NR_KOLKEN'])
+    })
+
+    it('ignores braces outside a token-bearing layout property', () => {
+      const style = {
+        layers: [{
+          id: 'fill',
+          type: 'fill',
+          layout: { 'symbol-placement': 'not-a-{token}' },
+          paint: { 'fill-color': '#f00' },
+        }],
+      }
+      expect(extractStyleFields(style)).toEqual([])
+    })
+
+    it('survives a style nested far deeper than the call stack allows', () => {
+      // The walk is iterative; a recursive one throws RangeError here.
+      let expression = ['get', 'naam']
+      for (let i = 0; i < 50000; i++) {expression = ['coalesce', expression]}
+      const style = { layers: [{ id: 'f', type: 'fill', paint: { 'fill-color': expression } }] }
+      expect(extractStyleFields(style)).toEqual(['naam'])
+    })
   })
 
   describe('loadStyleJson', () => {

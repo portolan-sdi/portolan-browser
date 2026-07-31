@@ -45,6 +45,11 @@ import { createLonLatTransform } from '../utils/crs.js';
 import { mapGetters } from 'vuex';
 import proj4 from 'proj4';
 
+// Every style's fields are read for every feature, though only one style is
+// ever active. Past this many, say so — a collection with a thematic style per
+// attribute can quietly multiply what the GeoParquet reader downloads.
+const MAX_STYLE_FIELDS = 32;
+
 let mapId = 0;
 
 export default {
@@ -99,6 +104,9 @@ export default {
       availableStyles: [],
       activeStyleIndex: 0,
       activeLegend: [],
+      // Whether any style has been bound yet, so the default is not applied
+      // over a selection the user made while the assets were still loading.
+      styleApplied: false,
       vectorNotice: null,
     };
   },
@@ -182,6 +190,7 @@ export default {
         this.availableStyles = [];
         this.activeStyleIndex = 0;
         this.activeLegend = [];
+        this.styleApplied = false;
         this.vectorNotice = null;
         if (this.stacLayer) {
           this.stacLayer.remove();
@@ -227,12 +236,16 @@ export default {
       // world view for the whole download (e.g. a multi-MB GeoParquet).
       this.stacLayer.fit();
 
-      // Styles are loaded before the assets, not after: a GeoParquet asset
-      // rendered directly is read with its attribute columns pruned, and the
-      // set to keep is whatever the styles reference. Learning that after the
-      // read would mean downloading the file a second time. The style
-      // documents are a few KB each and fetched in parallel.
-      await this.loadStyles();
+      // A GeoParquet asset rendered directly is read with its attribute
+      // columns pruned, and the set to keep is whatever the styles reference;
+      // learning that after the read would mean downloading the file twice.
+      // Declaring the expectation synchronously — before any await — lets the
+      // reader wait for the field set rather than race it. Styles then load
+      // concurrently with the assets: only the parquet path waits, so a
+      // tile- or COG-backed collection never pays for a style fetch it will
+      // not consult, and a slow style host delays styling, never data.
+      this.stacLayer.expectStyleFields();
+      const stylesReady = this.loadStyles();
 
       if (this.assets && this.assets.length > 0) {
         await this.stacLayer.setAssets(this.assets);
@@ -250,61 +263,93 @@ export default {
         this._setupClickInteraction();
       }
 
-      await this.applyStyleAtIndex(0);
+      await stylesReady;
+      // The picker is live for the whole asset load, so by now the user may
+      // already have chosen a style. Auto-applying the default here regardless
+      // would snap their selection back and repaint the map — apply it only if
+      // nothing has been applied yet. A style chosen mid-load is bound by the
+      // setAssets tail, which re-binds whatever is current once sources exist.
+      if (!this.styleApplied) {
+        await this.applyStyleAtIndex(0);
+      }
     },
 
     // Resolve the collection's styles and fetch every style document, so the
-    // union of the attribute fields they read is known before the assets load.
+    // union of the attribute fields they read reaches the GeoParquet reader.
     // A style that fails to fetch or parse is dropped rather than blocking the
     // others.
     async loadStyles() {
-      if (!this.stac || !this.stacLayer) {return;}
-      // core.md scopes styles to collections: they describe how to draw that
-      // collection's own data. An Item map, or a search map rendering results
-      // from elsewhere, is not what these styles were authored for.
-      if (this.stac?.type !== 'Collection') {return;}
-      let styles;
+      // Captured once: the component can be torn down, or moved to another
+      // STAC entity, while the style documents are in flight.
+      const layer = this.stacLayer;
       try {
-        styles = resolveStyles(this.stac);
-      } catch (error) {
-        // Malformed style metadata must cost this collection its styles, not
-        // reject out of showStacLayer, which has no catch.
-        console.warn('Failed to resolve styles:', error);
-        return;
-      }
-      if (styles.length === 0) {return;}
-
-      await Promise.all(styles.map(async entry => {
+        if (!this.stac || !layer) {return;}
+        // core.md scopes styles to collections: they describe how to draw that
+        // collection's own data. An Item map, or a search map rendering results
+        // from elsewhere, is not what these styles were authored for.
+        if (this.stac?.type !== 'Collection') {return;}
+        let styles;
         try {
-          // markRaw: the style document is handed straight to MapLibre, which
-          // has no use for a reactive proxy over every nested expression.
-          entry._cached = markRaw(await loadStyleJson(entry.href));
-        } catch (err) {
-          console.warn('Failed to load style:', entry.name, err);
+          styles = resolveStyles(this.stac);
+        } catch (error) {
+          // Malformed style metadata must cost this collection its styles, not
+          // reject out of showStacLayer, which has no catch.
+          console.warn('Failed to resolve styles:', error);
+          return;
         }
-      }));
+        if (styles.length === 0) {return;}
 
-      const loaded = styles.filter(entry => entry._cached);
-      if (loaded.length === 0) {return;}
-      this.availableStyles = loaded;
+        // allSettled rather than all: each task already swallows its own
+        // rejection, and saying so in the code keeps a later refactor from
+        // turning one 404 into zero styles.
+        await Promise.allSettled(styles.map(async entry => {
+          try {
+            // markRaw: the style document is handed straight to MapLibre, which
+            // has no use for a reactive proxy over every nested expression.
+            entry._cached = markRaw(await loadStyleJson(entry.href));
+          } catch (err) {
+            console.warn('Failed to load style:', entry.name, err);
+          }
+        }));
 
-      const fields = new Set();
-      for (const entry of loaded) {
-        for (const field of extractStyleFields(entry._cached)) {fields.add(field);}
+        if (layer !== this.stacLayer) {return;}
+
+        const loaded = styles.filter(entry => entry._cached);
+        if (loaded.length === 0) {return;}
+        this.availableStyles = loaded;
+
+        // The union across every style, though only one is ever active. Not
+        // truncated past the warning: dropping a field silently would paint
+        // the features it drives solid black under step/interpolate.
+        const fields = new Set();
+        for (const entry of loaded) {
+          for (const field of extractStyleFields(entry._cached)) {fields.add(field);}
+        }
+        if (fields.size > MAX_STYLE_FIELDS) {
+          console.warn(
+            `Collection styles reference ${fields.size} attribute columns; all are read from the GeoParquet asset for every feature`
+          );
+        }
+        layer.setStyleFields([...fields]);
+      } finally {
+        // However this returned — not a collection, no styles, a resolve
+        // error, every fetch failing, an unexpected throw — a parquet read is
+        // waiting on the field set and must be released, or the data never
+        // renders at all. Idempotent, so the success path is unaffected.
+        layer?.releaseStyleFields();
       }
-      this.stacLayer.setStyleFields([...fields]);
     },
 
-    async applyStyleAtIndex(index) {
+    // `availableStyles` only ever holds entries loadStyles already fetched, so
+    // the document is in hand here and this does not await the network.
+    applyStyleAtIndex(index) {
       const styleEntry = this.availableStyles[index];
-      if (!styleEntry || !this.stacLayer) {return;}
+      if (!styleEntry?._cached || !this.stacLayer) {return;}
       try {
-        if (!styleEntry._cached) {
-          styleEntry._cached = markRaw(await loadStyleJson(styleEntry.href));
-        }
         this.stacLayer.applyGlStyle(styleEntry._cached, styleEntry.href);
         this.activeStyleIndex = index;
         this.activeLegend = extractLegend(styleEntry._cached);
+        this.styleApplied = true;
       } catch (err) {
         console.warn('Failed to apply style:', styleEntry.name, err);
       }

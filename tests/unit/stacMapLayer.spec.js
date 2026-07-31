@@ -729,6 +729,47 @@ describe('StacMapLayer', () => {
       }
     })
 
+    // A style's `step`/`interpolate` over an attribute the file doesn't carry
+    // paints solid black with no error anywhere. The read knows exactly which
+    // columns it failed to deliver, so it has to say so.
+    it('names the style attributes the file could not provide', async () => {
+      injectParquetDeps(layer, () => ({
+        exceeded: false,
+        featureCollection: FEATURE_COLLECTION,
+        totalRows: 1,
+        missingFields: ['bevolking', 'naam'],
+      }))
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        await layer.setAssets([parquetAsset()])
+        // Once per read: a basemap switch re-runs against the cache and must
+        // not repeat it.
+        await layer.readdAfterStyleChange()
+        const missing = warn.mock.calls.filter(([m]) => typeof m === 'string' && m.includes('style attribute'))
+        expect(missing).toHaveLength(1)
+        expect(missing[0][0]).toContain('bevolking, naam')
+      } finally {
+        warn.mockRestore()
+      }
+      expect(map.sources.has('stac-parquet-0')).toBe(true)
+    })
+
+    it('says nothing when the file provided every attribute the styles wanted', async () => {
+      injectParquetDeps(layer, () => ({
+        exceeded: false,
+        featureCollection: FEATURE_COLLECTION,
+        totalRows: 1,
+        missingFields: [],
+      }))
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        await layer.setAssets([parquetAsset()])
+        expect(warn.mock.calls.filter(([m]) => typeof m === 'string' && m.includes('style attribute'))).toHaveLength(0)
+      } finally {
+        warn.mockRestore()
+      }
+    })
+
     it('survives a basemap change without duplicating the source', async () => {
       injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
       await layer.setAssets([parquetAsset()])
@@ -753,6 +794,78 @@ describe('StacMapLayer', () => {
       expect(calls.depsLoads.count).toBe(1)
       expect(map.sources.get('stac-parquet-0')).toEqual({ type: 'geojson', data: FEATURE_COLLECTION })
       expect(layer._overlayLayerIds).toHaveLength(3)
+    })
+
+    it('joins the in-flight download when a basemap switch supersedes it mid-read', async () => {
+      // The teardown used to abort unconditionally, and errors are never
+      // cached — so switching basemap at 90% of a 40MB file threw the bytes
+      // away and restarted from zero. The successor wants the identical key.
+      let release
+      let reached
+      const started = new Promise(resolve => { reached = resolve })
+      const gate = new Promise(resolve => { release = resolve })
+      const signals = []
+      let loads = 0
+      layer._loadParquetDeps = async () => ({
+        loadGeoJsonFromParquet: async (url, { signal } = {}) => {
+          loads++
+          signals.push(signal)
+          reached()
+          await gate
+          return { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
+        },
+      })
+
+      const first = layer.setAssets([parquetAsset()])
+      await started
+      const second = layer.readdAfterStyleChange()
+      release()
+      await Promise.all([first, second])
+
+      expect(loads).toBe(1)
+      expect(signals[0].aborted).toBe(false)
+      expect(map.sources.get('stac-parquet-0')).toEqual({ type: 'geojson', data: FEATURE_COLLECTION })
+      expect(layer._overlayLayerIds).toHaveLength(3)
+    })
+
+    it('aborts an in-flight download when the layer is removed', async () => {
+      // Nothing will ever read those bytes now, so keeping the fetch alive is
+      // pure waste — the one case where aborting is still right.
+      let reached
+      const started = new Promise(resolve => { reached = resolve })
+      const signals = []
+      layer._loadParquetDeps = async () => ({
+        loadGeoJsonFromParquet: (url, { signal } = {}) => new Promise((resolve, reject) => {
+          signals.push(signal)
+          reached()
+          signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+        }),
+      })
+
+      const pending = layer.setAssets([parquetAsset()])
+      await started
+      layer.remove()
+      await pending
+
+      expect(signals[0].aborted).toBe(true)
+      expect(layer._parquetInflight.size).toBe(0)
+    })
+
+    it('bounds the decoded-result cache so field changes cannot accumulate copies', async () => {
+      const calls = injectParquetDeps(layer, () => (
+        { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
+      ))
+
+      for (const fields of [['a'], ['b'], ['c'], ['d']]) {
+        layer.setStyleFields(fields)
+        await layer.setAssets([parquetAsset()])
+      }
+
+      expect(calls).toHaveLength(4)
+      expect(layer._parquetResultCache.size).toBe(3)
+      // The oldest field set was evicted; the three most recent survive.
+      expect([...layer._parquetResultCache.keys()].map(k => k.split('\n')[1]))
+        .toEqual(['b', 'c', 'd'])
     })
 
     it('caches over-cap results per URL and re-emits the notice without re-downloading', async () => {
@@ -1007,6 +1120,63 @@ describe('StacMapLayer', () => {
         expect(calls.opts[0].fields).toEqual(['name'])
       })
 
+      // Which columns to keep is an input to the read, not a race against it.
+      // Losing that race used to be permanent: the attribute-less result was
+      // cached, `_assetsSig` recorded, and every later setAssets no-opped.
+      describe('waiting for style fields', () => {
+        it('does not read until the declared fields arrive', async () => {
+          layer.expectStyleFields()
+          const calls = injectParquetDeps(layer, () => (
+            { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
+          ))
+
+          const pending = layer.setAssets([parquetAsset()])
+          await Promise.resolve()
+          await Promise.resolve()
+          expect(calls).toHaveLength(0)
+
+          layer.setStyleFields(['naam'])
+          await pending
+
+          expect(calls).toHaveLength(1)
+          expect(calls.opts[0].fields).toEqual(['naam'])
+        })
+
+        it('proceeds with no fields once released, so a style-less collection still renders', async () => {
+          // Every early exit in MapView.loadStyles calls this. Without it the
+          // read would wait forever and the map would stay blank.
+          layer.expectStyleFields()
+          const calls = injectParquetDeps(layer, () => (
+            { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
+          ))
+
+          const pending = layer.setAssets([parquetAsset()])
+          layer.releaseStyleFields()
+          await pending
+
+          expect(calls.opts[0].fields).toEqual([])
+          expect(layer._overlayLayerIds.length).toBeGreaterThan(0)
+        })
+
+        it('reads immediately when nothing declared an interest', async () => {
+          // A layer whose owner never calls expectStyleFields must not wait.
+          const calls = await loadedParquet()
+          expect(calls).toHaveLength(1)
+          expect(calls.opts[0].fields).toEqual([])
+        })
+
+        it('drops the idempotency signature when the field set changes', async () => {
+          // Belt and braces for a read that already happened with a different
+          // field set: the next setAssets must rebuild rather than no-op.
+          await loadedParquet()
+          expect(layer._assetsSig).toBeTruthy()
+
+          layer.setStyleFields(['naam'])
+
+          expect(layer._assetsSig).toBeNull()
+        })
+      })
+
       it('leaves the parquet source with default styling when the style never reaches it', async () => {
         // An inline-sources-only style: nothing maps onto the loaded asset
         // source, which would otherwise be left invisible after the clear.
@@ -1097,6 +1267,95 @@ describe('StacMapLayer', () => {
         // A tile source keeps `source-layer` — it names a layer in the tiles.
         expect(map.layers.get('styled-fill')['source-layer']).toBe('parks')
         expect(layer._overlayLayerIds).toEqual(['styled-fill'])
+      })
+
+      it('keeps the styled parquet in the layer control under the publisher\'s layer ids', async () => {
+        // The layer control used to find a source's layers by id prefix. A
+        // style's own ids follow no such convention, so the asset vanished
+        // from the control the moment a style bound to it — leaving the user
+        // no way to toggle it off.
+        await loadedParquet()
+        layer.applyGlStyle(pmtilesStyle())
+
+        const overlays = layer.getAssetOverlays()
+        expect(overlays).toHaveLength(1)
+        expect(overlays[0].id).toBe('stac-parquet-0')
+        expect(overlays[0].layerIds).toEqual(['styled-fill'])
+      })
+
+      it('restores a tile source\'s default layers when the style never reaches it', async () => {
+        // The geojson case was handled; a tile source was left invisible,
+        // because restoring its default paint needs the source-layer names
+        // and the tile metadata they came from is no longer re-readable.
+        await layer.setAssets([xyzVectorAsset()])
+        const defaultLayerIds = [...layer._overlayLayerIds]
+        expect(defaultLayerIds.length).toBeGreaterThan(0)
+
+        layer.applyGlStyle({
+          version: 8,
+          sources: { notes: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } } },
+          layers: [{ id: 'notes-fill', type: 'fill', source: 'notes', paint: {} }],
+        })
+
+        expect(layer._overlayLayerIds).toEqual(defaultLayerIds)
+        for (const id of defaultLayerIds) {
+          expect(map.layers.get(id).source).toBe('stac-tile-0')
+        }
+      })
+
+      it('does not let a raster source in the style hijack the data binding', async () => {
+        // Positional mapping used to accept any source type, so a style whose
+        // raster backdrop is declared before its vector source bound the
+        // raster layer to the parquet and dropped the data layer — a basemap
+        // over nothing.
+        await loadedParquet()
+
+        layer.applyGlStyle({
+          version: 8,
+          sources: {
+            backdrop: { type: 'raster', tiles: ['https://example.com/{z}/{x}/{y}.png'] },
+            data: { type: 'vector', url: 'pmtiles://https://example.com/tiles.pmtiles' },
+          },
+          layers: [
+            { id: 'backdrop-layer', type: 'raster', source: 'backdrop' },
+            { id: 'styled-fill', type: 'fill', source: 'data', 'source-layer': 'parks', paint: {} },
+          ],
+        })
+
+        expect(map.layers.get('styled-fill').source).toBe('stac-parquet-0')
+        // The raster keeps its own source rather than standing in for the data.
+        expect(map.layers.get('backdrop-layer').source).toBe('backdrop')
+        expect(map.sources.get('backdrop').type).toBe('raster')
+      })
+
+      it('applies the style once per basemap switch, not twice', async () => {
+        // Each application re-tessellates every loaded tile of the geojson
+        // source; setAssets already re-binds in its tail.
+        await loadedParquet()
+        layer.applyGlStyle(pmtilesStyle())
+        const spy = vi.spyOn(layer, 'applyGlStyle')
+
+        await layer.readdAfterStyleChange()
+
+        expect(spy).toHaveBeenCalledTimes(1)
+        expect(layer._overlayLayerIds).toEqual(['styled-fill'])
+      })
+
+      it('still re-applies a style whose only content is its own inline sources', async () => {
+        // The narrow case the count exists to catch: nothing reaches the
+        // setAssets tail, so the explicit re-apply is the only one.
+        const inline = {
+          version: 8,
+          sources: { notes: { type: 'geojson', data: { type: 'FeatureCollection', features: [] } } },
+          layers: [{ id: 'notes-fill', type: 'fill', source: 'notes', paint: {} }],
+        }
+        layer.applyGlStyle(inline)
+        const spy = vi.spyOn(layer, 'applyGlStyle')
+
+        await layer.readdAfterStyleChange()
+
+        expect(spy).toHaveBeenCalledTimes(1)
+        expect(map.layers.get('notes-fill').source).toBe('notes')
       })
 
       it('resolves a style-relative pmtiles URL against the style href, not the page', async () => {

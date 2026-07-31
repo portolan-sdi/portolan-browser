@@ -39,7 +39,11 @@ export default {
   },
   watch: {
     activeIndex(val) { this.selected = val; },
-    selected(val, oldVal) { if (val !== oldVal) {this.$emit('change', val);} },
+    // Only a change originating here is user intent. Comparing against the
+    // prop rather than the previous value stops the parent's own update
+    // echoing straight back as a `change`, which would apply every style
+    // twice — a full clear and rebuild of the map's layers each time.
+    selected(val) { if (val !== this.activeIndex) {this.$emit('change', val);} },
   },
 };
 </script>

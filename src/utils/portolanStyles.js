@@ -190,48 +190,91 @@ function commonPrefix(strings) {
   return prefix;
 }
 
+// Layout properties in which MapLibre still honours the legacy `{token}` form.
+const TOKEN_PROPERTIES = ['text-field', 'icon-image'];
+const TOKEN_PATTERN = /\{([^{}]+)\}/g;
+
 /**
  * Feature attribute names a style reads, as a sorted array.
  *
  * A style authored against vector tiles gets its attributes from the tiles.
  * When the same style is bound to a GeoParquet-backed geojson source instead,
  * those attributes have to be read out of the parquet file — and the reader
- * prunes columns aggressively, so it needs to be told which ones matter. This
- * walks the whole style document for `["get", <field>]` and `["has", <field>]`
- * expressions, wherever they appear (paint, layout, filter, nested inside
- * `match`/`step`/`case`).
+ * prunes columns aggressively, so it needs to be told which ones matter.
  *
- * Only expression syntax is recognised. MapLibre's deprecated legacy filter
- * form (`["==", "naam", "Utrecht"]`) is not: telling its property operand
- * apart from a literal is ambiguous, and Portolan styles are expression-based
- * (formats.md pins MapLibre GL style spec v8). A style using legacy filters
- * renders with its paint applied but those filters matching nothing.
+ * Two syntaxes are recognised:
+ *
+ *   - **Expressions** — `["get", <field>]` and `["has", <field>]`, wherever
+ *     they appear (paint, layout, filter, nested inside `match`/`step`/`case`).
+ *   - **Tokens** — `"text-field": "{naam}"`, which MapLibre expands to
+ *     `["concat", ["get", "naam"]]`. Only scanned inside the layout properties
+ *     where MapLibre honours it (see TOKEN_PROPERTIES), so a stray brace in an
+ *     unrelated string can't invent a column. Seven of the published Portolan
+ *     styles reference their label attribute exclusively this way.
+ *
+ * MapLibre's deprecated legacy *filter* form (`["==", "naam", "Utrecht"]`) is
+ * still not recognised: telling its property operand apart from a literal is
+ * ambiguous, and Portolan styles are expression-based (formats.md pins
+ * MapLibre GL style spec v8). Note the consequence is more severe than for a
+ * missed paint field — a filter that matches nothing removes the features
+ * altogether, rather than falling back to default paint.
  */
 export function extractStyleFields(glStyle) {
   const fields = new Set();
 
-  const walk = (node) => {
-    if (Array.isArray(node)) {
-      const [op, arg] = node;
-      if ((op === 'get' || op === 'has') && typeof arg === 'string' && node.length === 2) {
-        // The 2-argument form reads the feature's own properties. The
-        // 3-argument form (`["get", key, object]`) indexes into some other
-        // object, so the key is not a feature attribute.
-        fields.add(arg);
-        return;
+  // Iterative rather than recursive: a style is JSON.parse output, so it can
+  // nest as deeply as the document does, and V8's parser is iterative where a
+  // recursive walk would blow the stack.
+  const walkExpressions = (root) => {
+    const stack = [root];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (Array.isArray(node)) {
+        const [op, arg] = node;
+        if ((op === 'get' || op === 'has') && typeof arg === 'string' && node.length === 2) {
+          // The 2-argument form reads the feature's own properties. The
+          // 3-argument form (`["get", key, object]`) indexes into some other
+          // object, so the key is not a feature attribute.
+          fields.add(arg);
+          continue;
+        }
+        for (const item of node) {stack.push(item);}
+        continue;
       }
-      for (const item of node) {walk(item);}
-      return;
+      if (node && typeof node === 'object') {
+        for (const value of Object.values(node)) {stack.push(value);}
+      }
     }
-    if (node && typeof node === 'object') {
-      for (const value of Object.values(node)) {walk(value);}
+  };
+
+  // Tokens can sit directly in the property (`"{naam}"`), be interpolated into
+  // a longer label (`"{naam} ({code})"`), or appear in a `format` array's
+  // string sections, so every string leaf of the subtree is scanned.
+  const walkTokens = (root) => {
+    const stack = [root];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (typeof node === 'string') {
+        for (const match of node.matchAll(TOKEN_PATTERN)) {fields.add(match[1]);}
+        continue;
+      }
+      if (Array.isArray(node)) {
+        for (const item of node) {stack.push(item);}
+        continue;
+      }
+      if (node && typeof node === 'object') {
+        for (const value of Object.values(node)) {stack.push(value);}
+      }
     }
   };
 
   for (const layer of glStyle?.layers || []) {
-    walk(layer.paint);
-    walk(layer.layout);
-    walk(layer.filter);
+    walkExpressions(layer.paint);
+    walkExpressions(layer.layout);
+    walkExpressions(layer.filter);
+    for (const property of TOKEN_PROPERTIES) {
+      walkTokens(layer.layout?.[property]);
+    }
   }
 
   return [...fields].sort();

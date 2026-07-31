@@ -115,7 +115,11 @@ function mockParquetFile({ numRows, rows = [], crs = null, geo = true, columns =
   }
   asyncBufferFromUrl.mockResolvedValue({ byteLength })
   parquetMetadataAsync.mockResolvedValue(metadata)
-  parquetSchema.mockReturnValue({ children: columns.map(name => ({ element: { name } })) })
+  // A column may be given as a bare name, or as a schema element so a test can
+  // set a logical type (e.g. `{ name: 'built', converted_type: 'DATE' }`).
+  parquetSchema.mockReturnValue({
+    children: columns.map(c => ({ element: typeof c === 'string' ? { name: c } : c })),
+  })
   parquetRead.mockImplementation(async (opts) => { opts.onComplete(rows) })
 }
 
@@ -339,7 +343,7 @@ describe('loadGeoJsonFromParquet', () => {
       expect(() => structuredClone(properties)).not.toThrow()
     })
 
-    it('keeps a BigInt past Number.MAX_SAFE_INTEGER exact by stringifying it', async () => {
+    it('stringifies a column holding a BigInt past Number.MAX_SAFE_INTEGER', async () => {
       const huge = 9007199254740993n // MAX_SAFE_INTEGER + 2
       mockParquetFile({
         numRows: 1,
@@ -348,8 +352,13 @@ describe('loadGeoJsonFromParquet', () => {
       })
       const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', { fields: ['fid'] })
 
-      // Number(huge) would silently round; an equality match on the exact
-      // digits still works against the string.
+      // Number(huge) would silently round, so the digits are preserved as a
+      // string. Note what this does NOT buy: a style literal comes from JSON
+      // and is a number, and MapLibre's `==` is type-strict, so
+      // ["==", ["get","fid"], 9007199254740993] is false against the string
+      // where the tile-backed path (MVT sint64 -> JS number) says true. The
+      // string keeps the value honest and consistent across the column; it
+      // does not make equality matching work.
       expect(result.featureCollection.features[0].properties).toEqual({ fid: '9007199254740993' })
     })
 
@@ -375,6 +384,147 @@ describe('loadGeoJsonFromParquet', () => {
       expect(result.featureCollection.features[0].properties).toEqual({
         updated: '2026-01-02T03:04:05.000Z',
         naam: 'Utrecht',
+      })
+    })
+
+    // MapLibre's expressions are type-strict, so a column that emitted a
+    // number for one feature and a string for another would make `step` and
+    // `interpolate` error to the spec default (black) on some features while
+    // `match` silently took the fallback branch on others. The representation
+    // is therefore chosen once per column.
+    it('uses one representation for a whole column of mixed-magnitude integers', async () => {
+      const huge = 9007199254740993n // MAX_SAFE_INTEGER + 2
+      mockParquetFile({
+        numRows: 2,
+        columns: ['geometry', 'fid'],
+        rows: [
+          { geometry: POLYGON, fid: 42n },
+          { geometry: POLYGON, fid: huge },
+        ],
+      })
+      const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', { fields: ['fid'] })
+
+      const values = result.featureCollection.features.map(f => f.properties.fid)
+      expect(values).toEqual(['42', '9007199254740993'])
+      expect(new Set(values.map(v => typeof v))).toEqual(new Set(['string']))
+    })
+
+    it('keeps a wholly in-range integer column numeric', async () => {
+      mockParquetFile({
+        numRows: 2,
+        columns: ['geometry', 'fid'],
+        rows: [{ geometry: POLYGON, fid: 1n }, { geometry: POLYGON, fid: 2n }],
+      })
+      const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', { fields: ['fid'] })
+
+      expect(result.featureCollection.features.map(f => f.properties.fid)).toEqual([1, 2])
+    })
+
+    it('renders a DATE column as a plain date, matching what tippecanoe writes', async () => {
+      // A style authored against the PMTiles build compares against
+      // "2024-03-01"; a full ISO instant would match no feature.
+      mockParquetFile({
+        numRows: 1,
+        columns: ['geometry', { name: 'built', converted_type: 'DATE' }],
+        rows: [{ geometry: POLYGON, built: new Date(19783 * 86400000) }],
+      })
+      const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', { fields: ['built'] })
+
+      expect(result.featureCollection.features[0].properties).toEqual({ built: '2024-03-01' })
+    })
+
+    it('keeps the full instant for a timestamp column', async () => {
+      mockParquetFile({
+        numRows: 1,
+        columns: ['geometry', { name: 'seen', logical_type: { type: 'TIMESTAMP' } }],
+        rows: [{ geometry: POLYGON, seen: new Date('2026-01-02T03:04:05Z') }],
+      })
+      const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', { fields: ['seen'] })
+
+      expect(result.featureCollection.features[0].properties).toEqual({ seen: '2026-01-02T03:04:05.000Z' })
+    })
+
+    // A geojson source supports array properties, unlike a vector tile:
+    // ["in", "park", ["get", "categories"]] is a real thing publishers write.
+    it('passes through a list column of scalars', async () => {
+      mockParquetFile({
+        numRows: 1,
+        columns: ['geometry', 'categories'],
+        rows: [{ geometry: POLYGON, categories: ['park', 'recreation'] }],
+      })
+      const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', {
+        fields: ['categories'],
+      })
+
+      expect(result.featureCollection.features[0].properties).toEqual({
+        categories: ['park', 'recreation'],
+      })
+    })
+
+    it('drops a list whose elements are not scalars', async () => {
+      mockParquetFile({
+        numRows: 1,
+        columns: ['geometry', 'parts'],
+        rows: [{ geometry: POLYGON, parts: [{ a: 1 }] }],
+      })
+      const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', { fields: ['parts'] })
+
+      expect(result.featureCollection.features[0].properties).toEqual({})
+    })
+
+    // An unresolved field is not benign: `step`/`interpolate` discard the
+    // errored expression and paint the style-spec default, i.e. solid black.
+    // The caller has to be able to tell.
+    describe('missingFields', () => {
+      it('reports a requested column the file does not have', async () => {
+        mockParquetFile({
+          numRows: 1,
+          columns: ['geometry', 'naam'],
+          rows: [{ geometry: POLYGON, naam: 'Utrecht' }],
+        })
+        const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', {
+          fields: ['naam', 'POP', 'bbox'],
+        })
+
+        expect(result.missingFields).toEqual(['POP', 'bbox'])
+      })
+
+      it('reports a column that exists but is unusable on every row', async () => {
+        mockParquetFile({
+          numRows: 2,
+          columns: ['geometry', 'depth', 'naam'],
+          rows: [
+            { geometry: POLYGON, depth: NaN, naam: 'a' },
+            { geometry: POLYGON, depth: null, naam: 'b' },
+          ],
+        })
+        const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', {
+          fields: ['depth', 'naam'],
+        })
+
+        expect(result.missingFields).toEqual(['depth'])
+      })
+
+      it('is empty when every requested field was delivered', async () => {
+        mockParquetFile({
+          numRows: 1,
+          columns: ['geometry', 'naam'],
+          rows: [{ geometry: POLYGON, naam: 'Utrecht' }],
+        })
+        const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', { fields: ['naam'] })
+
+        expect(result.missingFields).toEqual([])
+      })
+
+      it('does not report a partially-populated column as missing', async () => {
+        mockParquetFile({
+          numRows: 2,
+          columns: ['geometry', 'naam'],
+          rows: [{ geometry: POLYGON, naam: null }, { geometry: POLYGON, naam: 'Utrecht' }],
+        })
+        const result = await loadGeoJsonFromParquet('https://example.com/data.parquet', { fields: ['naam'] })
+
+        expect(result.missingFields).toEqual([])
       })
     })
   })

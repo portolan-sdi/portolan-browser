@@ -287,6 +287,10 @@ export async function loadParquetMetadata(url, { signal } = {}) {
   const metadata = await parquetMetadataAsync(file);
   const schema = parquetSchema(metadata);
   const columnNames = schema.children.map(e => e.element.name);
+  // Top-level schema elements by name, so callers can read a column's logical
+  // type (see isDateOnlyColumn). Top-level only, matching hyparquet's own
+  // column selection, which resolves names against `path_in_schema[0]`.
+  const columnElements = new Map(schema.children.map(e => [e.element.name, e.element]));
   const totalRows = Number(metadata.num_rows);
   const geoInfo = detectGeometryInfo(metadata, columnNames);
   const standaloneBbox = geoInfo?.bboxMapping || detectBboxColumns(columnNames);
@@ -295,6 +299,7 @@ export async function loadParquetMetadata(url, { signal } = {}) {
     file,
     metadata,
     columnNames,
+    columnElements,
     totalRows,
     geometryColumn: geoInfo?.geometryColumn || null,
     bboxMapping: standaloneBbox,
@@ -303,29 +308,71 @@ export async function loadParquetMetadata(url, { signal } = {}) {
   };
 }
 
+const MAX_SAFE = 9007199254740991n;
+
+// A parquet DATE column carries no time of day. hyparquet converts it to a JS
+// Date at UTC midnight, so a full ISO instant would fail to match a style
+// authored against the PMTiles build of the same data, where GDAL/tippecanoe
+// writes the field as "YYYY-MM-DD". Real timestamps keep their full instant.
+function isDateOnlyColumn(element) {
+  if (!element) {return false;}
+  if (element.converted_type === 'DATE') {return true;}
+  return element.logical_type?.type === 'DATE';
+}
+
+// Whether a column must represent its integers as strings. Decided once for
+// the whole column, never per cell: MapLibre's expressions are type-strict, so
+// a column emitting numbers for small values and strings for large ones makes
+// `step`/`interpolate` error to the spec default on some features while
+// `match` silently takes the fallback branch on others. Homogeneity matters
+// more than per-cell exactness — see toStyleValue.
+function columnNeedsStringInts(rows, name) {
+  for (const row of rows) {
+    const value = row[name];
+    if (typeof value === 'bigint' && (value < -MAX_SAFE || value > MAX_SAFE)) {return true;}
+  }
+  return false;
+}
+
 // Coerce one parquet cell into a value MapLibre can evaluate in a style
-// expression. Returns `undefined` for anything that isn't a usable scalar, and
-// the caller then omits the property entirely.
+// expression. Returns `undefined` for anything that isn't usable, and the
+// caller then omits the property and records the column as undelivered.
 //
 // BigInt matters here: hyparquet returns int64 columns (a GeoParquet `fid` is
 // typically one) as BigInt, which throws "Do not know how to serialize a
 // BigInt" the moment MapLibre's worker structured-clones or JSON-stringifies
-// the feature. Struct and binary columns are dropped rather than stringified —
-// a style can't match on them, and a `bbox` struct on every feature would
-// bloat the source for nothing.
-function toStyleValue(value) {
+// the feature. `stringInts` carries the per-column decision above.
+//
+// Arrays of scalars pass through: a geojson source supports them, and
+// `["in", "park", ["get", "categories"]]` is a real thing publishers write —
+// unlike a vector tile, where such a column genuinely could not be matched on.
+// Structs and maps are still dropped: a style can't match on them and a `bbox`
+// struct on every feature would bloat the source for nothing. Binary columns
+// mostly never reach here — hyparquet UTF-8-decodes plain BYTE_ARRAY before we
+// see it — so only FIXED_LEN_BYTE_ARRAY arrives as a Uint8Array and is dropped.
+function toStyleValue(value, { dateOnly = false, stringInts = false } = {}) {
   if (value === null || value === undefined) {return undefined;}
   const type = typeof value;
   if (type === 'string' || type === 'boolean') {return value;}
   if (type === 'number') {return Number.isFinite(value) ? value : undefined;}
-  if (type === 'bigint') {
-    // Past Number.MAX_SAFE_INTEGER the numeric value is a lie; keep the exact
-    // digits as a string so an equality match still works.
-    return value >= -9007199254740991n && value <= 9007199254740991n
-      ? Number(value)
-      : value.toString();
+  if (type === 'bigint') {return stringInts ? value.toString() : Number(value);}
+  if (value instanceof Date) {
+    const iso = value.toISOString();
+    return dateOnly ? iso.slice(0, 10) : iso;
   }
-  if (value instanceof Date) {return value.toISOString();}
+  if (Array.isArray(value)) {
+    const items = [];
+    for (const item of value) {
+      const itemType = typeof item;
+      if (itemType === 'string' || itemType === 'boolean') {items.push(item);}
+      else if (itemType === 'number' && Number.isFinite(item)) {items.push(item);}
+      else if (itemType === 'bigint') {items.push(stringInts ? item.toString() : Number(item));}
+      // A non-scalar element makes the whole array unmatchable; drop it rather
+      // than emit a ragged list a style would silently mis-evaluate.
+      else {return undefined;}
+    }
+    return items;
+  }
   return undefined;
 }
 
@@ -361,11 +408,20 @@ function toStyleValue(value) {
  * `extractStyleFields`). Names the file doesn't have are ignored rather than
  * erroring, so a style may reference attributes that only some of a
  * collection's assets carry.
+ *
+ * Any requested field that could not be delivered — absent from the schema, or
+ * present but unusable on every row — is reported back in `missingFields`.
+ * That matters because a missing attribute is *not* benign: MapLibre falls
+ * back gracefully only for `match`/`case`. For `step` and `interpolate` it
+ * discards the errored expression and substitutes the style-spec default,
+ * which for `fill-color` is solid black. The caller decides what to do about
+ * it; silently rendering black is not an option.
  */
 export async function loadGeoJsonFromParquet(url, { signal, fields = [] } = {}) {
   const maxFeatures = MAX_MAP_FEATURES;
-  const { file, metadata, totalRows, geometryColumn, crs, crsDefinition, columnNames } =
-    await loadParquetMetadata(url, { signal });
+  const {
+    file, metadata, totalRows, geometryColumn, crs, crsDefinition, columnNames, columnElements,
+  } = await loadParquetMetadata(url, { signal });
 
   // Authoritative size gate on the *actual* byte length (from the HEAD/range
   // probe in asyncBufferFromUrl), not the self-declared STAC `file:size`.
@@ -393,13 +449,16 @@ export async function loadGeoJsonFromParquet(url, { signal, fields = [] } = {}) 
   // Columns are pruned to the geometry plus whatever the caller asked for:
   // with no `fields`, the default vector layers use `$type` filters and static
   // paint, so attribute columns would cost network, CPU and memory for no
-  // benefit. Unknown names are dropped here — hyparquet throws on a column
-  // that isn't in the schema, and a style referencing an attribute this
-  // particular file lacks should degrade to its fallback paint, not fail the
-  // whole render.
-  const attributeColumns = fields.filter(
-    name => name !== geometryColumn && columnNames.includes(name)
-  );
+  // benefit.
+  //
+  // Names the file doesn't have are dropped rather than passed through. (On
+  // this path that is a choice, not a necessity: parquetReadObjects uses
+  // `rowFormat: 'object'`, which skips unmatched names — only the 'array'
+  // format throws.) Dropping them is reported via `missingFields` below, since
+  // an unresolved field renders black under `step`/`interpolate`.
+  const requestedColumns = fields.filter(name => name !== geometryColumn);
+  const attributeColumns = requestedColumns.filter(name => columnNames.includes(name));
+  const absentColumns = requestedColumns.filter(name => !columnNames.includes(name));
 
   // `rowEnd` bounds the read even when the footer's `num_rows` understates
   // the real row count (hyparquet never cross-checks it against the row
@@ -418,7 +477,15 @@ export async function loadGeoJsonFromParquet(url, { signal, fields = [] } = {}) 
     return { exceeded: true, reason: VECTOR_NOTICE_TOO_LARGE, totalRows: Math.max(totalRows, rows.length) };
   }
 
+  // Both decisions are per column and made once, before the row loop, so every
+  // feature represents a given column the same way.
+  const columnOptions = new Map(attributeColumns.map(name => [name, {
+    dateOnly: isDateOnlyColumn(columnElements?.get(name)),
+    stringInts: columnNeedsStringInts(rows, name),
+  }]));
+
   const features = [];
+  const delivered = new Set();
   let droppedFeatures = 0;
   let lastYield = Date.now();
   for (const row of rows) {
@@ -453,16 +520,27 @@ export async function loadGeoJsonFromParquet(url, { signal, fields = [] } = {}) 
     // Empty unless `fields` asked for columns (see the `columns` option).
     const properties = {};
     for (const name of attributeColumns) {
-      const value = toStyleValue(row[name]);
-      if (value !== undefined) {properties[name] = value;}
+      const value = toStyleValue(row[name], columnOptions.get(name));
+      if (value !== undefined) {
+        properties[name] = value;
+        delivered.add(name);
+      }
     }
     features.push({ type: 'Feature', geometry, properties });
   }
+
+  // A column read but usable on no feature (all null, all NaN, a struct) is as
+  // undelivered as one the schema never had. Only meaningful once there is at
+  // least one feature to have carried it.
+  const unusableColumns = features.length > 0
+    ? attributeColumns.filter(name => !delivered.has(name))
+    : [];
 
   return {
     exceeded: false,
     featureCollection: { type: 'FeatureCollection', features },
     totalRows,
+    missingFields: [...absentColumns, ...unusableColumns].sort(),
     reprojectedFrom: transform ? crs : null,
     droppedFeatures,
   };

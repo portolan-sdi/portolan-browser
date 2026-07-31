@@ -71,6 +71,18 @@ const MVT_MIME_TYPES = [
   'application/x-protobuf',
 ];
 
+// Style source types that can never stand in for a collection's data source.
+// A raster backdrop or a DEM the publisher shipped in the style document is
+// its own thing; only a vector source (or a URL-bearing geojson one) is a
+// candidate for being remapped onto a loaded asset.
+const SELF_CONTAINED_SOURCE_TYPES = ['raster', 'raster-dem', 'image', 'video'];
+
+// How many decoded parquet FeatureCollections one layer instance retains. The
+// working set a basemap switch or a style change needs is one or two; the cap
+// exists so the field dimension of the cache key cannot accumulate a copy per
+// style the user tries.
+const PARQUET_CACHE_MAX = 3;
+
 function assetHref(asset) {
   return asset.getAbsoluteUrl?.() || asset.href || '';
 }
@@ -231,35 +243,78 @@ export default class StacMapLayer {
     this._overlayLayerIds = [];
     this._overlaySourceIds = [];
     this._overlayAssetMeta = [];
-    // url → loadGeoJsonFromParquet result, for successful and over-cap
-    // results (both deterministic per URL); errors are never cached so a
-    // transient failure can be retried. Lives for the lifetime of this layer
-    // instance (like _cogLayerCache), so readdAfterStyleChange — which
+    // sourceId -> the layer ids currently on the map for it. Ownership is
+    // explicit because style-authored ids follow no naming convention of ours.
+    this._overlayLayerIdsBySource = new Map();
+    // `${url}\n${fields}` → loadGeoJsonFromParquet result, for successful and
+    // over-cap results (both deterministic per key); errors are never cached
+    // so a transient failure can be retried. Lives for the lifetime of this
+    // layer instance (like _cogLayerCache), so readdAfterStyleChange — which
     // re-runs setAssets on the same instance — re-renders from memory
-    // instead of re-downloading and re-decoding the file.
+    // instead of re-downloading and re-decoding the file. Bounded by
+    // PARQUET_CACHE_MAX in insertion order: entries are whole decoded
+    // FeatureCollections, and the field dimension of the key means one URL
+    // can occupy several of them.
     this._parquetResultCache = new Map();
-    // AbortController for the in-flight parquet download, if any. Aborted and
-    // dropped when the overlay epoch bumps (_removeOverlayLayers): the epoch
-    // check alone is cooperative and would let a superseded multi-MB fetch
-    // stream to completion just to be discarded.
-    this._parquetAbort = null;
+    // Same key → { promise, controller } for a download still in flight, so a
+    // second run wanting the identical bytes joins it rather than starting
+    // over. A basemap switch tears down and re-runs setAssets with the same
+    // URLs and the same fields; aborting there would throw away a nearly
+    // complete multi-MB fetch and restart it from byte zero. Entries are
+    // aborted only when nothing wants them any more (_abortInflightParquet).
+    this._parquetInflight = new Map();
     this._overlayEpoch = 0;
     this._glStyleLayerIds = [];
     this._glStyleSourceIds = [];
     this._activeGlStyle = null;
     this._activeGlStyleBaseUrl = null;
+    this._glStyleApplyCount = 0;
     // Attribute columns the collection's styles read, so a GeoParquet asset
     // rendered directly carries the properties those styles match on. Set by
-    // MapView before setAssets (see setStyleFields).
+    // MapView (see setStyleFields / expectStyleFields).
     this._styleFields = [];
+    this._styleFieldsReady = null;
+    this._resolveStyleFields = null;
+  }
+
+  // Declare that style fields are coming, so a parquet read cannot start
+  // before it knows which columns to keep.
+  //
+  // The dependency used to be temporal — "MapView happens to call
+  // setStyleFields first" — which several callers can defeat: the `assets`
+  // watcher, and MapMixin's unawaited initial basemap load reaching
+  // readdAfterStyleChange. Losing that race is not a transient glitch: the
+  // attribute-less FeatureCollection is cached, `_assetsSig` is recorded, and
+  // every later setAssets no-ops on the idempotency guard, so the collection
+  // stays unstyled for the life of the layer.
+  //
+  // Call synchronously, before any await. Every path that then fails to
+  // produce fields MUST still call setStyleFields([]) or the read waits
+  // forever — see MapView.loadStyles, whose early returns all do.
+  expectStyleFields() {
+    if (this._styleFieldsReady) {return;}
+    this._styleFieldsReady = new Promise(resolve => { this._resolveStyleFields = resolve; });
   }
 
   // The union of attribute names referenced by the collection's styles (see
-  // utils/portolanStyles.extractStyleFields). Must be set before setAssets:
-  // the GeoParquet reader prunes columns, and re-reading later would mean a
-  // second download of the whole file.
+  // utils/portolanStyles.extractStyleFields).
   setStyleFields(fields) {
-    this._styleFields = Array.isArray(fields) ? [...fields].sort() : [];
+    const next = Array.isArray(fields) ? [...fields].sort() : [];
+    const changed = next.join(',') !== this._styleFields.join(',');
+    this._styleFields = next;
+    // Belt and braces for a read that already happened with a different field
+    // set: drop the idempotency signature so the next setAssets rebuilds
+    // rather than no-opping on an attribute-less result.
+    if (changed) {this._assetsSig = null;}
+    this.releaseStyleFields();
+  }
+
+  // Let a waiting parquet read proceed without changing the field set — used
+  // by every path that ends without producing fields. Idempotent, and a no-op
+  // once the fields have been set.
+  releaseStyleFields() {
+    this._resolveStyleFields?.();
+    this._resolveStyleFields = null;
   }
 
   setStac(stac) {
@@ -455,6 +510,71 @@ export default class StacMapLayer {
     return import('../../utils/parquet.js');
   }
 
+  // A decoded result is only reusable by a run that asked for the same columns,
+  // so the requested fields are part of the identity of the read.
+  _parquetCacheKey(url) {
+    return `${url}\n${this._styleFields.join(',')}`;
+  }
+
+  // Cache read that also refreshes recency, so PARQUET_CACHE_MAX evicts the
+  // least recently used entry rather than the oldest-inserted one: a Map
+  // iterates in insertion order, and re-inserting moves the key to the end.
+  _readCachedParquet(key) {
+    const hit = this._parquetResultCache.get(key);
+    if (hit) {
+      this._parquetResultCache.delete(key);
+      this._parquetResultCache.set(key, hit);
+    }
+    return hit;
+  }
+
+  _writeCachedParquet(key, value) {
+    this._parquetResultCache.delete(key);
+    this._parquetResultCache.set(key, value);
+    while (this._parquetResultCache.size > PARQUET_CACHE_MAX) {
+      const oldest = this._parquetResultCache.keys().next().value;
+      this._parquetResultCache.delete(oldest);
+    }
+  }
+
+  // Start a read and register it as in-flight, so a concurrent or superseding
+  // run wanting the same key joins this download instead of restarting it.
+  _startParquetRead(deps, key, url) {
+    const controller = new AbortController();
+    const promise = deps.loadGeoJsonFromParquet(url, {
+      signal: controller.signal,
+      fields: this._styleFields,
+    });
+    const pending = { promise, controller };
+    this._parquetInflight.set(key, pending);
+    promise.then(
+      // Cache successful and over-cap results alike — both are deterministic
+      // for a given key. Errors (including aborts) are never cached, so
+      // transient failures stay retryable.
+      value => this._writeCachedParquet(key, value),
+      () => {},
+    ).finally(() => {
+      // Only clear our own entry: a retry after a rejection may already have
+      // registered a newer read under the same key.
+      if (this._parquetInflight.get(key) === pending) {
+        this._parquetInflight.delete(key);
+      }
+    });
+    return pending;
+  }
+
+  // Abort every in-flight parquet read except the keys still wanted. The epoch
+  // check that supersedes a run is cooperative and would let a discarded
+  // multi-MB fetch stream to completion; this stops it. Passing no keep set
+  // aborts all of them.
+  _abortInflightParquet(keep = null) {
+    for (const [key, pending] of [...this._parquetInflight]) {
+      if (keep?.has(key)) {continue;}
+      this._parquetInflight.delete(key);
+      pending.controller.abort();
+    }
+  }
+
   // Render a GeoParquet asset as a MapLibre geojson source with the default
   // vector styling. Gates cheapest-first: STAC-declared feature count and file
   // size (no fetch), then the parquet footer's row count (ranged read), before
@@ -474,12 +594,30 @@ export default class StacMapLayer {
   // or an asset rendered, false when every attempted asset failed or was
   // over-cap — so the caller knows not to cache the asset signature.
   async _addParquetAssets(parquetAssets, epoch) {
-    if (parquetAssets.length === 0) {return true;}
+    if (parquetAssets.length === 0) {
+      // Nothing here will want them: this run renders tiles, or nothing.
+      this._abortInflightParquet();
+      return true;
+    }
 
     // Prefer assets with the `data` role, keeping input order otherwise.
     const sorted = [...parquetAssets].sort((a, b) =>
       Number(b.roles?.includes('data') ?? false) - Number(a.roles?.includes('data') ?? false)
     );
+
+    // Which columns to keep is an *input* to the read, so wait for it rather
+    // than racing it (see expectStyleFields). Resolved immediately when
+    // nothing declared an interest, so a layer with no styles is unaffected.
+    if (this._styleFieldsReady) {
+      await this._styleFieldsReady;
+      if (epoch !== this._overlayEpoch) {return false;}
+    }
+
+    // Now that the fields are known, the keys this run may want are known too.
+    // Anything still downloading under a different key is bytes nobody will
+    // read — abort those, and only those.
+    const wanted = new Set(sorted.map(a => this._parquetCacheKey(assetHref(a))));
+    this._abortInflightParquet(wanted);
 
     let rendered = 0;
     let firstNotice = null;
@@ -520,24 +658,21 @@ export default class StacMapLayer {
         // with the same URLs and must not re-fetch the file. The requested
         // columns are part of the key — a result decoded without a style's
         // attributes can't satisfy a later run that needs them.
-        const cacheKey = `${url}\n${this._styleFields.join(',')}`;
-        let result = this._parquetResultCache.get(cacheKey);
+        const cacheKey = this._parquetCacheKey(url);
+        let result = this._readCachedParquet(cacheKey);
         // Only a fresh load should report dropped features: a basemap switch
         // re-runs setAssets against the cache, and re-warning there would
         // repeat the same message for every toggle.
         const firstLoad = !result;
         if (!result) {
-          if (!deps) {deps = await this._loadParquetDeps();}
-          const controller = new AbortController();
-          this._parquetAbort = controller;
-          result = await deps.loadGeoJsonFromParquet(url, {
-            signal: controller.signal,
-            fields: this._styleFields,
-          });
-          // Cache successful and over-cap results alike — both are
-          // deterministic for a given URL. Errors throw past this line and
-          // are never cached, so transient failures stay retryable.
-          this._parquetResultCache.set(cacheKey, result);
+          // A run this one superseded may already be downloading these exact
+          // bytes; join it rather than starting from zero.
+          let pending = this._parquetInflight.get(cacheKey);
+          if (!pending) {
+            if (!deps) {deps = await this._loadParquetDeps();}
+            pending = this._startParquetRead(deps, cacheKey, url);
+          }
+          result = await pending.promise;
         }
         if (epoch !== this._overlayEpoch) {return false;}
         if (result.exceeded) {
@@ -547,6 +682,18 @@ export default class StacMapLayer {
             notice({ reason: VECTOR_NOTICE_TOO_LARGE, totalRows: result.totalRows, max: MAX_MAP_FEATURES });
           }
           continue;
+        }
+        // A style asked for columns this file does not deliver — absent from
+        // the schema, or present but null/unusable on every row. MapLibre only
+        // falls back gracefully for `match`/`case`; `step` and `interpolate`
+        // discard the errored expression and substitute the style-spec default,
+        // which for `fill-color` is solid black. Name them, so a black map is
+        // traceable to the mismatch instead of looking like a style bug. Warned
+        // once per read, for the same reason the dropped-feature warning is.
+        if (firstLoad && result.missingFields?.length) {
+          console.warn(
+            `GeoParquet ${url} does not provide the style attribute(s): ${result.missingFields.join(', ')}`
+          );
         }
         if (result.droppedFeatures) {
           // Reprojection put these outside the transform's usable domain, so
@@ -685,8 +832,28 @@ export default class StacMapLayer {
 
   // `useSourceLayer: false` is for geojson sources, which have no source
   // layers — MapLibre rejects a `source-layer` key on them.
+
+  // Record a layer as belonging to an overlay source. Ownership is tracked
+  // explicitly rather than inferred from the `<sourceId>-` id prefix: once a
+  // style binds, the ids on the map are the publisher's (`provincies-fill`),
+  // which no prefix rule can recognise — and getAssetOverlays would then drop
+  // the asset from the layer control entirely.
+  _trackOverlayLayer(sourceId, layerId) {
+    this._overlayLayerIds.push(layerId);
+    const existing = this._overlayLayerIdsBySource.get(sourceId);
+    if (existing) {existing.push(layerId);}
+    else {this._overlayLayerIdsBySource.set(sourceId, [layerId]);}
+  }
+
   _addDefaultVectorLayers(sourceId, layerNames, { useSourceLayer = true } = {}) {
     const names = layerNames.length > 0 ? layerNames : ['default'];
+    // Remember a tile source's resolved source-layer names. applyGlStyle needs
+    // them to restore default paint when a style never binds to the source,
+    // and by then the tile metadata they came from is no longer re-readable.
+    if (useSourceLayer) {
+      const meta = this._overlayAssetMeta.find(m => m.sourceId === sourceId);
+      if (meta) {meta.layerNames = layerNames;}
+    }
     const colors = ['#4163cc', '#cc6341', '#41cc63', '#cc41a8', '#ccb341'];
 
     for (let j = 0; j < names.length; j++) {
@@ -708,7 +875,7 @@ export default class StacMapLayer {
           'fill-opacity': 0.3,
         },
       });
-      this._overlayLayerIds.push(fillLayerId);
+      this._trackOverlayLayer(sourceId, fillLayerId);
 
       this.map.addLayer({
         id: lineLayerId,
@@ -721,7 +888,7 @@ export default class StacMapLayer {
           'line-width': 1,
         },
       });
-      this._overlayLayerIds.push(lineLayerId);
+      this._trackOverlayLayer(sourceId, lineLayerId);
 
       this.map.addLayer({
         id: pointLayerId,
@@ -736,7 +903,7 @@ export default class StacMapLayer {
           'circle-stroke-width': 0.5,
         },
       });
-      this._overlayLayerIds.push(pointLayerId);
+      this._trackOverlayLayer(sourceId, pointLayerId);
     }
   }
 
@@ -753,7 +920,7 @@ export default class StacMapLayer {
       type: 'raster',
       source: sourceId,
     });
-    this._overlayLayerIds.push(layerId);
+    this._trackOverlayLayer(sourceId, layerId);
   }
 
   // All COG assets of the current item — the full set the layer picker draws
@@ -1002,9 +1169,11 @@ export default class StacMapLayer {
     const overlays = [];
     for (let i = 0; i < this._overlayAssetMeta.length; i++) {
       const meta = this._overlayAssetMeta[i];
-      // The trailing '-' stops e.g. `stac-parquet-1` from also matching
-      // `stac-parquet-10-*` layer ids.
-      const layerIds = this._overlayLayerIds.filter(id => id.startsWith(meta.sourceId + '-'));
+      // Tracked explicitly rather than matched on an id prefix: once a style
+      // binds, the layers over this source carry the publisher's own ids, and
+      // a prefix rule would find none of them — dropping the asset from the
+      // layer control and leaving the user unable to toggle it off.
+      const layerIds = this._overlayLayerIdsBySource.get(meta.sourceId) || [];
       if (layerIds.length > 0) {
         const vis = this.map?.getLayoutProperty(layerIds[0], 'visibility');
         overlays.push({
@@ -1056,7 +1225,9 @@ export default class StacMapLayer {
     this._clearLayers();
     this._removeCogLayers();
     this._removeOverlayLayers();
-    // The instance is done for; release the decoded FeatureCollections.
+    // The instance is done for: nothing will read these bytes, so stop paying
+    // for them, and release the decoded FeatureCollections.
+    this._abortInflightParquet();
     this._parquetResultCache.clear();
   }
 
@@ -1077,15 +1248,22 @@ export default class StacMapLayer {
     this._removeOverlayLayers();
     if (stac) {this.setStac(stac);}
     if (children) {this.setChildren(children);}
+    // The re-add below is only needed if the asset path didn't already do it.
+    // It usually does — setAssets re-binds the active style in its tail — and
+    // each application costs a full re-tessellation of every loaded geojson
+    // tile, so paying it twice per basemap switch is worth avoiding.
+    const appliedBefore = this._glStyleApplyCount;
     if (assets) {
       await this.setAssets(assets);
     } else if (stac) {
       await this.autoLoadVisualAssets(stac);
     }
-    // Usually redundant — the setAssets tail re-binds the style itself — but
-    // not always: a collection whose only renderable content is the style's
-    // own inline sources never reaches setAssets. Re-applying is idempotent.
-    if (_activeGlStyle) {this.applyGlStyle(_activeGlStyle, _activeGlStyleBaseUrl);}
+    // The exception the count catches: a collection whose only renderable
+    // content is the style's own inline sources never reaches that tail, and
+    // neither does a setAssets that bailed early (no assets, stale epoch).
+    if (_activeGlStyle && this._glStyleApplyCount === appliedBefore) {
+      this.applyGlStyle(_activeGlStyle, _activeGlStyleBaseUrl);
+    }
   }
 
   _addSource(id, spec) {
@@ -1182,14 +1360,13 @@ export default class StacMapLayer {
     // the epoch after each await and bail if a newer setAssets has taken over,
     // instead of pushing duplicate meta/layers on top of the new state.
     this._overlayEpoch++;
-    // The epoch check is cooperative; also abort the superseded run's parquet
-    // download outright so it stops consuming bandwidth immediately. The
-    // aborted run's fetch rejects with AbortError, which _addParquetAssets
-    // swallows silently.
-    if (this._parquetAbort) {
-      this._parquetAbort.abort();
-      this._parquetAbort = null;
-    }
+    // Deliberately *not* aborting the in-flight parquet read here. The run
+    // that supersedes this one usually wants the identical bytes — a basemap
+    // switch re-runs setAssets with the same URLs and the same fields — and
+    // aborting would discard a nearly complete multi-MB download only to start
+    // it again from zero. The successor prunes what it genuinely doesn't want
+    // once it knows its own keys (_addParquetAssets), and remove() aborts
+    // everything. Until then the epoch check keeps a stale run off the map.
     this._clearOverlayLayers();
     for (const id of [...this._overlaySourceIds]) {
       try { if (this.map.getSource(id)) {this.map.removeSource(id);} } catch { /* ignore */ }
@@ -1203,6 +1380,7 @@ export default class StacMapLayer {
       try { if (this.map.getLayer(id)) {this.map.removeLayer(id);} } catch { /* ignore */ }
     }
     this._overlayLayerIds = [];
+    this._overlayLayerIdsBySource.clear();
     this._clearGlStyleExtras();
   }
 
@@ -1235,26 +1413,40 @@ export default class StacMapLayer {
   applyGlStyle(glStyle, baseUrl = null) {
     if (!glStyle || !glStyle.layers) {return;}
 
+    // Bumped on every real application so callers that may have triggered one
+    // indirectly can tell whether they still need to apply it themselves — see
+    // readdAfterStyleChange.
+    this._glStyleApplyCount++;
     this._clearOverlayLayers();
 
     const sources = glStyle.sources || {};
     const styleSourceNames = Object.keys(sources);
     const isGeojsonSource = (id) => this.map.getSource(id)?.type === 'geojson';
 
-    // A style may carry its own inline geojson source (an annotation overlay,
-    // say). Those are added as-is under their own name rather than mapped onto
-    // a loaded asset source.
+    // A style source either carries its own data or stands in for the
+    // collection's. Only the latter — a vector source, which in a Portolan
+    // style names the collection's PMTiles asset — is mapped onto a loaded
+    // asset source. Everything else (an inline geojson annotation overlay, a
+    // raster backdrop the publisher shipped) is added under its own name.
+    //
+    // The distinction matters: with every source type eligible for positional
+    // mapping, a style declaring a raster source ahead of its vector one would
+    // bind the raster layer to the GeoParquet source and drop the actual data
+    // layer, leaving the map showing a basemap over nothing.
     const directSourceIds = new Set();
     const mappedStyleSourceNames = [];
     for (const name of styleSourceNames) {
       const src = sources[name];
-      if (src && src.type === 'geojson' && src.data) {
+      const selfContained = src && (
+        (src.type === 'geojson' && src.data) || SELF_CONTAINED_SOURCE_TYPES.includes(src.type)
+      );
+      if (selfContained) {
         try {
           this.map.addSource(name, src);
           this._glStyleSourceIds.push(name);
           directSourceIds.add(name);
         } catch (err) {
-          console.warn(`Failed to add geojson source "${name}" from style`, err);
+          console.warn(`Failed to add source "${name}" from style`, err);
         }
       } else {
         mappedStyleSourceNames.push(name);
@@ -1333,20 +1525,31 @@ export default class StacMapLayer {
       if (directSourceIds.has(layer.source)) {
         this._glStyleLayerIds.push(layerSpec.id);
       } else {
-        this._overlayLayerIds.push(layerSpec.id);
+        this._trackOverlayLayer(layerSpec.source, layerSpec.id);
         styledSourceIds.add(layerSpec.source);
       }
     }
 
-    // A parquet-backed geojson source the style never reached — because the
-    // style only defines inline sources, or because its layers all failed to
-    // add — would be left invisible, since _clearOverlayLayers dropped the
-    // default layers it had. Give those their default styling back. Tile
-    // sources are not restored: their default layers need the source-layer
-    // names read from the tile metadata, which isn't available here.
+    // An asset source the style never reached — because the style only defines
+    // inline sources, or because its layers all failed to add — would be left
+    // invisible, since _clearOverlayLayers dropped the default layers it had.
+    // Give those their default styling back.
+    //
+    // Tile sources need the `source-layer` names from the tile metadata, which
+    // isn't re-readable here; they are taken from the asset meta recorded when
+    // the source was added, so a tile-backed collection is restored just as a
+    // parquet-backed one is rather than silently vanishing under a style whose
+    // sources are all inline.
     for (const sourceId of mappableSourceIds) {
-      if (styledSourceIds.has(sourceId) || !isGeojsonSource(sourceId)) {continue;}
-      this._addDefaultVectorLayers(sourceId, [], { useSourceLayer: false });
+      if (styledSourceIds.has(sourceId)) {continue;}
+      if (isGeojsonSource(sourceId)) {
+        this._addDefaultVectorLayers(sourceId, [], { useSourceLayer: false });
+        continue;
+      }
+      const layerNames = this._overlayAssetMeta.find(m => m.sourceId === sourceId)?.layerNames;
+      if (layerNames) {
+        this._addDefaultVectorLayers(sourceId, layerNames);
+      }
     }
 
     this._activeGlStyle = glStyle;
