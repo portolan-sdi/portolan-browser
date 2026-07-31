@@ -287,8 +287,8 @@ describe('portolanStyles', () => {
         })
 
         // No asset carries the default role, so the manifest's curated order
-        // breaks the tie rather than asset document order.
-        it('lets the manifest first entry outrank document order', () => {
+        // governs rather than asset document order.
+        it('lets the manifest order outrank document order', () => {
           const stac = collection({
             'styles/by-age': { href: './styles/by-age.json', roles: ['style'], type: 'application/json', title: 'By Age' },
             'styles/default': { href: './styles/default.json', roles: ['style'], type: 'application/json', title: 'Default' },
@@ -304,12 +304,26 @@ describe('portolanStyles', () => {
           expect(resolveStyles(stac).map(s => s.name)).toEqual(['styles/by-age', 'styles/default'])
         })
 
-        it('does not let a manifest-only entry leapfrog a tagged asset', () => {
+        // Manifest order outranks document order, so a manifest-listed style
+        // leads even when the only spec-tagged asset is not in the manifest.
+        it('puts manifest-listed styles ahead of ones it does not list', () => {
           const stac = collection({
             legacy: { href: './styles/legacy.json', title: 'Legacy' },
             'style-new': styleAsset({ href: './styles/new.json', title: 'New' }),
           }, { 'portolan:styles': ['legacy'] })
-          expect(resolveStyles(stac).map(s => s.name)).toEqual(['style-new', 'legacy'])
+          expect(resolveStyles(stac).map(s => s.name)).toEqual(['legacy', 'style-new'])
+        })
+
+        // Unlisted styles keep their relative document order behind the
+        // manifest's — the sort is stable.
+        it('keeps document order among styles the manifest omits', () => {
+          const stac = collection({
+            'style-zoning': styleAsset({ href: './styles/zoning.json', title: 'Zoning' }),
+            'style-admin': styleAsset({ href: './styles/admin.json', title: 'Admin' }),
+            'style-listed': styleAsset({ href: './styles/listed.json', title: 'Listed' }),
+          }, { 'portolan:styles': ['style-listed'] })
+          expect(resolveStyles(stac).map(s => s.name))
+            .toEqual(['style-listed', 'style-zoning', 'style-admin'])
         })
       })
 

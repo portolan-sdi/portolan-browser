@@ -86,23 +86,17 @@ function styleAssetEntries(stac) {
   return assetEntries(stac).filter(([, asset]) => isStyleAsset(asset));
 }
 
-function hasDefaultStyleAsset(stac) {
-  return styleAssetEntries(stac).some(([, asset]) => hasRole(asset, 'default'));
+// core.md: "when a collection provides more than one style, exactly one style
+// asset MUST carry both `style` and `default` in its `roles`."
+function defaultStyleAssetKey(stac) {
+  const entry = styleAssetEntries(stac).find(([, asset]) => hasRole(asset, 'default'));
+  return entry ? entry[0] : null;
 }
 
-// Styles declared the spec way: collection assets carrying the `style` role.
-//
-// core.md: "Because STAC assets are an unordered JSON object … the default
-// style is identified by a second role rather than by position or key: when a
-// collection provides more than one style, exactly one style asset MUST carry
-// both `style` and `default` in its `roles`." Catalogs published before that
-// rule carry no marker, so document order is the fallback.
+// Styles declared the spec way: collection assets carrying the `style` role,
+// in document order. Ordering precedence is applied by resolveStyles.
 function stylesFromAssets(stac, baseUrl) {
-  const entries = styleAssetEntries(stac);
-  const defaultIndex = entries.findIndex(([, asset]) => hasRole(asset, 'default'));
-  if (defaultIndex > 0) {entries.unshift(...entries.splice(defaultIndex, 1));}
-
-  return entries
+  return styleAssetEntries(stac)
     .map(([key, asset]) => styleRecord(key, asset, assetHref(asset, baseUrl)))
     .filter(Boolean);
 }
@@ -151,14 +145,23 @@ export function resolveStyles(stac) {
   const styles = fromAssets.concat(legacy.filter(s => !seen.has(s.name)));
   if (styles.length === 0) {return [];}
 
-  // Last resort for the default: with no `default` role anywhere, a legacy
-  // manifest's first entry is the publisher's curated choice, so it outranks
-  // asset document order — but only if it is itself a tagged asset. A
-  // manifest-only entry must not leapfrog the styles the spec path found.
-  if (legacy.length > 0 && !hasDefaultStyleAsset(stac)) {
-    const preferred = legacy[0].name;
-    const index = styles.findIndex(s => s.name === preferred);
-    if (index > 0 && seen.has(preferred)) {styles.unshift(...styles.splice(index, 1));}
+  // Ordering precedence, strongest first:
+  //   1. the asset carrying the `default` role — the spec's signal
+  //   2. the legacy `portolan:styles` manifest order — the publisher curated it
+  //   3. asset document order — which STAC does not actually guarantee
+  //
+  // Manifest order is applied as a stable sort, so styles the manifest does
+  // not list keep their relative document order behind the ones it does.
+  if (legacy.length > 0) {
+    const rank = new Map(legacy.map((style, index) => [style.name, index]));
+    const last = Number.MAX_SAFE_INTEGER;
+    styles.sort((a, b) => (rank.get(a.name) ?? last) - (rank.get(b.name) ?? last));
+  }
+
+  const defaultName = defaultStyleAssetKey(stac);
+  if (defaultName) {
+    const index = styles.findIndex(s => s.name === defaultName);
+    if (index > 0) {styles.unshift(...styles.splice(index, 1));}
   }
 
   if (styles.length > 1) {

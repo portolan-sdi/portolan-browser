@@ -54,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Discover MapLibre styles from assets carrying the `style` role, as Portolan's spec defines, instead of a `portolan:styles` manifest the spec no longer defines. The default style is the asset that also carries the `default` role, falling back to document order and then to the manifest's order for catalogs published before that rule; manifest entries the asset scan misses are still merged in, so half-migrated catalogs keep all their styles
+- Discover MapLibre styles from assets carrying the `style` role, as Portolan's spec defines, instead of a `portolan:styles` manifest the spec no longer defines. The default style is the asset that also carries the `default` role, falling back to a `portolan:styles` manifest's order and then to asset document order for catalogs published before that rule; manifest entries the asset scan misses are still merged in, so half-migrated catalogs keep all their styles
 - Handle state of downloads better and confirm leaving the page when downloading
 - Better error on request to the `/collections` or `.../items` endpoints
 - Collection list on Global Item Search was empty in certain situations
