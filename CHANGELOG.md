@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ignored metadata fields can be configured in `fields.config.js`
 - PlayWright tests
 - Add config option `displayOverviewsForChildren` to toggle visualizing overviews for maps showing many STAC Items
+- Render GeoParquet files in a projected CRS by reprojecting them to lon/lat, using the PROJJSON definition in the file's own GeoParquet metadata. Files that identify a CRS but supply no usable definition are still refused rather than drawn in the wrong place.
 
 ### Changed
 

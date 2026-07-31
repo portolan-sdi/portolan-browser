@@ -505,6 +505,21 @@ export default class StacMapLayer {
           }
           continue;
         }
+        if (result.droppedFeatures) {
+          // Reprojection put these outside the lon/lat domain, so either the
+          // coordinates fall outside the declared CRS's area of use or the
+          // declared CRS is wrong for the file. Drawing them would streak
+          // shapes across the map rather than fail visibly.
+          console.warn(
+            `Dropped ${result.droppedFeatures} feature(s) from ${url} that could not be reprojected from ${result.reprojectedFrom}`
+          );
+          if (result.featureCollection.features.length === 0) {
+            // Nothing survived — an empty source renders a blank map with no
+            // explanation, so surface it as a failure instead.
+            notice({ reason: VECTOR_NOTICE_ERROR });
+            continue;
+          }
+        }
 
         this._overlayAssetMeta.push({
           title: asset.title || asset.getKey?.() || asset.key || `GeoParquet ${i + 1}`,
