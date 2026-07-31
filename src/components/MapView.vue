@@ -241,8 +241,19 @@ export default {
     },
 
     async resolveAndApplyStyles() {
-      if (!this.stac) {return;}
-      const styles = resolveStyles(this.stac);
+      // core.md scopes styles to collections: they describe how to draw that
+      // collection's own data. An Item map, or a search map rendering results
+      // from elsewhere, is not what these styles were authored for.
+      if (this.stac?.type !== 'Collection') {return;}
+      let styles;
+      try {
+        styles = resolveStyles(this.stac);
+      } catch (error) {
+        // Malformed style metadata must cost this collection its styles, not
+        // reject out of showStacLayer, which has no catch.
+        console.warn('Failed to resolve styles:', error);
+        return;
+      }
       if (styles.length === 0) {return;}
       this.availableStyles = styles;
       await this.applyStyleAtIndex(0);

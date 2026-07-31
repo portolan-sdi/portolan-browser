@@ -1,6 +1,9 @@
 <template>
-  <div v-if="styles.length > 1" class="map-stylepicker">
-    <select v-model="selected" :title="$t('mapping.styles.select')">
+  <div v-if="styles.length > 0" class="map-stylepicker">
+    <!-- A one-option dropdown is noise, but the legend below is not: it is the
+         only thing naming the colours, and a single auto-applied style needs it
+         most. So the select is gated on there being a choice, the panel is not. -->
+    <select v-if="styles.length > 1" v-model="selected" :title="$t('mapping.styles.select')">
       <option v-for="(style, index) in styles" :key="style.name" :value="index">
         {{ style.title }}
       </option>

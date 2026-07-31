@@ -1,46 +1,173 @@
 import { toAbsolute } from 'stac-js/src/http.js';
+import { isMediaType } from 'stac-js/src/mediatypes.js';
 
-export function resolveStyles(stac) {
+// Media types a MapLibre GL style may be published under. `application/json`
+// is accepted because catalogs published before the media type was pinned use
+// it, and an absent type is accepted because some writers omit it: the `style`
+// role is the normative signal, and loadStyleJson still rejects anything that
+// is not a GL v8 document.
+const STYLE_MEDIA_TYPES = ['application/vnd.mapbox.style+json', 'application/json'];
+
+// Style hrefs come from untrusted catalog JSON and are handed straight to
+// fetch(), so restrict them to schemes a style can legitimately live on. This
+// keeps `file:`, `data:`, `blob:` and `javascript:` out of the fetch.
+const FETCHABLE_SCHEMES = ['http:', 'https:'];
+
+// Works on stac-js Assets (which expose hasRole) and on bare STAC JSON alike,
+// and tolerates a malformed `roles` of any shape.
+function hasRole(asset, role) {
+  if (typeof asset?.hasRole === 'function') {return asset.hasRole(role);}
+  return Array.isArray(asset?.roles) && asset.roles.includes(role);
+}
+
+// core.md, "Visualization Styles": "each style MUST be registered as a
+// collection-level asset carrying the `style` role … A client or agent
+// discovers a collection's styles by filtering assets on that role, so no
+// separate manifest is needed and this specification defines none."
+function isStyleAsset(asset) {
+  // isMediaType handles a non-string type, media-type parameters and case;
+  // the third argument allows an absent type.
+  return hasRole(asset, 'style') && isMediaType(asset?.type ?? undefined, STYLE_MEDIA_TYPES, true);
+}
+
+function isFetchableHref(href) {
+  if (typeof href !== 'string' || href.length === 0) {return false;}
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(href);
+  // Relative and protocol-relative hrefs resolve against the page origin.
+  if (!scheme) {return true;}
+  return FETCHABLE_SCHEMES.includes(`${scheme[1].toLowerCase()}:`);
+}
+
+// toAbsolute throws on a missing or unparseable href, and a style asset with
+// no usable href must not take out discovery for the whole collection.
+function absoluteHref(href, baseUrl) {
+  if (typeof href !== 'string' || href.length === 0) {return null;}
+  let absolute;
+  try {
+    absolute = toAbsolute(href, baseUrl);
+  } catch {
+    return null;
+  }
+  return isFetchableHref(absolute) ? absolute : null;
+}
+
+// stac-js Assets resolve their own href against the collection; a definition
+// or an unresolvable href yields null, so fall back to explicit resolution.
+function assetHref(asset, baseUrl) {
+  const own = asset?.getAbsoluteUrl?.();
+  if (typeof own === 'string' && isFetchableHref(own)) {return own;}
+  return absoluteHref(asset?.href, baseUrl);
+}
+
+// Titles reach the DOM and commonPrefix, so they must be strings. The `styles/`
+// prefix is stripped anchored — an unanchored strip would mangle a key like
+// `basemap/styles/dark`.
+function styleTitle(key, asset) {
+  const title = asset?.title;
+  if (typeof title === 'string' && title.length > 0) {return title;}
+  return String(key).replace(/^styles\//, '');
+}
+
+// The single constructor for a style record, so the three discovery paths
+// cannot drift apart. Returns null for anything not renderable.
+function styleRecord(key, asset, href) {
+  if (typeof key !== 'string' || key.length === 0 || !href) {return null;}
+  return { name: key, title: styleTitle(key, asset), href };
+}
+
+// stac-js hydrates Collection.assets into {key: Asset}, so Object.entries
+// yields the very Asset instances getAssets() returns, with their keys — and
+// the same expression still works on bare STAC JSON.
+function assetEntries(stac) {
+  return stac?.assets ? Object.entries(stac.assets) : [];
+}
+
+function styleAssetEntries(stac) {
+  return assetEntries(stac).filter(([, asset]) => isStyleAsset(asset));
+}
+
+// core.md: "when a collection provides more than one style, exactly one style
+// asset MUST carry both `style` and `default` in its `roles`."
+function defaultStyleAssetKey(stac) {
+  const entry = styleAssetEntries(stac).find(([, asset]) => hasRole(asset, 'default'));
+  return entry ? entry[0] : null;
+}
+
+// Styles declared the spec way: collection assets carrying the `style` role,
+// in document order. Ordering precedence is applied by resolveStyles.
+function stylesFromAssets(stac, baseUrl) {
+  return styleAssetEntries(stac)
+    .map(([key, asset]) => styleRecord(key, asset, assetHref(asset, baseUrl)))
+    .filter(Boolean);
+}
+
+// Pre-spec Portolan catalogs listed their styles in a `portolan:styles`
+// manifest instead of tagging the assets. The spec defines no manifest, so it
+// is consulted only to fill in styles the asset scan did not already find —
+// keeping already-published and half-migrated catalogs rendering.
+function stylesFromLegacyManifest(stac, baseUrl) {
   const styleEntries = stac.properties?.['portolan:styles']
     || stac['portolan:styles']
     || [];
 
   if (!Array.isArray(styleEntries) || styleEntries.length === 0) {return [];}
 
-  const baseUrl = stac.getAbsoluteUrl?.() || '';
-
-  const styles = styleEntries
+  return styleEntries
     .map(entry => {
       if (typeof entry === 'string') {
         const asset = stac.assets?.[entry];
         if (!asset) {return null;}
-        return {
-          name: entry,
-          title: asset.title || entry.replace('styles/', ''),
-          href: asset.getAbsoluteUrl?.() || toAbsolute(asset.href, baseUrl),
-        };
+        return styleRecord(entry, asset, assetHref(asset, baseUrl));
       }
 
-      if (entry && typeof entry === 'object' && entry.href) {
+      if (entry && typeof entry === 'object' && typeof entry.href === 'string') {
+        const key = entry.name || entry.href;
         const matchingAsset = stac.assets?.[`styles/${entry.name}`];
-        return {
-          name: entry.name || entry.href,
-          title: matchingAsset?.title || entry.name || entry.href,
-          href: toAbsolute(entry.href, baseUrl),
-        };
+        return styleRecord(String(key), matchingAsset, absoluteHref(entry.href, baseUrl));
       }
 
       return null;
     })
     .filter(Boolean);
+}
+
+export function resolveStyles(stac) {
+  if (!stac) {return [];}
+  const baseUrl = stac.getAbsoluteUrl?.() || '';
+
+  const fromAssets = stylesFromAssets(stac, baseUrl);
+  const legacy = stylesFromLegacyManifest(stac, baseUrl);
+
+  // Merge rather than replace. A half-migrated catalog can tag some styles as
+  // assets while others are still only named in the manifest; letting a single
+  // tagged asset suppress the manifest would silently drop the rest.
+  const seen = new Set(fromAssets.map(s => s.name));
+  const styles = fromAssets.concat(legacy.filter(s => !seen.has(s.name)));
+  if (styles.length === 0) {return [];}
+
+  // Ordering precedence, strongest first:
+  //   1. the asset carrying the `default` role — the spec's signal
+  //   2. the legacy `portolan:styles` manifest order — the publisher curated it
+  //   3. asset document order — which STAC does not actually guarantee
+  //
+  // Manifest order is applied as a stable sort, so styles the manifest does
+  // not list keep their relative document order behind the ones it does.
+  if (legacy.length > 0) {
+    const rank = new Map(legacy.map((style, index) => [style.name, index]));
+    const last = Number.MAX_SAFE_INTEGER;
+    styles.sort((a, b) => (rank.get(a.name) ?? last) - (rank.get(b.name) ?? last));
+  }
+
+  const defaultName = defaultStyleAssetKey(stac);
+  if (defaultName) {
+    const index = styles.findIndex(s => s.name === defaultName);
+    if (index > 0) {styles.unshift(...styles.splice(index, 1));}
+  }
 
   if (styles.length > 1) {
-    const titles = styles.map(s => s.title);
-    const prefix = commonPrefix(titles);
+    const prefix = commonPrefix(styles.map(s => s.title));
     if (prefix.length > 0) {
-      for (const s of styles) {
-        s.title = s.title.slice(prefix.length);
-      }
+      return styles.map(s => ({ ...s, title: s.title.slice(prefix.length) }));
     }
   }
 
@@ -109,18 +236,20 @@ export function extractLegend(glStyle) {
 export async function loadStyleJson(href) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
-  let response;
   try {
-    response = await fetch(href, { signal: controller.signal });
+    const response = await fetch(href, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch style: ${response.status} ${href}`);
+    }
+    // The signal stays armed across the body read: clearing it once the
+    // headers arrive leaves response.json() unbounded, so a slow-drip or
+    // endless body could buffer without limit.
+    const data = await response.json();
+    if (!data || data.version !== 8) {
+      throw new Error(`Invalid Mapbox GL style (version !== 8) at ${href}`);
+    }
+    return data;
   } finally {
     clearTimeout(timeout);
   }
-  if (!response.ok) {
-    throw new Error(`Failed to fetch style: ${response.status} ${href}`);
-  }
-  const data = await response.json();
-  if (!data || data.version !== 8) {
-    throw new Error(`Invalid Mapbox GL style (version !== 8) at ${href}`);
-  }
-  return data;
 }

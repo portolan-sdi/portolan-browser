@@ -1,0 +1,5 @@
+# Synced verbatim from portolan-sdi/portolan-ops. Local edits are overwritten
+# on the next sync, so linting them here can only produce failures nobody in
+# this repo can fix — the fix would have to land in portolan-ops.
+AGENTS.md
+CLAUDE.md
