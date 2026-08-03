@@ -106,18 +106,33 @@ test.describe('Global authConfig (legacy single scheme)', () => {
     await catalog.createServer(worker);
     await requireAuth(worker, ROOT_URL, hasHeader('x-api-key', 'secret'));
 
+    // Record every request to the external domain for the whole test. The child
+    // is often fetched during the initial render, to resolve its title, rather
+    // than on the click below — a listener armed just before the click then
+    // waits for a request that already happened and never comes again.
+    const externalRequests = [];
+    page.on('request', req => {
+      if (req.url().startsWith('https://other.example/catalog.json')) {
+        externalRequests.push(req);
+      }
+    });
+
     await page.goto('/');
     await expectLoginModal(page);
     await submitApiKey(page, 'secret');
     await waitForBrowserReady(page);
 
-    // Navigate to the external child; its request must not carry the credentials
-    const externalRequest = page.waitForRequest(req => req.url().startsWith('https://other.example/catalog.json'));
+    // Navigate to the external child
     await page.getByRole('link', { name: /External Catalog/ }).click();
-    expect((await externalRequest).headers()['x-api-key']).toBeUndefined();
-
     await waitForBrowserReady(page);
     await expect(page.getByRole('heading', { name: /External Catalog/ })).toBeVisible();
+
+    // However it was reached, no request to the external domain may carry the
+    // credentials — assert over all of them, not just the first.
+    expect(externalRequests.length).toBeGreaterThan(0);
+    for (const req of externalRequests) {
+      expect(req.headers()['x-api-key']).toBeUndefined();
+    }
   });
 
   test('logout clears the credentials', async ({ page, worker }) => {
