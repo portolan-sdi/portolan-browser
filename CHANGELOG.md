@@ -1,3 +1,10 @@
+<!-- Release headings are shortcut reference links (`## [5.0.0]`), the Keep a
+     Changelog convention. package.json disables this rule by name, but under
+     pnpm's strict layout that registers a second copy of the rule rather than
+     turning off the one remark-preset-lint-recommended already enabled, so the
+     disable never takes effect. This directive works by rule name instead. -->
+<!-- lint disable no-shortcut-reference-link -->
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -6,6 +13,116 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased][]
+
+### Added
+
+- Search filters are now preserved for collection and item searches
+- Opening a collection from the collection search results carries the search criteria over into its item filters
+- An indicator on the item filter toggle shows when the filters were changed but not applied yet
+- Added basic support for the STAC API extensions Transactions (for Items) and Collection Transactions, including validation
+  - Adds three new config options: `transactions`, `transactionsRequireLogin` and `transactionsRequirePreflight`
+  - Support for external management UIs via `create-form` and `edit-form` links ([RFC 6861](https://www.rfc-editor.org/rfc/rfc6861.html)) in the "Manage" menu
+
+### Fixed
+
+- The Search page restores the previous results when returning to it
+
+## [5.0.0] - 2026-07-31
+
+### Added
+
+- New Widget: `Featured`
+- Allow widgets to be shown conditionally
+- Added `relationTypes.config.js` to allow configuring link relation types that
+  - are specifically STAC and should be used to navigate to and display in STAC Browser
+  - should be hidden
+
+### Changed
+
+- Renamed SCSS variable `$logo-image-height` to `$logo-height` and CSS variable `--sb-logo-max-height` to `--sb-logo-height`
+- Added SCSS variable `$header-background` to allow overriding the gradient background of the header via SCSS as well
+- `buildTileUrlTemplate` can return `null` to not pass an asset to the tile server and use client-side rendering or no rendering at all
+
+### Fixed
+
+- URLs that were entered with a "wrong" trailing slash (e.g. `.../v1` although the server reports `.../v1/` as its URL) are corrected based on the self link of the server response and redirected.
+- Widgets that provide a custom `component` without an `id` render correctly; widget definitions with neither are skipped with an error
+- Use the Bootstrap z-index values to avoid overlay issues with the sticky header
+- Fix logo size calculation, avoiding the site title wrapping into multiple lines
+- Share button correctly shows with rounded borders on the right side
+- Web-Optimized GeoZarr assets have "Show on Map" button
+- The item filter panel reacts to programmatic open/close after the page has loaded
+
+## [5.0.0-rc.2] - 2026-06-23
+
+### Added
+
+- The Browse menu also loads additional Collections on demand
+- Minimal Docker build test and CI workflow.
+- Docker: `pathPrefix` can be set at container startup via `SB_pathPrefix` when `DYNAMIC_CONFIG` is enabled (default)
+
+### Changed
+
+- `getBrowserPath` for STAC Objects is not available any longer, use `toBrowserPath` or other URL comparison mechanisms instead.
+  **Note:** This is commonly used in `preprocessSTAC` config option, ensure to update your `config.js`.
+- Internal rewrite of how API children are maintained
+- Loaded collections are cached and no longer re-fetched when returning to a page
+- Header stays at the top by default and has a different design. You can disable the sticky header in the `variables.scss` by setting `$header-position` to `static`.
+
+### Fixed
+
+- Alternate assets are considered as thumbnail and preview candidates if the original asset can't be shown in a browser
+- Redirect bare `pathPrefix` URLs to their trailing-slash form in the Docker/nginx image (e.g. `/browser` → `/browser/`)
+- Geometries that cross the antimeridian are split into multi-geometries so that footprints render correctly on the map
+- Fix global error handling in certain edge-cases
+- Improve speed of catalog/collection duplicate detection
+- Fix search link detection
+- The configured default collection and item sort is also applied to the Browse menu
+- More requests that fail due to missing authentication are retried after login (incl. searches and downloads)
+- A failed background load no longer switches the page after login
+
+## [5.0.0-rc.1] - 2026-06-27
+
+### Added
+- Adding `extent`s to the root catalog will restrict the Search filters
+- Support free-text search for Collections in list of collections
+- Add a link to Collection Search from the Collections overview page for advanced filters
+- New locales:
+  - Swedish
+  - Russian
+- New config options:
+  - `catalogTitleAfterImage`: Set a different title in the header after a logo.
+  - `defaultCollectionSort`: Default sort order for Collections (replaces `cardViewSort`). The new default is different from the old default behaviour.
+  - `defaultItemSort`: Default sort order for Items (replaces `cardViewSort`). The new default is different from the old default behaviour.
+  - `preferredAssets`: Configure which (alternate) asset is shown by default. Defaults to preferring HTTP(S) alternates; set to `false` to revert back to the previous behaviour.
+
+### Changed
+
+- Only show language chooser when more than one locale is available
+- Restrict Collection item search date picker to collection's temporal extent
+- Focus temporal extent filter for Collection item search on end of temporal extent
+- Disable temporal extent filter when a single date/time is provided as temporal extent in the Collection metadata
+- Better default STAC title detection within not fully loaded lists where only a URL is available
+- No search / sort functionality available when a static catalog has only a subset of children loaded
+- The default value for `catalogTitle` is `null` instead of `STAC Browser`.
+- Improved how the title is handled
+
+### Removed
+
+- Removed `cardViewSort` config option in favor of `defaultCollectionSort` and `defaultItemSort`
+
+### Fixed
+
+- Link color on data source list selection improved
+- Improve the background color for dark mode on the map text controls.
+- Improve the map control background colors on dark mode.
+- CQL2 text representation of array operators (`a_overlaps`, `a_contains`, `a_equals`, `a_contained_by`) now uses function-call syntax as defined by the CQL2 text grammar
+- Fix loading the root route when a `catalogUrl` is set
+- Fix that in some cases the `catalogUrl` is lost
+
+## [5.0.0-beta.1] - 2026-05-12
+
+**THIS IS A BREAKING RELEASE - MAKE SURE TO UPDATE ALL YOUR CONFIG FILES!**
 
 ### Added
 
@@ -26,6 +143,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add config option `displayOverviewsForChildren` to toggle visualizing overviews for maps showing many STAC Items
 - Render GeoParquet files in a projected CRS by reprojecting them to lon/lat, using the PROJJSON definition in the file's own GeoParquet metadata. Positions outside the projection's input domain, or far outside the CRS's declared area of use, are dropped along with their feature and reported rather than drawn in the wrong place; a file that identifies a CRS but supplies no usable definition is refused outright.
 - Apply a collection's MapLibre styles to GeoParquet assets rendered directly on the map, not just to its tiled assets. Only the attribute columns the styles reference are read from the file.
+- Color modes:
+  - Support for dark mode (defaults to auto-detection based on system settings of the user)
+  - Added `enforcedColorMode` config option to enforce a specific color mode (e.g. always show "light" mode)
+  - Added a color mode switch in the header (next to the language chooser)
+  - Portolan pins `enforcedColorMode` to `light` for now: the MapLibre map stack does not follow the color mode yet
+- Added more documentation around styling
 
 ### Changed
 
@@ -45,9 +168,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     For example, `Utils.isObject` is now `isObject` and can be imported from `stac-js/src/utils.js`.
 - It is not needed any longer to update the path to the `runtime-config.js`, the `pathPrefix` is added automatically in the build process.
 - User stay logged in across sessions (for OpenID Connect only)
-
-### Deprecated
-
+- CSS declarations have been updated to reuse existing variables in favor of hardcoding certain colors etc.
+- `configureBasemap` accepts an additional parameter, the VueX Store (e.g. for different basemaps depending on the color mode).
 
 ### Removed
 
@@ -137,7 +259,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 For releases prior to v4.0.0, please refer to the
 [release notes in the GitHub Releases](https://github.com/radiantearth/stac-browser/releases).
 
-[Unreleased]: https://github.com/radiantearth/stac-browser/compare/v4.0.1...HEAD
+[Unreleased]: https://github.com/radiantearth/stac-browser/compare/v5.0.0...HEAD
+[5.0.0]: https://github.com/radiantearth/stac-browser/compare/v5.0.0-rc.2...v5.0.0
+[5.0.0-rc.2]: https://github.com/radiantearth/stac-browser/compare/v5.0.0-rc.1...v5.0.0-rc.2
+[5.0.0-rc.1]: https://github.com/radiantearth/stac-browser/compare/v5.0.0-beta.1...v5.0.0-rc.1
+[5.0.0-beta.1]: https://github.com/radiantearth/stac-browser/compare/v4.0.1...v5.0.0-beta.1
 [4.0.1]: https://github.com/radiantearth/stac-browser/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/radiantearth/stac-browser/compare/v3.3.5...v4.0.0
 [3.3.5]: https://github.com/radiantearth/stac-browser/releases/tag/v3.3.5

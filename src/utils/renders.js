@@ -130,7 +130,8 @@ export function makeRenderTileLoader(render) {
       const v = data[i * stride + band];
       if (nodataSet.has(v) || Number.isNaN(v)) { continue; } // alpha stays 0
       let t = (v - min) / span;
-      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      if (t < 0) {t = 0;}
+      else if (t > 1) {t = 1;}
       const idx = (t * 255 + 0.5 | 0) * 4;
       out[i * 4] = lut[idx];
       out[i * 4 + 1] = lut[idx + 1];

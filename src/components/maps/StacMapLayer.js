@@ -506,6 +506,7 @@ export default class StacMapLayer {
   // Lazily load the parquet utilities (hyparquet behind them). Split out as an
   // overridable seam so unit tests can inject a test double, mirroring
   // _loadDeckDeps, and so hyparquet stays out of the map bundle.
+  // eslint-disable-next-line require-await -- async keeps the seam's signature stable for test doubles
   async _loadParquetDeps() {
     return import('../../utils/parquet.js');
   }
@@ -677,6 +678,7 @@ export default class StacMapLayer {
           // bytes; join it rather than starting from zero. No await between
           // the lookup and the start — see _startParquetRead.
           const pending = this._parquetInflight.get(cacheKey) ?? this._startParquetRead(cacheKey, url);
+          // eslint-disable-next-line no-await-in-loop -- joining an in-flight read, one asset at a time
           result = await pending.promise;
         }
         if (epoch !== this._overlayEpoch) {return false;}
@@ -765,16 +767,19 @@ export default class StacMapLayer {
 
       try {
         if (isTileJsonAsset(asset)) {
+          // eslint-disable-next-line no-await-in-loop -- layers are added in order; the epoch check between assets is the abort seam
           await this._addTileJsonSource(url, sourceId, epoch);
         } else if (isXyzVectorAsset(asset)) {
           this._addXyzVectorSource(url, sourceId, asset);
         } else if (isPmtilesAsset(asset)) {
           const pm = new PMTiles(url, sharedCache);
           pmtilesProtocol.add(pm);
+          // eslint-disable-next-line no-await-in-loop -- see above
           const header = await pm.getHeader();
           if (epoch !== this._overlayEpoch) {return;}
 
           if (header.tileType === 1) {
+            // eslint-disable-next-line no-await-in-loop -- see above
             await this._addVectorPmtiles(pm, url, sourceId, epoch);
           } else {
             this._addRasterPmtiles(url, sourceId);

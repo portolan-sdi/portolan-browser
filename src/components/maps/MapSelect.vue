@@ -77,7 +77,6 @@
 </template>
 
 <script>
-import { mapState } from 'vuex';
 import MapMixin from './MapMixin.js';
 import LayerControl from './LayerControl.vue';
 import TextControl from './TextControl.vue';
@@ -127,7 +126,6 @@ export default {
     };
   },
   computed: {
-    ...mapState(['uiLanguage']),
     help() {
       return this.extent ? this.$t('mapping.bboxSelect.remove') : this.$t('mapping.bboxSelect.add');
     }

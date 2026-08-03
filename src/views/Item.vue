@@ -2,6 +2,7 @@
   <div class="item" :key="data.id">
     <section class="hero-map">
       <b-card no-body class="maps-preview">
+        <!-- eslint-disable-next-line vue/no-unused-refs -- read by ShowAssetLinkMixin.showAsset() -->
         <b-tabs v-model="tab" ref="tabs" card pills vertical end>
           <b-tab :title="$t('map')" :id="tabIds.map" no-body>
             <MapView ref="mapView" :stac="data" :assets="selectedAssets" @changed="dataChanged" @empty="handleEmptyMap" />
@@ -76,22 +77,10 @@ export default defineComponent({
     DeprecationMixin
   ],
   computed: {
-    ...mapState(['data', 'url']),
+    ...mapState(['data']),
     ...mapGetters(['collectionLink', 'parentLink']),
     ignoredMetadataFields() {
       return getIgnoredFields(this.data);
-    }
-  },
-  methods: {
-    zoomToBbox({ bbox, crs, crsDefinition }) {
-      if (this.$refs.mapView?.zoomToBbox) {
-        this.$refs.mapView.zoomToBbox(bbox, crs, crsDefinition);
-      }
-    },
-    highlightBbox({ bbox, crs, crsDefinition }) {
-      if (this.$refs.mapView?.highlightBbox) {
-        this.$refs.mapView.highlightBbox(bbox, crs, crsDefinition);
-      }
     }
   },
   watch: {
@@ -106,6 +95,18 @@ export default defineComponent({
         }
       }
     }
+  },
+  methods: {
+    zoomToBbox({ bbox, crs, crsDefinition }) {
+      if (this.$refs.mapView?.zoomToBbox) {
+        this.$refs.mapView.zoomToBbox(bbox, crs, crsDefinition);
+      }
+    },
+    highlightBbox({ bbox, crs, crsDefinition }) {
+      if (this.$refs.mapView?.highlightBbox) {
+        this.$refs.mapView.highlightBbox(bbox, crs, crsDefinition);
+      }
+    }
   }
 });
 </script>
@@ -116,7 +117,7 @@ export default defineComponent({
 
 #stac-browser .item {
   .hero-map {
-    margin: -155px (-$block-margin) $block-margin;
+    margin: -155px (-$block-gap) $block-gap;
 
     .map {
       height: 555px;

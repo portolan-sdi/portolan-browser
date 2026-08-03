@@ -131,6 +131,22 @@ function stylesFromLegacyManifest(stac, baseUrl) {
     .filter(Boolean);
 }
 
+function commonPrefix(strings) {
+  if (strings.length === 0) {return '';}
+  let prefix = strings[0];
+  for (let i = 1; i < strings.length; i++) {
+    while (!strings[i].startsWith(prefix)) {
+      prefix = prefix.slice(0, -1);
+      if (prefix.length === 0) {return '';}
+    }
+  }
+  // Trim to last separator (space, dash, colon) so we don't cut mid-word
+  const lastSep = Math.max(prefix.lastIndexOf(' '), prefix.lastIndexOf('—'), prefix.lastIndexOf('-'), prefix.lastIndexOf(':'));
+  if (lastSep > 0) {prefix = prefix.slice(0, lastSep + 1);}
+  else {prefix = '';}
+  return prefix;
+}
+
 export function resolveStyles(stac) {
   if (!stac) {return [];}
   const baseUrl = stac.getAbsoluteUrl?.() || '';
@@ -172,22 +188,6 @@ export function resolveStyles(stac) {
   }
 
   return styles;
-}
-
-function commonPrefix(strings) {
-  if (strings.length === 0) {return '';}
-  let prefix = strings[0];
-  for (let i = 1; i < strings.length; i++) {
-    while (!strings[i].startsWith(prefix)) {
-      prefix = prefix.slice(0, -1);
-      if (prefix.length === 0) {return '';}
-    }
-  }
-  // Trim to last separator (space, dash, colon) so we don't cut mid-word
-  const lastSep = Math.max(prefix.lastIndexOf(' '), prefix.lastIndexOf('—'), prefix.lastIndexOf('-'), prefix.lastIndexOf(':'));
-  if (lastSep > 0) {prefix = prefix.slice(0, lastSep + 1);}
-  else {prefix = '';}
-  return prefix;
 }
 
 // Layout properties in which MapLibre still honours the legacy `{token}` form.

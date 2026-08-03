@@ -23,7 +23,7 @@
         </template>
       </span>
     </div>
-    <div class="parquet-scroll-container" ref="scrollContainer">
+    <div class="parquet-scroll-container">
       <table class="table table-sm table-striped parquet-data-table">
         <thead>
           <tr>
@@ -71,7 +71,7 @@
               </button>
             </td>
             <td v-for="col in displayColumns" :key="col" class="parquet-data-cell">
-              <a v-if="isUrl(row[col])" :href="row[col]" target="_blank" rel="noopener">{{ formatCellValue(row[col]) }}</a>
+              <a v-if="isUrl(row[col])" :href="row[col]" target="_blank" rel="noopener noreferrer">{{ formatCellValue(row[col]) }}</a>
               <template v-else>{{ formatCellValue(row[col]) }}</template>
             </td>
           </tr>

@@ -41,7 +41,7 @@ test.describe('STAC Browser code example CQL modal', () => {
       return readClipboard(page);
     });
     
-    await test.step('Verify snippet contains text CQL fields', async () => {
+    await test.step('Verify snippet contains text CQL fields', () => {
       expect(javascriptCode).toContain('"filter-lang": "cql2-text"');
       expect(javascriptCode).toContain('"filter": "id = \'test123\'"');
       expect(javascriptCode).not.toContain('"filters":');
@@ -63,7 +63,7 @@ test.describe('STAC Browser code example CQL modal', () => {
     
     await test.step('Add CQL identifier filter for GET search', async () => {
       const cqlGroup = page.getByRole('group', { name: /additional filters/i });
-      await expect(cqlGroup).toBeVisible({ timeout: 10000 });
+      await expect(cqlGroup).toBeVisible();
       await cqlGroup.getByRole('button', { name: /add filter/i }).click();
       await page.getByRole('menuitem', { name: /identifier/i }).click();
       const queryableInput = page.getByRole('textbox', { name: /additional filters/i });
@@ -81,7 +81,7 @@ test.describe('STAC Browser code example CQL modal', () => {
       return readClipboard(page);
     });
     
-    await test.step('Verify GET snippet has cql2-json filter in URL', async () => {
+    await test.step('Verify GET snippet has cql2-json filter in URL', () => {
       expect(javascriptCode).toContain('const url = "https://stac.example/api/search?');
       expect(javascriptCode).toContain('filter-lang=cql2-json');
       expect(javascriptCode).toContain('filter=');

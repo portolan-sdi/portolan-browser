@@ -42,7 +42,6 @@ import StacMapLayer from './maps/StacMapLayer.js';
 import { resolveStyles, loadStyleJson, extractLegend, extractStyleFields } from '../utils/portolanStyles.js';
 import { VECTOR_NOTICE_REPROJECTION, VECTOR_NOTICE_TOO_BIG, VECTOR_NOTICE_TOO_LARGE } from '../utils/parquetShared.js';
 import { createLonLatTransform } from '../utils/crs.js';
-import { mapGetters } from 'vuex';
 import proj4 from 'proj4';
 
 // Every style's fields are read for every feature, though only one style is
@@ -111,7 +110,6 @@ export default {
     };
   },
   computed: {
-    ...mapGetters(['getStac']),
     container() {
       if (this.isFullScreen) {
         return '#' + this.mapId;
@@ -153,7 +151,7 @@ export default {
         await this.stacLayer.autoLoadVisualAssets(this.stac);
       }
     },
-    async children() {
+    children() {
       if (!this.stacLayer) {return;}
       this.stacLayer.setChildren(this.children);
       this.stacLayer.fit();
@@ -306,6 +304,7 @@ export default {
           try {
             // markRaw: the style document is handed straight to MapLibre, which
             // has no use for a reactive proxy over every nested expression.
+            // eslint-disable-next-line require-atomic-updates -- entry is this callback's own parameter
             entry._cached = markRaw(await loadStyleJson(entry.href));
           } catch (err) {
             console.warn('Failed to load style:', entry.name, err);

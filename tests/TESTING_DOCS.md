@@ -89,7 +89,7 @@ Templates are loaded once and cloned for each builder instance.
 HTTP mocking is driven by [playwright-msw](https://github.com/valendres/playwright-msw). Convenience functions build handler arrays from fixtures or inline data.
 
 | Function | Purpose |
-|---|---|
+| --- | --- |
 | `mockStacResource(worker, url, mockData, options)` | Mock a single URL |
 | `mockStacError(page, url, status)` | Mock an error response |
 | `waitForBrowserReady(page)` | Wait for loading indicators to clear |
@@ -101,3 +101,13 @@ HTTP mocking is driven by [playwright-msw](https://github.com/valendres/playwrig
 | `copyCodeFromModal(page, panel)` | Copy code snippet from modal panel |
 | `copyDependenciesFromModal(page, panel)` | Copy dependencies from modal panel |
 | `copyFilenameFromModal(page, panel)` | Copy output filename from modal panel |
+
+## Docker Container tests
+
+Docker tests live in `tests/docker/` and verify that the image builds.
+
+Run locally:
+
+```bash
+npm run test:docker
+```

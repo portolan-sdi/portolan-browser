@@ -46,13 +46,29 @@ export default class CollectionCollection extends APICollection {
     return this;
   }
   
-  build() {
+  build(searchParams = {}) {
     const data = super.build();
     for(let collection in data.collections){
       if(data.collections[collection] instanceof Collection){
         data.collections[collection] = data.collections[collection].build();
       }
     }
+    this.paginateData('collections', searchParams, this._freeTextFilter(searchParams.q));
     return data;
+  }
+
+  // Free-text search (collection-search #free-text): match all terms against title and id.
+  // Opt-in via the freeTextSearchEnabled instance option, as some tests
+  // rely on a server that ignores the q parameter.
+  _freeTextFilter(q) {
+    if (!q || !this.instance.options.freeTextSearchEnabled) {
+      return null;
+    }
+    const terms = String(q).toLowerCase().split(',').map(term => term.trim()).filter(Boolean);
+    return collection => {
+      const data = collection instanceof Collection ? collection.getMetadata() : collection;
+      const haystack = `${data.title || ''} ${data.id || ''}`.toLowerCase();
+      return terms.every(term => haystack.includes(term));
+    };
   }
 }

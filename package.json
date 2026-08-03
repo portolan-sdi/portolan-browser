@@ -1,6 +1,6 @@
 {
   "name": "@radiantearth/stac-browser",
-  "version": "5.0.0-beta.1",
+  "version": "5.1.0-dev",
   "type": "module",
   "description": "A full-fledged UI in Vue for browsing and searching static STAC catalogs and STAC APIs.",
   "main": "src/main.js",
@@ -10,10 +10,12 @@
     "build:preview": "vite build && vite preview",
     "build:report": "vite build --mode report",
     "build:minimal": "vite build --mode minimal",
+    "preview": "vite preview",
     "lint": "eslint --fix src",
     "i18n:fields": "node helpers/fields_locales.js",
     "docs:hooks": "node helpers/widget-hooks.js",
     "docs:lint": "remark --frail --silently-ignore *.md docs/*.md",
+    "test:docker": "bash tests/docker/run-tests.sh",
     "test": "npm run test:unit && npm run test:integration && npm run test:e2e",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
@@ -36,21 +38,26 @@
     "type": "github",
     "url": "https://github.com/sponsors/m-mohr"
   },
-  "author": "Radiant Earth Foundation <hello@radiant.earth>",
+  "author": "moreGeo GmbH <mail@moregeo.it>",
   "contributors": [
     {
-      "name": "Seth Fitzsimmons"
+      "name": "Matthias Mohr"
     },
     {
       "name": "Rob Emanuele"
     },
     {
-      "name": "Matthias Mohr"
+      "name": "Seth Fitzsimmons"
     }
   ],
   "license": "ISC",
   "dependencies": {
     "@apidevtools/json-schema-ref-parser": "^15.2.2",
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lint": "^6.9.7",
+    "@codemirror/search": "^6.7.1",
+    "@codemirror/view": "^6.43.5",
     "@deck.gl/core": "^9.1.0",
     "@deck.gl/layers": "^9.1.0",
     "@deck.gl/mapbox": "^9.1.0",
@@ -72,18 +79,20 @@
     "date-fns": "^4.4.0",
     "hyparquet": "^1.25.6",
     "hyparquet-compressors": "^1.1.1",
+    "json-source-map": "^0.6.1",
     "maplibre-gl": "^5.1.0",
     "oidc-client-ts": "^3.0.1",
     "pmtiles": "^4.0.0",
     "proj4": "^2.16.1",
     "remove-markdown": "^0.6.2",
     "shiki": "^3.22.0",
-    "stac-js": "~0.4.2",
+    "stac-js": "^0.5.3",
     "stac-node-validator": "2.0.0-rc.3",
     "streamsaver-js": "^2.0.7",
     "urijs": "^1.19.11",
     "vue": "^3.5.22",
     "vue-chartjs": "^5.2.0",
+    "vue-codemirror6": "^1.6.1",
     "vue-i18n": "^11.2.0",
     "vue-multiselect": "^3.3.1",
     "vue-router": "^5.0.1",
@@ -116,9 +125,9 @@
     "sass": "^1.26.5",
     "unplugin-icons": "^23.0.1",
     "unplugin-vue-components": "^31.0.0",
-    "vite": "^7.2.2",
+    "vite": "^7.3.6",
     "vite-plugin-ejs": "^1.7.0",
-    "vite-plugin-node-polyfills": "^0.25.0",
+    "vite-plugin-node-polyfills": "^0.28.0",
     "vitest": "^4.1.8"
   },
   "browserslist": [

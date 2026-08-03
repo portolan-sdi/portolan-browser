@@ -153,6 +153,7 @@
     "showFilter": "Mostrar filtros"
   },
   "loading": "Carregando...",
+  "manage": {},
   "map": "Mapa",
   "mapping": {
     "attribution": {
@@ -379,5 +380,6 @@
       "title": "Mostrar como grelha"
     },
     "title": "Opções de vista"
-  }
+  },
+  "widgets": {}
 }

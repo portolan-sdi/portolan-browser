@@ -1,32 +1,36 @@
 import { describe, it, expect } from 'vitest'
 import Utils from '../../src/utils.js'
+import { isMediaType } from 'stac-js/src/mediatypes.js'
 
 describe('Utils', () => {
   describe('isMediaType', () => {
     it('returns true when type matches single type', () => {
-      expect(Utils.isMediaType('image/png', 'image/png')).toBe(true)
+      expect(isMediaType('image/png', 'image/png')).toBe(true)
     })
 
     it('returns true when type matches one of array types', () => {
-      expect(Utils.isMediaType('image/png', ['image/jpeg', 'image/png'])).toBe(true)
+      expect(isMediaType('image/png', ['image/jpeg', 'image/png'])).toBe(true)
     })
 
     it('returns false when type does not match', () => {
-      expect(Utils.isMediaType('image/gif', ['image/jpeg', 'image/png'])).toBe(false)
+      expect(isMediaType('image/gif', ['image/jpeg', 'image/png'])).toBe(false)
     })
 
     it('handles case-insensitive comparison', () => {
-      expect(Utils.isMediaType('IMAGE/PNG', 'image/png')).toBe(true)
+      expect(isMediaType('IMAGE/PNG', 'image/png')).toBe(true)
     })
 
     it('returns false for non-string type', () => {
-      expect(Utils.isMediaType(123, 'image/png')).toBe(false)
-      expect(Utils.isMediaType(null, 'image/png')).toBe(false)
+      expect(isMediaType(123, 'image/png')).toBe(false)
+      expect(isMediaType(null, 'image/png')).toBe(false)
     })
 
-    it('allows empty type when allowEmpty is true', () => {
-      expect(Utils.isMediaType('', 'image/png', true)).toBe(true)
-      expect(Utils.isMediaType(null, 'image/png', true)).toBe(true)
+    // The third argument is allowUndefined, not the allowEmpty of the removed
+    // Utils.isMediaType: only `undefined` passes, an empty string does not.
+    it('allows an undefined type when allowUndefined is true', () => {
+      expect(isMediaType(undefined, 'image/png', true)).toBe(true)
+      expect(isMediaType('', 'image/png', true)).toBe(false)
+      expect(isMediaType(null, 'image/png', true)).toBe(false)
     })
   })
 
@@ -185,22 +189,6 @@ describe('Utils', () => {
     })
   })
 
-  describe('getValueFromObjectUsingPath', () => {
-    it('gets nested value', () => {
-      const obj = { a: { b: { c: 'value' } } }
-      expect(Utils.getValueFromObjectUsingPath(obj, ['a', 'b', 'c'])).toBe('value')
-    })
-
-    it('returns undefined for missing path', () => {
-      const obj = { a: 1 }
-      expect(Utils.getValueFromObjectUsingPath(obj, ['a', 'b', 'c'])).toBeUndefined()
-    })
-
-    it('handles null object', () => {
-      expect(Utils.getValueFromObjectUsingPath(null, ['a'])).toBeUndefined()
-    })
-  })
-
   describe('search', () => {
     it('finds term in string', () => {
       expect(Utils.search('hello', 'hello world')).toBe(true)
@@ -256,20 +244,6 @@ describe('Utils', () => {
     it('handles multiple sources', () => {
       const result = Utils.mergeDeep({ a: 1 }, { b: 2 }, { c: 3 })
       expect(result).toEqual({ a: 1, b: 2, c: 3 })
-    })
-  })
-
-  describe('convertHumanizedSortOrder', () => {
-    it('converts asc to 1', () => {
-      expect(Utils.convertHumanizedSortOrder('asc')).toBe(1)
-    })
-
-    it('converts desc to -1', () => {
-      expect(Utils.convertHumanizedSortOrder('desc')).toBe(-1)
-    })
-
-    it('returns 0 for unknown', () => {
-      expect(Utils.convertHumanizedSortOrder('other')).toBe(0)
     })
   })
 

@@ -1,8 +1,8 @@
 <template>
   <b-table
-    class="metadata-table" :items="tblItems" :fields="tblFields" variant="light"
+    class="metadata-table" :items="tblItems" :fields="tblFields"
     responsive small sticky-header striped
-    v-bind="tblTexts"
+    bordered show-empty v-bind="tblTexts"
   >
     <template #head()="data">
       <span v-html="data.label" />
@@ -89,7 +89,7 @@ export default {
       if (typeof spec.default !== 'undefined' && (typeof value === 'undefined' || value === null)) {
         value = spec.default;
       }
-      return this.format(value, key, NaN, item, spec);
+      return this.format(value, key, null, item, spec);
     }
   }
 };

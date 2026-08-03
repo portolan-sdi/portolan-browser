@@ -23,16 +23,16 @@ const fillBboxInputs = async (page, values) => {
   const eastLonInput = page.getByLabel(/east longitude/i);
   const northLatInput = page.getByLabel(/north latitude/i);
   
-  if (values.westLon != null) {
+  if (values.westLon !== null && values.westLon !== undefined) {
     await westLonInput.fill(values.westLon);
   }
-  if (values.southLat != null) {
+  if (values.southLat !== null && values.southLat !== undefined) {
     await southLatInput.fill(values.southLat);
   }
-  if (values.eastLon != null) {
+  if (values.eastLon !== null && values.eastLon !== undefined) {
     await eastLonInput.fill(values.eastLon);
   }
-  if (values.northLat != null) {
+  if (values.northLat !== null && values.northLat !== undefined) {
     await northLatInput.fill(values.northLat);
   }
 };
@@ -405,7 +405,7 @@ test.describe('STAC Browser Search page', () => {
       await submitButton.click();
         
       // Wait for item cards to appear
-      await expect(page.locator('.item-card')).toHaveCount(5, { timeout: 10000 });
+      await expect(page.locator('.item-card')).toHaveCount(5);
     });
       
     await test.step('Verify each result item title is displayed', async () => {
@@ -434,7 +434,7 @@ test.describe('STAC Browser Search page', () => {
     });
       
     await test.step('Verify "no items found" message appears', async () => {
-      await expect(page.getByText(/no items found for the given filters/i)).toBeVisible({ timeout: 10000 });
+      await expect(page.getByText(/no items found for the given filters/i)).toBeVisible();
     });
       
     await test.step('Verify no item cards are rendered', async () => {
@@ -465,7 +465,7 @@ test.describe('STAC Browser Search page', () => {
       const submitButton = page.getByRole('button', { name: /submit/i });
       await submitButton.click();
         
-      await expect(page.locator('.item-card')).toHaveCount(9, { timeout: 10000 });
+      await expect(page.locator('.item-card')).toHaveCount(9);
     });
       
     await test.step('Verify items count badge is displayed', async () => {
@@ -528,7 +528,7 @@ test.describe('STAC Browser Search page', () => {
         
     await test.step('Submit search and verify first page shows 5 items', async () => {
       await page.getByRole('button', { name: /submit/i }).click();
-      await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+      await expect(itemCards).toHaveCount(5);
     });
         
     await test.step('Next button is enabled, Previous is disabled on first page', async () => {
@@ -538,7 +538,7 @@ test.describe('STAC Browser Search page', () => {
         
     await test.step('Click Next and verify second page shows 5 items', async () => {
       await nextButton.click();
-      await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+      await expect(itemCards).toHaveCount(5);
     });
         
     await test.step('Both Next and Previous are enabled on middle page', async () => {
@@ -548,7 +548,7 @@ test.describe('STAC Browser Search page', () => {
         
     await test.step('Click Next and verify third page shows 3 items', async () => {
       await nextButton.click();
-      await expect(itemCards).toHaveCount(3, { timeout: 10000 });
+      await expect(itemCards).toHaveCount(3);
     });
         
     await test.step('Previous is enabled, Next is disabled on last page', async () => {
@@ -558,7 +558,7 @@ test.describe('STAC Browser Search page', () => {
         
     await test.step('Click Previous and verify middle page items are restored', async () => {
       await prevButton.click();
-      await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+      await expect(itemCards).toHaveCount(5);
       await expect(nextButton).toBeEnabled();
       await expect(prevButton).toBeEnabled();
     });
@@ -595,7 +595,7 @@ test.describe('STAC Browser Search page', () => {
         
     await test.step('Submit search and verify first page', async () => {
       await page.getByRole('button', { name: /submit/i }).click();
-      await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+      await expect(itemCards).toHaveCount(5);
     });
         
     await test.step('First is disabled, Last is visible on first page', async () => {
@@ -605,7 +605,7 @@ test.describe('STAC Browser Search page', () => {
         
     await test.step('Click Last to jump to the last page', async () => {
       await lastButton.click();
-      await expect(itemCards).toHaveCount(3, { timeout: 10000 });
+      await expect(itemCards).toHaveCount(3);
       await expect(nextButton).toBeDisabled();
       await expect(prevButton).toBeEnabled();
       await expect(firstButton).toBeEnabled();
@@ -613,7 +613,7 @@ test.describe('STAC Browser Search page', () => {
         
     await test.step('Click First to jump back to the first page', async () => {
       await firstButton.click();
-      await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+      await expect(itemCards).toHaveCount(5);
       await expect(nextButton).toBeEnabled();
       await expect(prevButton).toBeDisabled();
       await expect(firstButton).toBeDisabled();
@@ -621,23 +621,297 @@ test.describe('STAC Browser Search page', () => {
         
     await test.step('Navigate to middle page and verify First/Last both enabled', async () => {
       await nextButton.click();
-      await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+      await expect(itemCards).toHaveCount(5);
       await expect(firstButton).toBeEnabled();
       await expect(lastButton).toBeEnabled();
     });
         
     await test.step('Click Last from middle page skips to last page', async () => {
       await lastButton.click();
-      await expect(itemCards).toHaveCount(3, { timeout: 10000 });
+      await expect(itemCards).toHaveCount(3);
       await expect(nextButton).toBeDisabled();
       await expect(firstButton).toBeEnabled();
     });
         
     await test.step('Click First from last page skips to first page', async () => {
       await firstButton.click();
-      await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+      await expect(itemCards).toHaveCount(5);
       await expect(prevButton).toBeDisabled();
       await expect(firstButton).toBeDisabled();
+    });
+  });
+  test('Catalog search results preserve applied filters when paginating', async ({ page, worker }) => {
+    api = API.minimalApi({}, {
+      defaultLimit: 5,
+      prevLinkEnabled: true,
+      firstLinkEnabled: true,
+      lastLinkEnabled: true
+    });
+    let collection = api.addCollection('collection').setMetadata({ title: 'Test Collection' });
+    api.addManyItems(collection, 13);
+    api.addCollectionsExtension().addItemsExtension().addSearchExtension();
+    await api.createServer(worker);
+    await page.goto(SEARCH_PATH);
+
+    await test.step('Apply a limit filter and submit', async () => {
+      const limitInput = page.getByLabel(/items per page/i);
+      await limitInput.fill('5');
+      
+      const requestPromise = waitForSearchPost(page);
+      await page.getByRole('button', { name: /submit/i }).click();
+      
+      const { body } = await requestPromise;
+      expect(body.limit).toBe(5);
+    });
+
+    await test.step('Click Next and verify the filter is still applied', async () => {
+      const nextButton = page.getByRole('button', { name: /next/i }).first();
+      
+      const nextRequestPromise = page.waitForRequest(req =>
+        (req.resourceType() === 'xhr' || req.resourceType() === 'fetch') &&
+        req.url().includes('/search')
+      );
+      
+      await nextButton.click();
+      
+      const req = await nextRequestPromise;
+      
+      if (req.method() === 'POST') {
+        const body = JSON.parse(req.postData() || '{}');
+        expect(body.limit).toBe(5);
+      } else {
+        expect(req.url()).toContain('limit=5');
+      }
+    });
+  });
+  test('Collection search preserves applied filters when paginating', async ({ page, worker }) => {
+    api = API.minimalApi({}, {
+      defaultLimit: 5,
+      prevLinkEnabled: true,
+      firstLinkEnabled: true,
+      lastLinkEnabled: true
+    });
+    const collection = api.addCollection('collection1').setMetadata({ title: 'Test Collection 1' });
+    
+    api.addManyItems(collection, 13);
+    
+    api.addCollectionsExtension().addItemsExtension().addSearchExtension();
+    await api.createServer(worker);
+    
+    await page.goto(api.root.getBrowserPath());
+    await waitForBrowserReady(page);
+
+    const collectionLink = page.getByText('Test Collection 1', { exact: false }).first();
+    await expect(collectionLink).toBeVisible();
+    await collectionLink.click();
+    await waitForBrowserReady(page);
+    
+    await expect(page.getByRole('heading', { name: /Test Collection 1/i })).toBeVisible();
+
+    await test.step('Apply a limit filter in the collection', async () => {
+      const filterToggle = page.getByRole('button', { name: /show filters/i });
+      if (await filterToggle.isVisible()) {
+        await filterToggle.click();
+      }
+
+      const firstSearchPromise = page.waitForRequest(req => {
+        if (!(req.resourceType() === 'xhr' || req.resourceType() === 'fetch')) {
+          return false;
+        }
+        if (!(req.url().includes('/items') || req.url().includes('/search'))) {
+          return false;
+        }
+        if (req.url().includes('limit=3')) {
+          return true;
+        }
+        if (req.method() === 'POST' && req.postData()) {
+          try {
+            return JSON.parse(req.postData()).limit === 3;
+          } catch {
+            return false;
+          }
+        }
+        return false;
+      });
+      
+      const limitInput = page.getByLabel(/items per page/i);
+      await limitInput.fill('3');
+      
+      await page.getByRole('button', { name: /submit/i }).click();
+      await firstSearchPromise;
+    });
+
+    await test.step('Click Next page and verify limit filter is preserved', async () => {
+      const nextPagePromise = page.waitForRequest(req => {
+        if (!(req.resourceType() === 'xhr' || req.resourceType() === 'fetch')) {
+          return false;
+        }
+        if (!(req.url().includes('/items') || req.url().includes('/search'))) {
+          return false;
+        }
+        if (req.url().includes('limit=3')) {
+          return true;
+        }
+        if (req.method() === 'POST' && req.postData()) {
+          try {
+            return JSON.parse(req.postData()).limit === 3;
+          } catch {
+            return false;
+          }
+        }
+        return false;
+      });
+      
+      const nextButton = page.getByRole('button', { name: /next/i }).first();
+      await nextButton.click();
+      
+      const nextReq = await nextPagePromise;
+      expect(nextReq.url()).toContain('limit=3');
+    });
+  });
+  test('Reset button clears filters inside a specific Collection', async ({ page, worker }) => {
+    api = API.minimalApi();
+    const collection = api.addCollection('collection1').setMetadata({ title: 'Test Collection 1' });
+    api.addManyItems(collection, 5);
+    api.addCollectionsExtension().addItemsExtension().addSearchExtension();
+    await api.createServer(worker);
+    
+    await page.goto(api.root.getBrowserPath());
+    await waitForBrowserReady(page);
+    
+    const collectionLink = page.getByText('Test Collection 1', { exact: false }).first();
+    await expect(collectionLink).toBeVisible();
+    await collectionLink.click();
+    await waitForBrowserReady(page);
+    await test.step('Apply a filter to the collection items', async () => {
+      const filterToggle = page.getByRole('button', { name: /show filters/i });
+      if (await filterToggle.isVisible()) {
+        await filterToggle.click();
+      }
+
+      const limitInput = page.getByLabel(/items per page/i);
+      await limitInput.fill('6');
+      
+      const searchPromise = page.waitForRequest(req => {
+        if (!(req.resourceType() === 'xhr' || req.resourceType() === 'fetch')) {
+          return false;
+        }
+        if (req.url().includes('limit=6')) {
+          return true;
+        }
+        if (req.method() === 'POST' && req.url().includes('/search') && req.postData()) {
+          try {
+            return JSON.parse(req.postData()).limit === 6;
+          } catch {
+            return false;
+          }
+        }
+        return false;
+      });
+      await page.getByRole('button', { name: /submit/i }).click();
+      await searchPromise;
+    });
+
+    await test.step('Click Reset and verify the filter is removed', async () => {
+      await page.getByRole('button', { name: /reset/i }).click();
+      
+      const limitInput = page.getByLabel(/items per page/i);
+      await expect(limitInput).toHaveValue(''); 
+      
+      const resetSearchPromise = page.waitForRequest(req => req.url().includes('/items'));
+      await page.getByRole('button', { name: /submit/i }).click();
+      
+      const resetReq = await resetSearchPromise;
+      expect(resetReq.url()).not.toMatch(/[?&]limit=/);
+    });
+  });
+  test('Spatial extent is preserved when switching from Collections tab to Items tab', async ({ page, worker }) => {
+    api = API.minimalApi(
+      {},
+      {
+        defaultLimit: 5,
+        prevLinkEnabled: true,
+        firstLinkEnabled: true,
+        lastLinkEnabled: true
+      }
+    );
+
+    let collection1 = api.addCollection('collection1')
+      .setMetadata({ title: 'Test Collection 1' });
+    let collection2 = api.addCollection('collection2')
+      .setMetadata({ title: 'Test Collection 2' });
+
+    api.addManyItems(collection1, 50);
+    api.addManyItems(collection2, 10);
+    api.addCollectionsExtension()
+      .addItemsExtension()
+      .addSearchExtension();
+
+    api.root.addConformsTo('https://api.stacspec.org/v1.0.0/collection-search');
+
+    await api.createServer(worker);
+
+    await page.goto(api.root.getBrowserPath());
+    await waitForBrowserReady(page);
+
+    await test.step('Navigate to the Search page', async () => {
+      await page.getByRole('button', { name: /^search$/i }).click();
+      await waitForBrowserReady(page);
+    });
+
+    await test.step('Verify both tabs are visible', async () => {
+      await expect(page.getByRole('tab', { name: /search for collections/i })).toBeVisible();
+      await expect(page.getByRole('tab', { name: /search for items/i })).toBeVisible();
+    });
+
+    await test.step('Enable spatial extent and fill in bbox on the Collections tab', async () => {
+      const enableSpatialCheckbox = page.getByRole('checkbox', { name: /filter by spatial extent/i });
+      await enableSpatialCheckbox.check();
+
+      await page.waitForLoadState('networkidle');
+      await waitForMapReady(page);
+
+      await fillBboxInputs(page, {
+        westLon: '-116.1',
+        southLat: '44.3',
+        eastLon: '-104',
+        northLat: '49'
+      });
+
+      await page.getByLabel(/north latitude/i).blur();
+      await waitForBboxInputsPopulated(page);
+
+      await expect(page.getByLabel(/west longitude/i)).toHaveValue('-116.1');
+      await expect(page.getByLabel(/south latitude/i)).toHaveValue('44.3');
+      await expect(page.getByLabel(/east longitude/i)).toHaveValue('-104');
+      await expect(page.getByLabel(/north latitude/i)).toHaveValue('49');
+    });
+
+    await test.step('Switch to the Search for Items tab', async () => {
+      await page.getByRole('tab', { name: /search for items/i }).click();
+      await waitForBrowserReady(page);
+    });
+
+    await test.step('Verify bbox values are preserved on the Items tab', async () => {
+      const enableSpatialCheckbox = page.getByRole('checkbox', { name: /filter by spatial extent/i });
+      await expect(enableSpatialCheckbox).toBeChecked();
+
+      await expect(page.getByLabel(/west longitude/i)).toHaveValue('-116.1');
+      await expect(page.getByLabel(/south latitude/i)).toHaveValue('44.3');
+      await expect(page.getByLabel(/east longitude/i)).toHaveValue('-104');
+      await expect(page.getByLabel(/north latitude/i)).toHaveValue('49');
+    });
+
+    await test.step('Submit from Items tab and verify bbox is in POST body', async () => {
+      const requestPromise = waitForSearchPost(page);
+      await page.getByRole('button', { name: /submit/i }).click();
+
+      const { body } = await requestPromise;
+      expect(body.bbox).toHaveLength(4);
+      expect(body.bbox[0]).toBeCloseTo(-116.1, 2);
+      expect(body.bbox[1]).toBeCloseTo(44.3, 2);
+      expect(body.bbox[2]).toBeCloseTo(-104, 2);
+      expect(body.bbox[3]).toBeCloseTo(49, 2);
     });
   });
 });

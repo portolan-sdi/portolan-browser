@@ -6,7 +6,7 @@
     <Loading v-else-if="loading || working" stretch />
     <section v-else-if="report">
       <h2>{{ $t('source.validationReport.title') }}</h2>
-      <b-alert variant="info" show>{{ $t('source.validationReport.disclaimer') }}</b-alert>
+      <b-alert variant="warning" show>{{ $t('source.validationReport.disclaimer') }}</b-alert>
       <b-row class="stac-id">
         <b-col cols="4">{{ $t('source.id') }}</b-col>
         <b-col>
@@ -48,7 +48,7 @@
 <script>
 import { mapState } from 'vuex';
 import { defineComponent } from 'vue';
-import validateSTAC from 'stac-node-validator';
+import { loadValidationLocale, validateStac } from '../validation';
 import BrowseMixin from './BrowseMixin.js';
 import { STAC } from 'stac-js';
 import ValidationResult from '../components/ValidationResult.vue';
@@ -61,12 +61,6 @@ export default defineComponent({
   mixins: [
     BrowseMixin
   ],
-  props: {
-    path: {
-      type: String,
-      required: true
-    }
-  },
   data() {
     return {
       working: true,
@@ -91,16 +85,7 @@ export default defineComponent({
     uiLanguage: {
       immediate: true,
       async handler(locale) {
-        if (!locale) {
-          return;
-        }
-        const i18nFn = (await import(`../locales/${locale}/validation.js`)).default;
-        if (i18nFn instanceof Promise) {
-          this.locale = (await i18nFn).default;
-        }
-        else {
-          this.locale = i18nFn;
-        }
+        this.locale = await loadValidationLocale(locale);
       }
     }
   },
@@ -111,7 +96,7 @@ export default defineComponent({
       if (this.data instanceof STAC) {
         try {
           const stac = this.data._original || this.data.toJSON();
-          this.report = await validateSTAC(stac, {});
+          this.report = await validateStac(stac);
         } catch (error) {
           this.internalError = error;
         } finally {

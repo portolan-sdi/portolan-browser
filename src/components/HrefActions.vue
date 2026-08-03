@@ -5,7 +5,7 @@
         <b-icon-lock /> {{ $t('authentication.required') }}
       </b-button>
       <b-button v-if="canDownload && !requiresAuth" variant="primary" v-bind="downloadProps" v-on="downloadEvents">
-        <b-spinner v-if="loading" small variant="light" />
+        <b-spinner v-if="loading" small />
         <b-icon-box-arrow-up-right v-else-if="browserCanOpenFile" />
         <b-icon-download v-else />
         {{ buttonText }}
@@ -41,18 +41,18 @@
 import { defineAsyncComponent } from 'vue';
 
 import Description from './Description.vue';
-import Utils, { mapMediaTypes } from '../utils';
-import { size } from 'stac-js/src/utils.js';
+import Utils from '../utils';
+import { size, URI } from 'stac-js/src/utils.js';
 import { mapGetters, mapState } from 'vuex';
 import AssetActions from '../../assetActions.config';
 import LinkActions from '../../linkActions.config';
-import { URI } from 'stac-js/src/utils.js';
 import AuthUtils from './auth/utils';
 import { Asset } from 'stac-js';
 import { browserProtocols } from 'stac-js/src/http';
-import { imageMediaTypes, zarrMediaTypes } from 'stac-js/src/mediatypes';
+import { imageMediaTypes, geojsonMediaType, wozMediaTypes, zarrMediaTypes } from 'stac-js/src/mediatypes';
 
 const disableDownloadTypes = [...zarrMediaTypes];
+const mapTypes = imageMediaTypes.concat([geojsonMediaType]).concat(wozMediaTypes);
 
 let i = 0;
 
@@ -79,7 +79,8 @@ export default {
     },
     size: {
       type: String,
-      default: 'md'
+      default: 'md',
+      validator: value => ['sm', 'md', 'lg'].includes(value)
     },
     shown: {
       type: Boolean,
@@ -93,11 +94,12 @@ export default {
   emits: ['show'],
   data() {
     return {
-      id: i++
+      id: i++,
+      tileUrlTemplate: null
     };
   },
   computed: {
-    ...mapState(['downloads', 'pathPrefix', 'requestHeaders', 'buildTileUrlTemplate', 'useTileLayerAsFallback']),
+    ...mapState(['downloads', 'requestHeaders', 'buildTileUrlTemplate', 'useTileLayerAsFallback']),
     ...mapGetters(['getRequestUrl']),
     ...mapGetters('auth', ['isLoggedIn']),
     loading() {
@@ -107,7 +109,7 @@ export default {
       return !this.isLoggedIn && this.auth.length > 0;
     },
     tileRendererType() {
-      if (this.buildTileUrlTemplate && !this.useTileLayerAsFallback) {
+      if (this.tileUrlTemplate && !this.useTileLayerAsFallback) {
         return 'server';
       }
       else {
@@ -124,8 +126,8 @@ export default {
       if (typeof this.data?.type !== 'string') {
         return false;
       }
-      // If the tile renderer is a tile server, we can't really know what it supports so we pass all images
-      else if (this.tileRendererType === 'server' && imageMediaTypes.includes(this.data?.type)) {
+      // If the tile renderer is a tile server, the buildTileUrlTemplate function decides which assets it supports
+      else if (this.tileRendererType === 'server') {
         return true;
       }
       // Only http(s) links and relative links are supported
@@ -133,7 +135,7 @@ export default {
         return false;
       }
       // Otherwise, all images that a browser can read are supported + GeoJSON
-      else if (mapMediaTypes.includes(this.data?.type)) {
+      else if (mapTypes.includes(this.data?.type)) {
         return true;
       }
       return false;
@@ -147,7 +149,7 @@ export default {
     downloadEvents() {
       if (this.canDownload && this.useAltDownloadMethod) {
         return {
-          click: async (event) => {
+          click: (event) => {
             event.preventDefault();
             this.altDownload();
           }
@@ -239,6 +241,26 @@ export default {
     copyButtonText() {
       let where = (!this.isBrowserProtocol && this.from) ? 'withSource' : 'generic';
       return this.$t(`assets.copyUrl.${where}`, {source: this.from});
+    }
+  },
+  watch: {
+    data: {
+      immediate: true,
+      async handler(data) {
+        this.tileUrlTemplate = null;
+        if (!this.isAsset || !this.buildTileUrlTemplate) {
+          return;
+        }
+        try {
+          const url = await this.buildTileUrlTemplate(data);
+          // Ignore stale results if the asset changed in the meantime
+          if (this.data === data) {
+            this.tileUrlTemplate = url;
+          }
+        } catch (error) {
+          console.error(error);
+        }
+      }
     }
   },
   methods: {

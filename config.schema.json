@@ -9,7 +9,14 @@
       "format": "uri"
     },
     "catalogTitle": {
-      "type": ["string"]
+      "type": ["string", "null"]
+    },
+    "catalogTitleAfterImage": {
+      "type": ["string", "null"]
+    },
+    "catalogImage": {
+      "type": ["string", "null"],
+      "format": "uri"
     },
     "allowExternalAccess": {
       "type": ["boolean"]
@@ -19,6 +26,10 @@
       "items": {
         "type": ["string"]
       }
+    },
+    "enforcedColorMode": {
+      "type": ["string"],
+      "enum": ["light", "dark", "auto"]
     },
     "detectLocaleFromBrowser": {
       "type": ["boolean"]
@@ -70,8 +81,7 @@
       "noEnv": true
     },
     "pathPrefix": {
-      "type": ["string"],
-      "buildOnly": true
+      "type": ["string"]
     },
     "historyMode": {
       "type": ["string"],
@@ -82,9 +92,11 @@
       "type": ["string"],
       "enum": ["list", "cards"]
     },
-    "cardViewSort": {
-      "type": ["string", "null"],
-      "enum": ["asc", "desc", null]
+    "defaultItemSort": {
+      "type": ["string", "null"]
+    },
+    "defaultCollectionSort": {
+      "type": ["string", "null"]
     },
     "showThumbnailsAsAssets": {
       "type": ["boolean"]
@@ -129,6 +141,10 @@
         "type": ["string"]
       }
     },
+    "preferredAssets": {
+      "type": ["boolean", "string"],
+      "description": "Preferred asset selection strategy: false (show main asset), true (prefer HTTP/S), or asset key name (string)"
+    },
     "preprocessSTAC": {
       "type": ["null"],
       "format": "function",
@@ -142,6 +158,16 @@
           "$ref": "https://stac-extensions.github.io/authentication/v1.1.0/schema.json"
         }
       ]
+    },
+    "transactions": {
+      "type": ["string"],
+      "enum": ["auto", "external", "internal", "off"]
+    },
+    "transactionsRequireLogin": {
+      "type": ["boolean"]
+    },
+    "transactionsRequirePreflight": {
+      "type": ["boolean"]
     },
     "crs": {
       "type": ["object"]

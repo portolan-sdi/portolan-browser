@@ -133,6 +133,7 @@
     "showFilter": "フィルターを表示"
   },
   "loading": "読み込み中...",
+  "manage": {},
   "map": "マップ",
   "mapping": {
     "attribution": {},
@@ -329,5 +330,6 @@
       "title": "タイル表示"
     },
     "title": "表示オプション"
-  }
+  },
+  "widgets": {}
 }

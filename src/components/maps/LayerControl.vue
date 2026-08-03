@@ -61,17 +61,17 @@ export default {
     },
   },
   emits: ['switch-basemap'],
-  computed: {
-    showControl() {
-      return (this.basemaps && this.basemaps.length > 1) || this.stacLayer;
-    },
-  },
   data() {
     return {
       buttonId: null,
       selectedIndex: this.activeBasemapIndex,
       overlayLayers: [],
     };
+  },
+  computed: {
+    showControl() {
+      return (this.basemaps && this.basemaps.length > 1) || this.stacLayer;
+    },
   },
   watch: {
     map(map) {

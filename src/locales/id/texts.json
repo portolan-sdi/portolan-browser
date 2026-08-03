@@ -151,6 +151,7 @@
     "showFilter": "Tampilkan Filter"
   },
   "loading": "Memuat...",
+  "manage": {},
   "map": "Peta",
   "mapping": {
     "attribution": {},
@@ -367,5 +368,6 @@
       "title": "Tampilkan sebagai kotak"
     },
     "title": "Opsi Tampilan"
-  }
+  },
+  "widgets": {}
 }

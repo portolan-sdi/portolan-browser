@@ -34,7 +34,9 @@ export async function mockStacResource(worker, url, mockData, options = {}) {
   await worker.use(
     http.all(url, async () => {
       if (delay > 0) {
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise(resolve => {
+          setTimeout(resolve, delay);
+        });
       }
       return HttpResponse.json(mockData, { status });
     }),
@@ -58,6 +60,185 @@ export async function mockStacError(worker, url, status = 404, message = 'Not Fo
       );
     }),
   );
+}
+
+// ─── Management / Transaction Helpers ───────────────────────────────────────
+
+/**
+* Inject STAC Browser config overrides before the app boots.
+*
+* Merged-config reads `window.STAC_BROWSER_CONFIG` at module load, so this must
+* run before any navigation. Use it to toggle the transaction options that
+* otherwise default to `true` (requiring login and an OPTIONS preflight).
+*
+* @param {import('@playwright/test').Page} page
+* @param {object} [overrides] – config keys to override (e.g. transactionsRequireLogin)
+*/
+export async function configureBrowser(page, overrides = {}) {
+  await page.addInitScript((config) => {
+    window.STAC_BROWSER_CONFIG = Object.assign({}, window.STAC_BROWSER_CONFIG, config);
+  }, overrides);
+}
+
+/**
+* Enable the management UI without login or preflight so the transaction
+* controls are reachable in a test. Callers still need a server that advertises
+* the relevant transaction conformance classes.
+*
+* @param {import('@playwright/test').Page} page
+* @param {object} [overrides] – extra config overrides merged on top
+*/
+export async function enableTransactions(page, overrides = {}) {
+  await configureBrowser(page, {
+    transactions: 'auto',
+    transactionsRequireLogin: false,
+    transactionsRequirePreflight: false,
+    ...overrides
+  });
+}
+
+/**
+* Mock an OPTIONS preflight response that advertises the allowed HTTP methods
+* via the `Allow` header (comma-separated, as real servers send it).
+*
+* @param {import('playwright-msw').MockServiceWorker} worker
+* @param {string} url – exact URL to intercept
+* @param {string[]} [methods=[]] – allowed methods, e.g. ['GET', 'PUT', 'DELETE']
+*/
+export async function mockOptions(worker, url, methods = []) {
+  await worker.use(
+    http.options(url, () =>
+      // Use 200 with a (empty) body rather than 204: MSW's service worker drops
+      // response headers on a null-body 204, which would hide the Allow header.
+      // `Allow` is not a CORS-safelisted response header, so a cross-origin server
+      // must also expose it explicitly for the browser to let JS read it.
+      HttpResponse.json({}, {
+        status: 200,
+        headers: {
+          Allow: methods.join(', '),
+          'Access-Control-Expose-Headers': 'Allow'
+        }
+      })
+    )
+  );
+}
+
+/**
+* Mock a transactional write (PUT/POST/DELETE) response for a URL.
+*
+* @param {import('playwright-msw').MockServiceWorker} worker
+* @param {'put'|'post'|'delete'} method
+* @param {string} url – exact URL to intercept
+* @param {object} [options]
+* @param {number} [options.status] – response status (defaults per method)
+* @param {string} [options.location] – Location header (for POST create)
+* @param {object|null} [options.body] – JSON body to return (null → empty body)
+*/
+export async function mockTransaction(worker, method, url, options = {}) {
+  let status = options.status;
+  if (status === undefined) {
+    if (method === 'post') {
+      status = 201;
+    } else if (method === 'delete') {
+      status = 204;
+    } else {
+      status = 200;
+    }
+  }
+  const headers = {};
+  if (options.location) {
+    headers.Location = options.location;
+  }
+  await worker.use(
+    http[method](url, () => {
+      if (options.body === null || status === 204) {
+        return new HttpResponse(null, { status, headers });
+      }
+      return HttpResponse.json(options.body ?? {}, { status, headers });
+    })
+  );
+}
+
+/**
+* Open the "Manage" dropdown in the source toolbar and return its locator.
+*
+* @param {import('@playwright/test').Page} page
+* @returns {Promise<import('@playwright/test').Locator>} the open dropdown menu
+*/
+export async function openManageMenu(page) {
+  const button = page.getByRole('button', { name: /manage/i });
+  await expect(button).toBeVisible();
+  await button.click();
+  const menu = page.locator('.dropdown-menu.show');
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+// ─── Authentication Helpers ──────────────────────────────────────────────────
+
+/**
+* Guard a mocked URL with an authentication check.
+*
+* Registers an MSW handler that returns 401 unless `check(request)` passes.
+* When the check passes, the handler yields (returns undefined) so the regular
+* resource handler (e.g. registered by `instance.createServer`) builds the
+* response. Register this AFTER `createServer` — for the same path, handlers
+* registered later take precedence in playwright-msw.
+*
+* @param {import('playwright-msw').MockServiceWorker} worker
+* @param {string} url – exact URL to guard
+* @param {(request: Request) => boolean} check – returns true when the request is authenticated
+*/
+export async function requireAuth(worker, url, check) {
+  await worker.use(
+    http.get(url, ({ request }) => {
+      if (check(request)) {
+        return undefined; // fall through to the resource handler
+      }
+      return HttpResponse.json(
+        { code: 401, description: 'Unauthorized' },
+        { status: 401 },
+      );
+    }),
+  );
+}
+
+/** Check that a request carries the given header value. */
+export const hasHeader = (name, value) => (request) => request.headers.get(name) === value;
+
+/** Check that a request carries the given query parameter value. */
+export const hasQuery = (name, value) => (request) => new URL(request.url).searchParams.get(name) === value;
+
+/** Check that a request carries HTTP Basic credentials for user:password. */
+export const hasBasicAuth = (user, password) => (request) =>
+  request.headers.get('authorization') === `Basic ${btoa(`${user}:${password}`)}`;
+
+/**
+* Fill and submit the API key / token login form.
+*
+* @param {import('@playwright/test').Page} page
+* @param {string} token
+*/
+export async function submitApiKey(page, token) {
+  const modal = page.locator('#stac-browser-auth-modal');
+  await expect(modal).toBeVisible();
+  await modal.locator('input[type="password"]').fill(token);
+  await modal.getByRole('button', { name: /submit/i }).click();
+}
+
+/**
+* Fill and submit the HTTP Basic login form.
+*
+* @param {import('@playwright/test').Page} page
+* @param {string} user
+* @param {string} password
+*/
+export async function submitBasicAuth(page, user, password) {
+  const modal = page.locator('#stac-browser-auth-modal');
+  await expect(modal).toBeVisible();
+  await modal.locator('#basicUser').fill(user);
+  await modal.locator('#basicPassword').fill(password);
+  await modal.getByRole('button', { name: /submit/i }).click();
 }
 
 // ─── Page interaction Helpers ──────────────────────────────────────────────
@@ -119,6 +300,71 @@ export async function drawBboxOnMap(page, mapContainer) {
 }
 
 /**
+* Read the STAC Browser map state: the MapLibre GL camera (zoom + center in
+* lon/lat) and the rendered footprint geometry. The map isn't exposed to the
+* DOM, so we locate it via the MapView component instance, walking up from the
+* map element through Vue's `__vueParentComponent`. This works in dev builds and
+* in the e2e production build (which enables `__VUE_PROD_DEVTOOLS__` via
+* STAC_BROWSER_E2E); real production builds are unaffected, so no test hook is
+* needed in the application code. MapLibre reports the center in degrees
+* already, so no Mercator inversion is needed. `lon`/`lat` are `null` when the
+* camera has no center yet.
+*
+* @param {import('@playwright/test').Page} page
+* @returns {Promise<{zoom: number, lon: number|null, lat: number|null, footprintType: string|null, footprintPolygons: number}|null>} map state, or null if no map found
+*/
+export function getMapState(page) {
+  return page.evaluate(() => {
+    let el = document.querySelector('.map-container .map') || document.querySelector('.map');
+    let map = null;
+    while (el) {
+      const inst = el.__vueParentComponent;
+      let candidate;
+      try {
+        candidate = inst?.proxy?.map ?? inst?.ctx?.map;
+      } catch {
+        candidate = null;
+      }
+      if (candidate && typeof candidate.getZoom === 'function' && typeof candidate.getCenter === 'function') {
+        map = candidate;
+        break;
+      }
+      el = el.parentElement;
+    }
+    if (!map) {
+      return null;
+    }
+
+    const zoom = map.getZoom();
+    const center = map.getCenter();
+    const lon = center ? center.lng : null;
+    const lat = center ? center.lat : null;
+
+    // Rendered footprint: an antimeridian-crossing footprint is split into a
+    // MultiPolygon, so report the number of polygons. The GeoJSON source keeps
+    // the data it was given; `getData` is not available on every MapLibre
+    // version, so fall back to the private field.
+    const source = map.getSource('stac-footprint');
+    let data = null;
+    try {
+      data = typeof source?.getData === 'function' ? source.getData() : source?._data;
+    } catch {
+      data = null;
+    }
+    const geom = data?.type === 'FeatureCollection' ? data.features?.[0]?.geometry : data?.geometry ?? null;
+    const footprintType = geom?.type ?? null;
+    let footprintPolygons = 0;
+    if (footprintType === 'MultiPolygon') {
+      footprintPolygons = geom.coordinates.length;
+    } else if (footprintType === 'Polygon') {
+      footprintPolygons = 1;
+    }
+
+    return { zoom, lon, lat, footprintType, footprintPolygons };
+  });
+}
+
+/**
 * Wait until the bounding-box coordinate inputs have been auto-populated
 * (i.e. all four fields are non-empty).
 * 
@@ -126,10 +372,10 @@ export async function drawBboxOnMap(page, mapContainer) {
 */
 export async function waitForBboxInputsPopulated(page) {
   const labels = [/west longitude/i, /south latitude/i, /east longitude/i, /north latitude/i];
-  for (const label of labels) {
+  await Promise.all(labels.map(label => {
     const input = page.getByLabel(label);
-    await expect(input).not.toHaveValue('', { timeout: 10000 });
-  }
+    return expect(input).not.toHaveValue('', { timeout: 10000 });
+  }));
 }
 
 /**
@@ -176,7 +422,7 @@ export async function openSourcePanel(page) {
 * @param {import('@playwright/test').Page} page
 * @returns {Promise<string>} clipboard content
 */
-export const readClipboard = async (page) => page.evaluate(() => navigator.clipboard.readText());
+export const readClipboard = (page) => page.evaluate(() => navigator.clipboard.readText());
 
 /**
 * Clear system clipboard.
@@ -184,7 +430,7 @@ export const readClipboard = async (page) => page.evaluate(() => navigator.clipb
 * @param {import('@playwright/test').Page} page
 * @returns {Promise<void>}
 */
-export const clearClipboard = async (page) => page.evaluate(() => navigator.clipboard.writeText(''));
+export const clearClipboard = (page) => page.evaluate(() => navigator.clipboard.writeText(''));
 
 /**
 * Click the "Example Code" button and wait for the modal to appear.
@@ -211,7 +457,7 @@ export const openExampleCodeModal = async (page) => {
 export const copyCodeFromModal = async (page, panel) => {
   await clearClipboard(page);
   await panel.locator('[id="exampleCodeCopyExampleCode"]').click();
-  return expect.poll(async () => readClipboard(page)).not.toEqual('');
+  return expect.poll(() => readClipboard(page)).not.toEqual('');
 };
 
 /**
@@ -225,7 +471,7 @@ export const copyCodeFromModal = async (page, panel) => {
 export const copyDependenciesFromModal = async (page, panel) => {
   await clearClipboard(page);
   await panel.locator('[id="exampleCodeCopyDependencies"]').click();
-  return expect.poll(async () => readClipboard(page)).not.toEqual('');
+  return expect.poll(() => readClipboard(page)).not.toEqual('');
 };
 
 /**
@@ -239,5 +485,5 @@ export const copyDependenciesFromModal = async (page, panel) => {
 export const copyFilenameFromModal = async (page, panel) => {
   await clearClipboard(page);
   await panel.locator('[id="exampleCodeCopyOutputFilename"]').click();
-  return expect.poll(async () => readClipboard(page)).not.toEqual('');
+  return expect.poll(() => readClipboard(page)).not.toEqual('');
 };

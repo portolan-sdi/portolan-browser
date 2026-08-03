@@ -24,6 +24,8 @@ jobs:
         run: pnpm run lint
       - name: Lint Documentation
         run: pnpm run docs:lint
+      - name: Lint shell scripts
+        run: shellcheck tests/docker/*.sh tests/integration/*.sh docker/docker-entrypoint.sh
 
   locales:
     runs-on: ubuntu-latest

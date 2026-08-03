@@ -70,8 +70,12 @@
     "false": "Nein",
     "true": "Ja"
   },
+  "close": "Schließen",
   "copy": "Kopieren",
-  "copyErrors": {},
+  "copyErrors": {
+    "permission": "Kopieren nicht möglich. Bitte überprüfen Sie die Berechtigungen des Browsers.",
+    "unsupported": "Die Zwischenablage ist in diesem Browser nicht verfügbar."
+  },
   "default": "Standardeinstellung",
   "defaultWithValue": "Standardeinstellung ({value})",
   "deprecated": "Abgekündigt",
@@ -106,6 +110,7 @@
     "loadApiItemsFailed": "Die Elemente des Dienstanbieters konnten nicht geladen werden.",
     "loadFilteredItems": "Das Laden einer gefilterten Liste von Elementen ist leider fehlgeschlagen.",
     "loadItems": "Das Laden der Liste der Elemente ist leider fehlgeschlagen.",
+    "missingPermissions": "Die für diese Anfrage angegebenen Anmeldedaten haben nicht die erforderlichen Berechtigungen.",
     "networkError": "Dieses Problem kann auftreten, wenn Server den externen Zugriff über Webbrowser nicht zulassen (bspw. wenn keine CORS-Kopfzeilen vorhanden sind). @:errors.contactProvider",
     "noExternalAccess": "Der Zugriff auf externe Kataloge ist nicht erlaubt!",
     "notFound": "Die angeforderte Seite existiert nicht. @:errors.contactProvider",
@@ -113,7 +118,11 @@
     "title": "Fehler",
     "unauthorized": "Der Anfrage fehlen die Anmeldedaten, bspw. ein API-Schlüssel. Bitte geben Sie Ihre Anmeldedaten an und versuchen Sie es erneut."
   },
-  "exampleCode": {},
+  "exampleCode": {
+    "title": "Quelltext-Beispiele",
+    "storeAs": "Quelltext speichern als:",
+    "installDependencies": "Installieren der Abhängigkeiten:"
+  },
   "featureExperimental": "Diese Funktion ist noch experimentell und kann unerwartete Ergebnisse verursachen!",
   "features": {
     "empty": "Keine Features verfügbar.",
@@ -153,12 +162,30 @@
   },
   "items": {
     "filter": "Filter",
+    "filterChangesNotApplied": "Die Filter wurden geändert, die Änderungen aber noch nicht angewendet.",
     "hideFilter": "Verstecke Filter",
     "noTime": "Keine Zeit angegeben",
     "noneAvailableForCollection": "Für diesen Katalog sind keine Elemente verfügbar.",
     "showFilter": "Zeige Filter"
   },
   "loading": "Lade...",
+  "manage": {
+    "addCollection": "Katalog hinzufügen",
+    "addItem": "Element hinzufügen",
+    "confirmDeleteTitle": "Löschen bestätigen",
+    "confirmDeleteMessage": "Sind Sie sicher, dass Sie diese STAC-Ressource löschen möchten?",
+    "create": "Hinzufügen",
+    "delete": "Löschen",
+    "discardDraft": "Wiederhergestellte Änderungen verwerfen",
+    "draftRestored": "Ungespeicherte Änderungen aus einer früheren Sitzung wurden wiederhergestellt.",
+    "edit": "Bearbeiten",
+    "leavePage": "Seite verlassen",
+    "save": "Speichern",
+    "noUndo": "Diese Aktion kann nicht rückgängig gemacht werden.",
+    "unsavedChangesLeave": "Sie haben ungespeicherte Änderungen. Möchten Sie die Seite wirklich verlassen?",
+    "unsavedChangesTitle": "Ungespeicherte Änderungen",
+    "validate": "Validieren"
+  },
   "map": "Karte",
   "mapping": {
     "attribution": {
@@ -226,7 +253,14 @@
     "previous": "‹ Vorherige"
   },
   "poweredBy": "Generiert von {link}",
-  "programming": {},
+  "programming": {
+    "csharp": "C#",
+    "java": "Java",
+    "javascript": "JavaScript",
+    "python": "Python",
+    "r": "R",
+    "rust": "Rust"
+  },
   "protocol": {
     "azure": "Microsoft Azure",
     "file": "Dateisystem (lokal)",
@@ -275,6 +309,8 @@
     "between": "zwischen",
     "betweenOperatorDescription": "Prüft, ob ein numerischer Wert innerhalb des angegebenen Bereichs liegt. Die angegebenen Grenzen werden eingeschlossen.",
     "dateDescription": "Alle Zeiten in koordinierter Weltzeit (UTC).",
+    "disabledDueToSingleDate": "Dieser Filter ist deaktiviert, da die Sammlung einen einzelnen Zeitpunkt als zeitliche Ausdehnung hat.",
+    "droppedFilters": "Die folgenden Filter werden hier nicht unterstützt und wurden entfernt: {filters}.",
     "enterCollections": "Gebe Katalog-Identifikationsnummern ein...",
     "enterItemIds": "Gebe Element-Identifikationsnummern ein...",
     "enterSearchTerms": "Gebe Suchbegriffe ein...",
@@ -351,6 +387,7 @@
       "switch": "Ändern der Sprache"
     },
     "locatedAt": "Die Datei mit den STAC-Metadaten befindet sich unter:",
+    "manage": "Verwalten",
     "share": {
       "bsky": "Bluesky",
       "email": "E-Mail",
@@ -402,6 +439,8 @@
   "stacCollection": "Katalog | Kataloge",
   "stacItem": "Element | Elemente",
   "submit": "Absenden",
+  "switchToDarkMode": "Wechsle in die dunkle Ansicht",
+  "switchToLightMode": "Wechsle in die helle Ansicht",
   "table": {
     "emptyFilteredText": "Es gibt keine Einträge die dem Filter entsprechen",
     "emptyText": "Keine Einträge verfügbar",
@@ -426,5 +465,8 @@
       "title": "Anzeigen als Kacheln"
     },
     "title": "Anzeigeoptionen"
+  },
+  "widgets": {
+    "featured": "Empfohlen"
   }
 }

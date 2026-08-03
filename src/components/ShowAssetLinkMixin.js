@@ -1,4 +1,3 @@
-import { defineComponent } from 'vue';
 import Utils from '../utils';
 import { mapGetters, mapState } from 'vuex';
 import { stacBrowserSpecialHandling } from "../rels";
@@ -11,7 +10,7 @@ const COG_MIME_TYPES = [
   'application/x-geotiff',
 ];
 
-export default defineComponent({
+export default {
   data() {
     return {
       tabIds: {
@@ -45,7 +44,7 @@ export default defineComponent({
       }
       let assets = this.data.getAssets();
       if (!this.showThumbnailsAsAssets) {
-        assets = assets.filter(asset => !this.thumbnails.includes(asset));
+        assets = assets.filter(asset => !this.isThumbnail(asset));
       }
       return assets;
     },
@@ -75,11 +74,29 @@ export default defineComponent({
     }
   },
   methods: {
+    isAssetEqual(a, b) {
+      if (!a?.isAsset || !b?.isAsset) {
+        return false;
+      }
+      if (a === b) {
+        return true;
+      }
+      if (a.getAbsoluteUrl() === b.getAbsoluteUrl()) {
+        return true;
+      }
+      if (a.isAlternate) {
+        return this.isAssetEqual(a.getContext(), b);
+      }
+      if (b.isAlternate) {
+        return this.isAssetEqual(a, b.getContext());
+      }
+      return false;
+    },
+    isThumbnail(asset) {
+      return this.thumbnails.some(t => this.isAssetEqual(t, asset));
+    },
     showAsset(asset) {
-      // Compare by absolute URL: thumbnails/assets are stac-js Asset/Link
-      // instances (no `is()` method — that only exists on STAC entities), so
-      // `t.is(asset)` throws. See https://github.com/moregeo-it/stac-js/issues/12
-      if (this.thumbnails.find(t => t.getAbsoluteUrl() === asset.getAbsoluteUrl())) {
+      if (this.isThumbnail(asset)) {
         this.tab = this.tabIds.thumbnails;
       }
       else {
@@ -117,4 +134,4 @@ export default defineComponent({
       this.hasAutoSelected = true;
     }
   }
-});
+};

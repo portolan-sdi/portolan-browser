@@ -1,5 +1,5 @@
 function catchAllString(route) {
-  const pathMatch = route.params.pathMatch;
+  const pathMatch = route.params.pathMatch || '';
   return Array.isArray(pathMatch) ? pathMatch.join("/") : pathMatch;
 }
 
@@ -55,6 +55,36 @@ function getRoutes(config) {
     name: "validation",
     component: () => import("../views/Validation.vue"),
     props: route => getPath(route, config)
+  });
+
+  routes.push({
+    path: "/management/edit/:pathMatch(.*)*",
+    name: "managementEdit",
+    component: () => import("../views/Edit.vue"),
+    props: route => ({
+      ...getPath(route, config),
+      mode: 'edit'
+    })
+  });
+
+  routes.push({
+    path: "/management/create-item/:pathMatch(.*)*",
+    name: "managementCreateItem",
+    component: () => import("../views/Edit.vue"),
+    props: route => ({
+      ...getPath(route, config),
+      mode: 'create-item'
+    })
+  });
+
+  routes.push({
+    path: "/management/create-collection/:pathMatch(.*)*",
+    name: "managementCreateCollection",
+    component: () => import("../views/Edit.vue"),
+    props: route => ({
+      ...getPath(route, config),
+      mode: 'create-collection'
+    })
   });
 
   routes.push({

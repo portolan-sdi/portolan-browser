@@ -87,8 +87,8 @@ export default {
       for (let key in stats) {
         if (isObject(this.root[key])) {
           let entry = Object.assign(stats[key], this.root[key]);
-          if (size(entry['versions']) === 1) {
-            entry.version = Object.keys(entry['versions'])[0];
+          if (size(entry.versions) === 1) {
+            entry.version = Object.keys(entry.versions)[0];
             delete entry.versions;
           }
         }
@@ -156,7 +156,7 @@ export default {
 
 #stac-browser .root-stats {
   h4 {
-    margin-top: $block-margin;
+    margin-top: var(--sb-block-gap);
   }
 
   .charts .chart {

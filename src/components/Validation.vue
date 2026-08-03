@@ -9,7 +9,8 @@
 
 <script>
 import { STAC } from 'stac-js';
-import validateSTAC from 'stac-node-validator';
+import { validateStac } from '../validation';
+import { mapGetters } from 'vuex';
 
 export default {
   name: "Validation",
@@ -20,7 +21,8 @@ export default {
     },
     size: {
       type: String,
-      default: "sm"
+      default: "sm",
+      validator: value => ['sm', 'md', 'lg'].includes(value)
     }
   },
   data() {
@@ -30,9 +32,10 @@ export default {
     };
   },
   computed: {
+    ...mapGetters(['toBrowserPath']),
     validationLink() {
       if (this.data instanceof STAC) {
-        return '/validation' + this.data.getBrowserPath();
+        return '/validation' + this.toBrowserPath(this.data);
       }
       else {
         return null;
@@ -49,7 +52,10 @@ export default {
       try {
         if (this.data instanceof STAC) {
           const stac = this.data._original || this.data.toJSON();
-          const report = await validateSTAC(stac, {});
+          const report = await validateStac(stac);
+          if (report.valid === null) {
+            console.warn(report.messages);
+          }
           this.valid = report.valid;
         }
       } catch (error) {

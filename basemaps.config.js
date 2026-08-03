@@ -1,5 +1,4 @@
-import { Collection } from './src/models/stac';
-import { STAC } from 'stac-js';
+import { Collection, STAC } from 'stac-js';
 
 const BASEMAPS = {
   earth: [
@@ -20,6 +19,15 @@ const BASEMAPS = {
       title: 'Satellite',
     },
   ],
+//'earth-dark': [
+//  {
+//    url: 'https://cartodb-basemaps-{a-d}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png',
+//    is: 'XYZ',
+//    title: 'Carto Dark',
+//    attributions: 'Map tiles by Carto, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+//    projection: "EPSG:3857"
+//  }
+//],
   europa: [
     {
       title: 'USGS Europa',
@@ -46,6 +54,16 @@ const BASEMAPS = {
   ],
 };
 
+/**
+ * Portolan's basemaps are MapLibre GL style/raster definitions, not the
+ * OpenLayers layers upstream configures here, so this takes only the STAC
+ * object. Upstream's `i18n` and `store` arguments — the latter used to pick a
+ * dark basemap variant from `store.state.colorMode` — arrive when the MapLibre
+ * stack learns to follow the color mode.
+ *
+ * @param {Object} stac The STAC object
+ * @returns {Array.<BasemapOptions>}
+ */
 export default function configureBasemap(stac) {
   let targets;
   if (stac instanceof Collection) {
@@ -56,6 +74,13 @@ export default function configureBasemap(stac) {
   }
   if (!targets) {
     targets = ['earth'];
+  }
+
+  if (store.state.colorMode === 'dark') {
+    targets = targets.map(t => {
+      const darkVariant = `${t}-dark`;
+      return Array.isArray(BASEMAPS[darkVariant]) ? darkVariant : t;
+    });
   }
 
   let layers = [];

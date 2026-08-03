@@ -1,45 +1,51 @@
 <template>
-  <b-container id="stac-browser">
+  <Loading v-if="!browserReady" fill />
+  <b-container v-else id="stac-browser">
     <WidgetHook id="root-start" />
     <Authentication v-if="showLogin" />
     <ErrorAlert v-if="globalError" dismissible class="global-error" v-bind="globalError" @close="hideError" />
     <Sidebar v-if="sidebar !== null" v-model="sidebar" />
     <!-- Header -->
-    <header>
+    <header ref="header" :class="{ scrolled, 'hide-site-header': hideSite }">
       <b-row class="site">
         <b-col md="12">
           <nav class="actions navigation">
             <b-button-group v-if="canSearch || !isServerSelector">
-              <b-button v-if="!isServerSelector" variant="primary" size="sm" :title="$t('browse')" @click="sidebar = !sidebar">
+              <b-button v-if="!isServerSelector" variant="header" :title="$t('browse')" @click="sidebar = !sidebar">
                 <b-icon-list /><span class="button-label">{{ $t('browse') }}</span>
               </b-button>
-              <b-button v-if="canSearch" variant="primary" size="sm" :to="searchBrowserLink" :title="$t('search.title')" :pressed="isSearchPage">
+              <b-button v-if="canSearch" variant="header" :to="searchBrowserLink" :title="$t('search.title')" :pressed="isSearchPage">
                 <b-icon-search /><span class="button-label">{{ $t('search.title') }}</span>
+              </b-button>
+              <b-button v-if="root" variant="header" id="popover-root-btn" tabindex="0">
+                <b-icon-database /><span class="button-label">{{ serviceType }}</span>
               </b-button>
             </b-button-group>
           </nav>
           <div class="title">
-            <img v-if="logo" :src="logo.getAbsoluteUrl()" :alt="logo.title" :title="logo.title" class="logo">
-            <span role="banner">
-              <StacLink v-if="root" :data="root" hideIcon />
-              <template v-else>{{ catalogTitle }}</template>
-            </span>
-            <b-button
-              v-if="root" size="sm" variant="outline-primary" id="popover-root-btn"
-              :title="serviceType" tag="a" tabindex="0"
-            >
-              <b-icon-caret-down-fill />
-            </b-button>
+            <StacLink v-if="root" :data="root">
+              <HeaderTitle ref="headerTitle" />
+            </StacLink>
+            <HeaderTitle v-else ref="headerTitle" />
           </div>
           <nav class="actions user">
             <b-button-group>
-              <b-button v-if="canAuthenticate" variant="primary" size="sm" @click="logInOut" :title="authTitle">
+              <b-button v-if="canAuthenticate" variant="header" @click="logInOut" :title="authTitle">
                 <component :is="authIcon" /><span class="button-label">{{ authLabel }}</span>
               </b-button>
               <LanguageChooser
+                v-if="supportedLocalesFromVueX.length > 1"
                 :data="data" :currentLocale="localeFromVueX" :locales="supportedLocalesFromVueX"
                 @set-locale="locale => switchLocale({locale, userSelected: true})"
               />
+              <b-button
+                v-if="!enforcedColorModeFromVueX || enforcedColorModeFromVueX === 'auto'"
+                variant="header"
+                @click="toggleColorMode"
+              >
+                <b-icon-sun v-if="colorMode === 'light'" :title="$t('switchToDarkMode')" />
+                <b-icon-moon-stars v-else :title="$t('switchToLightMode')" />
+              </b-button>
             </b-button-group>
           </nav>
         </b-col>
@@ -48,22 +54,22 @@
         <b-col md="12">
           <div class="title">
             <img v-if="icon && !isRoot" :src="icon.getAbsoluteUrl()" :alt="icon.title" :title="icon.title" class="icon">
-            <h1>{{ title }}</h1>
+            <h1 :title="title">{{ title }}</h1>
           </div>
           <nav class="actions navigation">
             <b-button-group>
               <b-button v-if="back" :to="selfBrowserLink" :title="$t('goBack.description', {type})" variant="outline-primary" size="sm">
                 <b-icon-arrow-left /><span class="button-label">{{ $t('goBack.label') }}</span>
               </b-button>
-              <b-button v-if="collectionLink" :to="toBrowserPath(collectionLink.href)" :title="collectionLinkTitle" variant="outline-primary" size="sm">
+              <b-button v-if="collectionLink" :to="toBrowserPath(collectionLink)" :title="collectionLinkTitle" variant="outline-primary" size="sm">
                 <b-icon-folder-symlink /><span class="button-label">{{ $t('goToCollection.label') }}</span>
               </b-button>
-              <b-button v-if="parentLink" :to="toBrowserPath(parentLink.href)" :title="parentLinkTitle" variant="outline-primary" size="sm">
+              <b-button v-if="parentLink" :to="toBrowserPath(parentLink)" :title="parentLinkTitle" variant="outline-primary" size="sm">
                 <b-icon-arrow-90deg-up /><span class="button-label">{{ $t('goToParent.label') }}</span>
               </b-button>
             </b-button-group>
           </nav>
-          <StacSource class="actions" :title="title" :stacUrl="url" :stac="data" />
+          <StacSource class="actions" :title="title" />
         </b-col>
       </b-row>
     </header>
@@ -75,19 +81,19 @@
       <WidgetHook id="footer-start" />
       <ul v-if="Array.isArray(footerLinksFromVueX) && footerLinksFromVueX.length > 0" class="footer-links text-body-secondary">
         <li v-for="link in footerLinksFromVueX" :key="link.url">
-          <a :href="link.url" target="_blank">{{ $te(`footerLinks.${link.label}`) ? $t(`footerLinks.${link.label}`) : link.label }}</a>
+          <a :href="link.url" target="_blank" rel="noopener noreferrer">{{ $te(`footerLinks.${link.label}`) ? $t(`footerLinks.${link.label}`) : link.label }}</a>
         </li>
       </ul>
       <i18n-t tag="small" keypath="poweredBy" class="poweredby text-body-secondary" scope="global">
         <template #link>
-          <a href="https://github.com/radiantearth/stac-browser" target="_blank">STAC Browser</a> {{ browserVersion }}
+          <a href="https://github.com/radiantearth/stac-browser" target="_blank" rel="noopener noreferrer">STAC Browser</a> {{ browserVersion }}
         </template>
       </i18n-t>
     </footer>
     <b-popover
       v-if="root" id="popover-root" class="popover-large" target="popover-root-btn"
       placement="bottom" :title="serviceType" teleport-to="#stac-browser"
-      click focus :boundary-padding="10"
+      click focus :boundary-padding="10" strategy="fixed"
     >
       <RootStats />
     </b-popover>
@@ -99,25 +105,26 @@
 import { defineComponent, defineAsyncComponent } from 'vue';
 import { isNavigationFailure, NavigationFailureType } from 'vue-router';
 import { mapMutations, mapActions, mapGetters, mapState } from 'vuex';
-import CONFIG from './config';
+import { useColorMode } from 'bootstrap-vue-next';
+import CONFIG from './merged-config';
 
 // Import icons needed for dynamic component usage
 import BIconLock from '~icons/bi/lock';
 import BIconUnlock from '~icons/bi/unlock';
 
 import ErrorAlert from './components/ErrorAlert.vue';
+import HeaderTitle from './components/HeaderTitle.vue';
+import Loading from './components/Loading.vue';
 import StacLink from './components/StacLink.vue';
 
-import { CatalogLike, STAC } from 'stac-js';
-import { hasText, isObject, size } from 'stac-js/src/utils.js';
+import { STAC } from 'stac-js';
+import { hasText, isObject, size, URI } from 'stac-js/src/utils.js';
 import Utils from './utils';
-import { URI } from 'stac-js/src/utils.js';
 
-import { API_LANGUAGE_CONFORMANCE } from './i18n';
+import { API_LANGUAGE_CONFORMANCE, updateExternals } from './i18n';
 import { getBest, prepareSupported } from 'stac-js/src/locales';
 import BrowserStorage from "./browser-store";
 import Authentication from "./components/Authentication.vue";
-import { getDisplayTitle } from "./models/stac";
 import Auth from './auth';
 
 // Pass Config through from props to vuex
@@ -146,7 +153,9 @@ export default defineComponent({
     BIconUnlock,
     BPopover: defineAsyncComponent(() => import('bootstrap-vue-next').then(m => m.BPopover)),
     ErrorAlert,
+    HeaderTitle,
     LanguageChooser: defineAsyncComponent(() => import('./components/LanguageChooser.vue')),
+    Loading,
     RootStats: defineAsyncComponent(() => import('./components/RootStats.vue')),
     Sidebar: defineAsyncComponent(() => import('./components/Sidebar.vue')),
     StacLink,
@@ -157,23 +166,29 @@ export default defineComponent({
   },
   data() {
     return {
+      colorMode: null,
       sidebar: null,
       error: null,
       onDataLoaded: null,
-      isNavigatingLocale: false
+      isNavigatingLocale: false,
+      scrolled: false,
+      hideSite: false,
+      scrollListener: null
     };
   },
   computed: {
-    ...mapState(['allowSelectCatalog', 'conformsTo', 'data', 'dataLanguage', 'downloads', 'globalError', 'loading', 'stateQueryParameters', 'uiLanguage', 'url']),
+    ...mapState(['allowSelectCatalog', 'browserReady', 'conformsTo', 'data', 'dataLanguage', 'downloads', 'globalError', 'loading', 'stateQueryParameters', 'url']),
     ...mapState({
-      catalogImageFromVueX: 'catalogImage',
       footerLinksFromVueX: 'footerLinks',
       localeFromVueX: 'locale',
+      fallbackLocaleFromVueX: 'fallbackLocale',
       detectLocaleFromBrowserFromVueX: 'detectLocaleFromBrowser',
       supportedLocalesFromVueX: 'supportedLocales',
-      storeLocaleFromVueX: 'storeLocale'
+      storeLocaleFromVueX: 'storeLocale',
+      enforcedColorModeFromVueX: 'enforcedColorMode',
+      colorModeFromVueX: 'colorMode'
     }),
-    ...mapGetters(['canSearch', 'collectionLink', 'description', 'fromBrowserPath', 'isExternalUrl', 'isRoot', 'parentLink', 'root', 'rootLink', 'supportsConformance', 'title', 'toBrowserPath']),
+    ...mapGetters(['canSearch', 'collectionLink', 'fromBrowserPath', 'isExternalUrl', 'isRoot', 'parentLink', 'root', 'searchBrowserLink', 'supportsConformance', 'title', 'toBrowserPath']),
     ...mapGetters('auth', { authMethod: 'method' }),
     ...mapGetters('auth', ['canAuthenticate', 'isLoggedIn', 'showLogin']),
     browserVersion() {
@@ -199,22 +214,6 @@ export default defineComponent({
     authLabel() {
       return this.isLoggedIn ? this.authMethod.getLogoutLabel() : this.authMethod.getLoginLabel();
     },
-    searchBrowserLink() {
-      if (!this.canSearch) {
-        return null;
-      }
-      let searchLink;
-      if (this.data instanceof CatalogLike && !this.data.is(this.root)) {
-        searchLink = this.data.getSearchLink();
-      }
-      if (searchLink) {
-        return `/search${this.data.getBrowserPath()}`;
-      }
-      else if (this.root && this.allowSelectCatalog) {
-        return `/search${this.root.getBrowserPath()}`;
-      }
-      return '/search';
-    },
     isApi() {
       // todo: This gives false results for a statically hosted OGC API - Records, which may include conformance classes
       return Array.isArray(this.conformsTo) && this.conformsTo.length > 0;
@@ -223,7 +222,7 @@ export default defineComponent({
       return this.isApi ? this.$t('index.api') : this.$t('index.catalog');
     },
     back() {
-      return this.$route.name === 'validation';
+      return this.$route.name === 'validation' || Boolean(this.$route.name?.startsWith('management'));
     },
     selfBrowserLink() {
       return this.toBrowserPath(this.url);
@@ -262,51 +261,11 @@ export default defineComponent({
       }
     },
     icon() {
-      return this.getIcon(this.data);
-    },
-    logo() {
-      if (this.catalogImageFromVueX) {
-        let link = Utils.createLink(this.catalogImageFromVueX, 'icon', this.rootLink?.title);
-        if (!link.getAbsoluteUrl()) {
-          let url = import.meta.env.BASE_URL + this.catalogImageFromVueX.replace(/^\//, '');
-          return { getAbsoluteUrl: () => url, title: this.rootLink?.title || this.catalogTitle };
-        }
-        return link;
-      }
-      else {
-        return this.getIcon(this.root);
-      }
+      return Utils.getIcon(this.data);
     }
   },
   watch: {
     ...Watchers,
-    title(title) {
-      if (this.root) {
-        const rootTitle = getDisplayTitle(this.root);
-        if (rootTitle !== title) {
-          title += ` - ${rootTitle}`;
-        }
-      }
-      document.title = title;
-      document.getElementById('og-title').setAttribute("content", title);
-    },
-    description(description) {
-      const summary = Utils.summarizeMd(description, 200);
-      document.getElementById('meta-description').setAttribute("content", summary);
-      document.getElementById('og-description').setAttribute("content", summary);
-    },
-    uiLanguage: {
-      immediate: true,
-      async handler(locale) {
-        if (!locale) {
-          return;
-        }
-
-        // Update the HTML lang tag
-        document.documentElement.setAttribute("lang", locale);
-        document.getElementById('og-locale').setAttribute("content", locale);
-      }
-    },
     dataLanguage: {
       immediate: true,
       async handler(locale) {
@@ -319,7 +278,7 @@ export default defineComponent({
             const state = Object.assign({}, this.stateQueryParameters);
             this.isNavigatingLocale = true;
             try {
-              await this.$router.push(this.toBrowserPath(link.href));
+              await this.$router.push(this.toBrowserPath(link));
             }
             catch (error) {
               if (!isNavigationFailure(error, NavigationFailureType.duplicated)) {
@@ -355,17 +314,7 @@ export default defineComponent({
             query[key] = value;
           }
         }
-        for (const [key, value] of Object.entries(this.stateQueryParameters)) {
-          let name = `.${key}`;
-          if (Array.isArray(value)) {
-            if (value.length > 0) {
-              query[name] = value.join(',');
-            }
-          }
-          else if (value !== null) {
-            query[name] = value;
-          }
-        }
+        query = Utils.stateQueryParametersToObject(this.stateQueryParameters, query);
 
         this.$router.replace({ query }).catch(error => {
           if (!isNavigationFailure(error, NavigationFailureType.duplicated)) {
@@ -378,23 +327,25 @@ export default defineComponent({
       const canChange = [
         'apiCatalogPriority',
         'cardViewMode',
-        'cardViewSort',
         'crossOriginMedia',
+        'defaultCollectionSort',
+        'defaultItemSort',
         'defaultThumbnailSize',
         'displayGeoTiffByDefault',
+        'preferredAssets',
         'showThumbnailsAsAssets'
       ];
 
-      let doReset = !root || (oldRoot && isObject(oldRoot['stac_browser']));
-      let doSet = root && isObject(root['stac_browser']);
+      let doReset = !root || (oldRoot && isObject(oldRoot.stac_browser));
+      let doSet = root && isObject(root.stac_browser);
 
       for(let key of canChange) {
         let value;
         if (doReset) {
           value = CONFIG[key]; // Original value
         }
-        if (doSet && typeof root['stac_browser'][key] !== 'undefined') {
-          value = root['stac_browser'][key]; // Custom value from root
+        if (doSet && typeof root.stac_browser[key] !== 'undefined') {
+          value = root.stac_browser[key]; // Custom value from root
         }
 
         // Update config in store
@@ -411,15 +362,49 @@ export default defineComponent({
       if (data instanceof STAC) {
         this.onDataLoaded();
       }
+    },
+    enforcedColorModeFromVueX: {
+      immediate: true,
+      handler(value) {
+        if (value && value !== 'auto') {
+          this.colorMode = value;
+        }
+      }
+    },
+    colorModeFromVueX(value) {
+      if (value && value !== this.colorMode) {
+        this.colorMode = value;
+      }
+    },
+    colorMode(value) {
+      this.$store.commit('setColorMode', value);
+    },
+    scrollListener(newValue, oldValue) {
+      if (newValue) {
+        window.addEventListener('scroll', newValue, { passive: true });
+        // Initialize once, e.g. when the page is loaded already scrolled down.
+        newValue();
+      }
+      else {
+        window.removeEventListener('scroll', oldValue);
+      }
     }
   },
   async created() {
-    await this.$router.isReady();
-    this.detectLocale();
-    this.parseQuery(this.$route);
+    this.colorMode = useColorMode({
+      selector: 'body',
+      initialValue: this.enforcedColorModeFromVueX
+    });
 
-    this.$router.afterEach((to, from) => {
-      if (to.path === from.path) {
+    await updateExternals(this.localeFromVueX, this.fallbackLocaleFromVueX);
+    await this.$router.isReady();
+    await this.detectLocale();
+    await this.parseQuery(this.$route);
+
+    this.$router.afterEach((to, from, failure) => {
+      // Aborted and cancelled navigations don't change the page,
+      // e.g. when a navigation guard rejected the navigation
+      if (failure || to.path === from.path) {
         return;
       }
 
@@ -439,15 +424,19 @@ export default defineComponent({
       this.$store.commit(resetOp);
       this.parseQuery(to);
 
-      document.getElementById('og-url').setAttribute("content", window.location.href);
+      if (this.$refs.headerTitle) {
+        this.$refs.headerTitle.updateUrl();
+      }
     });
 
     const authConfig = Auth.restoreLastMethod();
     if (authConfig) {
       await this.$store.dispatch('config', { authConfig });
     }
+
+    this.$store.commit('browserReady');
   },
-  mounted() {    
+  mounted() {
     setInterval(() => this.$store.dispatch('loadBackground', 3), 200);
 
     // Prevent the user from leaving the page while the download is in progress
@@ -462,27 +451,53 @@ export default defineComponent({
         evt.preventDefault();
       }
     });
+
+    // Add scroll listener to show header shadow only when scrolled (and header is sticky)
+    let lastScrollY = window.scrollY;
+    this.scrollListener = () => {
+      const header = this.$refs.header;
+      const isSticky = header && window.getComputedStyle(header).position === 'sticky';
+      const scrolled = Boolean(isSticky) && window.scrollY > 0;
+      if (scrolled !== this.scrolled) {
+        this.scrolled = scrolled;
+      }
+
+      // Hide the site row when scrolling down, bring it back when scrolling up.
+      // Only takes effect visually on small screens, see page.scss.
+      const y = Math.max(window.scrollY, 0); // clamp for overscroll bounce
+      const delta = y - lastScrollY;
+      lastScrollY = y;
+      const site = isSticky ? header.querySelector('.site') : null;
+      if (!site) {
+        this.hideSite = false;
+        return;
+      }
+      if (delta > 0 && y > site.offsetHeight && !this.hideSite) {
+        // Measure on each hide so the offset follows the current row height
+        header.style.setProperty('--sb-site-height', `${site.offsetHeight}px`);
+        this.hideSite = true;
+      }
+      else if (delta < 0 && this.hideSite) {
+        this.hideSite = false;
+      }
+    };
+  },
+  beforeUnmount() {
+    this.scrollListener = null;
   },
   methods: {
-    ...mapActions(['switchLocale']),
+    ...mapActions(['switchLocale', 'switchDataLocale']),
     ...mapMutations('auth', ['addAction']),
     ...mapActions('auth', ['requestLogin', 'requestLogout']),
-    getIcon(data) {
-      if (data instanceof STAC) {
-        const icons = data.getIcons();
-        if (icons.length > 0) {
-          return icons[0];
-        }
-      }
-      return null;
+    toggleColorMode() {
+      this.colorMode = this.colorMode === 'light' ? 'dark' : 'light';
     },
     async logInOut() {
       if (this.url) {
         this.addAction(() => this.$store.dispatch('load', {
           url: this.url,
           show: true,
-          force: true,
-          noRetry: true
+          force: true
         }));
       }
       if (this.isLoggedIn) {
@@ -515,7 +530,7 @@ export default defineComponent({
         if (!this.data) {
           // Thus try switching the (data) language again once the data is loaded.
           this.onDataLoaded = () => {
-            this.switchLocale({locale});
+            this.switchDataLocale({locale});
             this.onDataLoaded = null;
           };
         }

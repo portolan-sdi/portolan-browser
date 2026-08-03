@@ -5,7 +5,7 @@
  * item listing, and detail controls.
  */
 import { test, expect } from './fixtures.js';
-import { waitForBrowserReady } from './helpers.js';
+import { clearClipboard, readClipboard, waitForBrowserReady } from './helpers.js';
 import StaticCatalog from '../fixtures/instances/static.js';
 import API from '../fixtures/instances/api.js';
 
@@ -40,10 +40,10 @@ test.describe('Collection Metadata', () => {
     await expect(page.getByText(new RegExp(description, 'i'))).toBeVisible();
     
     // Keywords from the collection should be visible
-    for (const kw of collection.getMetadata().keywords) {
+    await Promise.all(collection.getMetadata().keywords.map((kw) => {
       const badge = page.locator('.keywords .keyword', { hasText: new RegExp(kw, 'i') });
-      await expect(badge.first()).toBeVisible();
-    }
+      return expect(badge.first()).toBeVisible();
+    }));
     
     // License should be visible
     await expect(page.getByRole('link', { name: new RegExp(collection.getMetadata().license, 'i') })).toBeVisible();
@@ -72,10 +72,10 @@ test.describe('Collection Metadata', () => {
     await expect(page.getByText(new RegExp(description, 'i'))).toBeVisible();
     
     // Keywords from the collection should be visible
-    for (const kw of collection.getMetadata().keywords) {
+    await Promise.all(collection.getMetadata().keywords.map((kw) => {
       const badge = page.locator('.keywords .keyword', { hasText: new RegExp(kw, 'i') });
-      await expect(badge.first()).toBeVisible();
-    }
+      return expect(badge.first()).toBeVisible();
+    }));
     
     // License should be visible
     await expect(page.getByRole('link', { name: new RegExp(collection.getMetadata().license, 'i') })).toBeVisible();
@@ -148,31 +148,31 @@ test.describe('Collection - toolBar', () => {
     await page.goto(collection.getBrowserPath());
     await waitForBrowserReady(page);
     
-    const shareButton = page.getByRole('button', { name: /share/i });
+    const shareButton = page.locator('#popover-share-btn');
     await expect(shareButton).toBeVisible();
   });
   
-  test('share button copies collection\'s getBrowserPath() to clipboard', async ({ page, worker }) => {
+  test('share button copies collection\'s URL to clipboard', async ({ page, worker, context }) => {
     const { catalog, collection } = createStaticCatalog();
+    await context.grantPermissions(['clipboard-write', 'clipboard-read']);
     await catalog.createServer(worker);
     
     await page.goto(collection.getBrowserPath());
     await waitForBrowserReady(page);
     
-    const shareButton = page.getByRole('button', { name: /share/i });
+    const shareButton = page.locator('#popover-share-btn');
     await expect(shareButton).toBeVisible();
     await shareButton.click();
     
     // The share popover contains a copy button; click it to copy the current page URL
     const copyButton = page.getByRole('button', { name: /copy/i });
     await expect(copyButton).toBeVisible();
+    await clearClipboard(page);
     await copyButton.click();
     
-    // The URL copied to clipboard should match the collection's getBrowserPath().
+    // The URL copied to clipboard should match the collection's URL.
     // Poll because the clipboard write completes asynchronously after the click.
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toBe(page.url());
+    await expect.poll(() => readClipboard(page)).toBe(page.url());
   });
   
   test('should have a working back to catalog button', async ({ page, worker }) => {
@@ -349,7 +349,7 @@ test.describe('STAC Collection item search', () => {
     const submitButton = page.getByRole('button', { name: /submit/i });
     await submitButton.click();
     const itemCards = page.locator('.item-card');
-    await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+    await expect(itemCards).toHaveCount(5);
   });
     
   test('item search can be paginated with Next and Previous buttons', async ({ page, worker }) => {
@@ -368,19 +368,19 @@ test.describe('STAC Collection item search', () => {
     const prevButton = page.getByRole('button', { name: /previous/i }).first();
       
     // verify first page shows 5 items, Next enabled, Previous disabled
-    await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+    await expect(itemCards).toHaveCount(5);
     await expect(nextButton).toBeEnabled();
     await expect(prevButton).toBeDisabled();
       
     // click Next and verify second page shows 5 items, Next disabled, Previous enabled
     await nextButton.click();
-    await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+    await expect(itemCards).toHaveCount(5);
     await expect(nextButton).toBeDisabled();
     await expect(prevButton).toBeEnabled();
       
     // click Previous and verify first page is shown again with 5 items, Next enabled, Previous disabled
     await prevButton.click();
-    await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+    await expect(itemCards).toHaveCount(5);
     await expect(nextButton).toBeEnabled();
     await expect(prevButton).toBeDisabled(); 
   });
@@ -403,19 +403,19 @@ test.describe('STAC Collection item search', () => {
     const prevButton = page.getByRole('button', { name: /previous/i }).first();
       
     // verify first page shows 5 items, First disabled, Last enabled
-    await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+    await expect(itemCards).toHaveCount(5);
     await expect(firstButton).toBeDisabled();
     await expect(lastButton).toBeEnabled();
       
     // click Last to jump to the last page and verify it shows 5 items, Next disabled, First enabled
     await lastButton.click();
-    await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+    await expect(itemCards).toHaveCount(5);
     await expect(nextButton).toBeDisabled();
     await expect(firstButton).toBeEnabled();
       
     // click First and verify first page is shown again
     await firstButton.click();
-    await expect(itemCards).toHaveCount(5, { timeout: 10000 });
+    await expect(itemCards).toHaveCount(5);
     await expect(prevButton).toBeDisabled();
   });
 });

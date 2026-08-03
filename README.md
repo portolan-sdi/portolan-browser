@@ -1,46 +1,47 @@
-# STAC Browser
+# STAC Browser <!-- omit in toc -->
 
 This is a full-fledged [Spatio-Temporal Asset Catalog (STAC)](https://github.com/radiantearth/stac-spec) browser for STAC APIs and static STAC catalogs.
 
-Version: **5.0.0-dev** (supports all STAC versions between 0.6.0 and 1.1.0)
+- Latest stable version: ![GitHub Release](https://img.shields.io/github/v/release/radiantearth/stac-browser)
+- Current development version: ![GitHub package.json version (branch)](https://img.shields.io/github/package-json/v/radiantearth/stac-browser/main)
 
-This package has also been published to npm as [`@radiantearth/stac-browser`](https://www.npmjs.com/package/@radiantearth/stac-browser).
+STAC Browser supports all STAC versions between 0.6.0 and 1.1.0.
 
 It's not officially supported, but you may also be able to use it for
 certain _OGC API - Records_ and _OGC API - Features_ compliant servers.
 
-**Please note that STAC Browser is currently with limited funding for both maintenance, bug fixes and improvements. This means issues and PRs may be addressed very slowly.
-If you care about STAC Browser and have some funds to support the future of STAC Browser, please contact <mail@moregeo.it>.**
+> [!IMPORTANT]  
+> Please note that STAC Browser has limited funding for both maintenance, bug fixes and improvements.
+> If you care about STAC Browser and have some funds to support the future of STAC Browser, please contact <mail@moregeo.it>.
 
-**Table of Contents:**
+## Table of Contents <!-- omit in toc -->
 
-- [STAC Browser](#stac-browser)
-  - [Examples](#examples)
-  - [Get Started](#get-started)
-    - [Private query parameters](#private-query-parameters)
-    - [Versions](#versions)
-    - [Migrate from old versions](#migrate-from-old-versions)
-  - [Customize](#customize)
-    - [Options](#options)
-    - [Languages](#languages)
-    - [Themes](#themes)
-    - [Basemaps](#basemaps)
-    - [Actions](#actions)
-    - [Code Generators](#code-generators)
-    - [Additional metadata fields](#additional-metadata-fields)
-      - [Example](#example)
-    - [Widgets](#widgets)
-    - [Metadata fields](#metadata-fields)
-    - [Customization through root catalog](#customization-through-root-catalog)
-    - [Custom extensions](#custom-extensions)
-  - [Docker](#docker)
-  - [Testing](#testing)
-  - [Contributing](#contributing)
-  - [Sponsors](#sponsors)
+- [Examples](#examples)
+- [Get Started](#get-started)
+  - [Private query parameters](#private-query-parameters)
+  - [Versions](#versions)
+  - [Migrate from old versions](#migrate-from-old-versions)
+- [Customize](#customize)
+  - [Options](#options)
+  - [Languages](#languages)
+  - [Themes](#themes)
+  - [Basemaps](#basemaps)
+  - [Actions](#actions)
+  - [Code Generators](#code-generators)
+  - [Additional metadata fields](#additional-metadata-fields)
+    - [Example](#example)
+  - [Widgets](#widgets)
+  - [Metadata fields](#metadata-fields)
+  - [Customization through root catalog](#customization-through-root-catalog)
+  - [Custom extensions](#custom-extensions)
+- [Docker](#docker)
+- [Testing](#testing)
+- [Contributing](#contributing)
+- [Sponsors](#sponsors)
 
 ## Examples
 
-A demo instance is running at <https://radiantearth.github.io/stac-browser/>.
+A demo instance is running at <https://browser.moregeo.it>.
 
 The catalog section of [STAC Index](https://stacindex.org) is also built on top of STAC Browser (currently v2).
 
@@ -115,8 +116,9 @@ The following table shows the major differences between versions and the upcomin
 | --------- | ------- |
 | 3.3.x     | The last version that uses Leaflet as mapping library. |
 | 4.0.x     | Uses OpenLayers as mapping library. The last version based on VueJS 2, vue-cli and Bootstrap 4. |
-| **5.x.x** | The upcoming version based on VueJS 3, Vite and Bootstrap 5. Target: Q1 2026 |
-| 6.x.x     | Planned version with a new layout, a pluggable interface, and better integration into existing sites. Target: Q4 2026 |
+| 5.0.x     | This version upgraded to VueJS 3, Vite and Bootstrap 5. |
+| 5.1.x     | A couple new features before we migrate to v6. Target: Q3 2026 |
+| 6.x.x     | Planned version with a new layout, a pluggable interface, and better integration into existing sites. Target: 2027 |
 
 For more details on our plans, please check our
 [milestones](https://github.com/radiantearth/stac-browser/milestones).
@@ -143,15 +145,9 @@ Please read the **[localization documentation](docs/localization.md)** for more 
 
 ### Themes
 
-You can customize STAC Browser in the `src/theme` folder. It contains Sass files (a CSS preprocessor), which you can change to suit your needs.
+STAC Browser can be themed both at build time (SASS variables) and at runtime (CSS custom properties), with full support for light and dark mode.
 
-The easiest solution is to start with the `variables.scss` file and customize the options given there.
-For simplicity we just provide some common options as default, but you can also add and customize any Bootstrap variable,
-see <https://getbootstrap.com/docs/4.0/getting-started/theming/> for details.
-
-The file `page.scss` contains some Sass declarations for the main sections of STAC Browser and you can adopt those to suit your needs.
-
-If you need even more flexibility, you need to dig into the Vue files and their dependencies though.
+Please read the **[Styling & Theming documentation](docs/styling.md)** for more details.
 
 ### Basemaps
 
@@ -164,6 +160,7 @@ More information about how to configure and customize the basemaps can be found 
 STAC Browser has a pluggable interface to share or open assets and links with other services, which we call "actions".
 
 More information about how to add or implement actions can be found in the **[Actions documentation](docs/actions.md)**.
+
 ### Code Generators
 
 The list of supported code snippet languages is configured in [`codeGenerators.config.js`](codeGenerators.config.js).
@@ -218,11 +215,16 @@ You need to provide a field `stac_browser` and then you can set any of the follo
 
 - `apiCatalogPriority`
 - `cardViewMode`
-- `cardViewSort`
 - `crossOriginMedia`
+- `defaultCollectionSort`
+- `defaultItemSort`
 - `defaultThumbnailSize`
 - `displayGeoTiffByDefault`
+- `preferredAssets`
 - `showThumbnailsAsAssets`
+
+Additionally, you can add an `extent` object **outside** of the `stac_browser` field to
+indicate the bounding box and temporal extent of the API/catalog (see also below).
 
 ### Custom extensions
 
@@ -233,12 +235,14 @@ STAC Browser supports some non-standardized extensions to the STAC specification
 2. [Alternative Assets Object](https://github.com/stac-extensions/alternate-assets?tab=readme-ov-file#alternate-asset-object):
    Add a `name` field and it will be used as title in the tab header, the same applies for the core Asset Object.
 3. A link with relation type `icon` and a Browser-supported media type in any STAC entity will show an icon in the header and the lists of Catalogs, Collections and Items.
+4. Add an `extent` property defining an Extent Object as defined in the [Collection specification](https://github.com/radiantearth/stac-spec/blob/master/collection-spec/collection-spec.md#extent-object) to the root catalog to indicate the bounding box and temporal extent of the API/catalog. This will for example restrict the bounding box and temporal extent selection in Collection Search and Global Item Search. If you can't add this to the root catalog itself, you can also add it dynamically through [`preprocessSTAC`](./docs/options.md#preprocessstac).
 
 ## Docker
 
 You can use the Docker to work with STAC Browser. Please read [Docker documentation](docs/docker.md) for more details.
 
 ## Testing
+
 To run the testing suite locally:
 
 ```bash
@@ -259,7 +263,8 @@ The following sponsors have provided a substantial amount of funding for STAC Br
 - [Radiant Earth](https://radiant.earth) (base funding for versions 1, 2 and 3)
 - [National Resources Canada](https://natural-resources.canada.ca/home) (multi-language support, maintenance)
 - [moreGeo GmbH](https://moregeo.it) (maintenance)
+- [EOEPCA / ESA](https://eoepca.org) (customization)
 - [Spacebel](https://spacebel.com) (collection search, mapping)
 - [Planet](https://planet.com) (authentication, maintenance)
 - [CloudFerro](https://cloudferro.com) (authentication, alternate asset and storage extension)
-- [Geobeyond](http://www.geobeyond.it/) (mapping)
+- [Geobeyond](https://www.geobeyond.it/) (mapping)

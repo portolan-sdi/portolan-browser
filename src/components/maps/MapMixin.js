@@ -113,7 +113,7 @@ export default {
       const style = basemap.raster ? this.buildRasterStyle(basemap) : basemap.url;
       this.map.setStyle(style);
 
-      await new Promise(resolve => this.map.once('style.load', resolve));
+      await new Promise(resolve => { this.map.once('style.load', resolve); });
 
       if (was3D) {
         this.enable3D();

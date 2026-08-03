@@ -497,7 +497,8 @@ export async function loadGeoJsonFromParquet(url, { signal, fields = [] } = {}) 
     // stays responsive and an abort can still interrupt us. Files that aren't
     // reprojected never reach the yield, and neither do small ones.
     if (transform && Date.now() - lastYield >= REPROJECT_YIELD_MS) {
-      await new Promise(resolve => setTimeout(resolve, 0));
+      // eslint-disable-next-line no-await-in-loop -- yielding to the event loop is the point
+      await new Promise(resolve => { setTimeout(resolve, 0); });
       if (signal?.aborted) {
         const err = new Error('Aborted');
         err.name = 'AbortError';

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import os from 'node:os';
 
 function getEnvWithoutSB() {
   const env = {};
@@ -15,19 +16,30 @@ function getEnvWithoutSB() {
  */
 export default defineConfig({
   testDir: './tests/e2e',
-  
+
+  /* Warm up the (dev) server before the workers start, see global-setup.js */
+  globalSetup: './tests/e2e/global-setup.js',
+
   /* Run tests in files in parallel */
   fullyParallel: true,
   
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
-  
-  /* Retry on CI only */
-  retries: process.env.CI ? 1 : 0,
-  
-  /* GitHub ubuntu-latest runners have 4 vCPUs; the suite is fully parallel
-     (per-test MSW mocks, no shared state) and runs ~10x faster than serial. */
-  workers: process.env.CI ? 4 : undefined,
+
+  retries: 1,
+
+  /* Default assertion timeout. Raised from Playwright's 5s default because the
+     dev server transforms modules on demand and, with many parallel workers,
+     async renders/navigations routinely need longer locally. */
+  expect: { timeout: 10000 },
+
+  /* GitHub ubuntu-latest runners have 4 vCPUs and CI serves a static production
+     build (no on-demand transforms), so the fully-parallel suite scales there.
+     Locally the dev server transforms modules on demand from a single process,
+     so it — not the CPU count — is the bottleneck: the default (50% of cores)
+     overwhelms it on many-core machines and makes lazy-chunk loads flaky. Use
+     half the cores but cap at 6. */
+  workers: process.env.CI ? 4 : Math.min(6, Math.max(1, Math.ceil(os.cpus().length / 2))),
   
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: [
@@ -86,9 +98,11 @@ export default defineConfig({
   /* Run your local dev server before starting the tests */
   webServer: process.env.CI
     ? {
-        // In CI: Build and serve the production build
+        // In CI: Build and serve the production build.
+        // STAC_BROWSER_E2E enables __VUE_PROD_DEVTOOLS__ so tests can introspect
+        // the map (see vite.config.js); it does not affect real production builds.
         command: 'pnpm run build && pnpm exec vite preview --port 4173 --strictPort',
-        env: getEnvWithoutSB(),
+        env: { ...getEnvWithoutSB(), STAC_BROWSER_E2E: 'true' },
         url: 'http://localhost:4173',
         reuseExistingServer: false,
         timeout: 120 * 1000,
@@ -97,6 +111,7 @@ export default defineConfig({
         // Dedicated port + strictPort so the tests never silently reuse an
         // unrelated service that happens to listen on the default dev port.
         command: 'pnpm start --port 8181 --strictPort',
+        env: { ...process.env, STAC_BROWSER_E2E: 'true' },
         url: 'http://localhost:8181',
         reuseExistingServer: true,
         timeout: 120 * 1000,

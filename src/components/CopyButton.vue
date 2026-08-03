@@ -29,23 +29,24 @@ export default {
     },
     size: {
       type: String,
-      default: "md"
+      default: "md",
+      validator: value => ['sm', 'md', 'lg'].includes(value)
     },
     buttonProps: {
       type: Object,
       default: () => ({})
     }
   },
-  data() {
-    return {
-      status: null
-    };
-  },
-  setup() {
+  setup() { // eslint-disable-line vue/component-api-style
     const { copy, isSupported } = useClipboard();
     return {
       copyToClipboard: copy,
       isClipboardSupportedState: isSupported
+    };
+  },
+  data() {
+    return {
+      status: null
     };
   },
   computed: {

@@ -196,8 +196,8 @@ export default {
   .metadata {
     .card {
       border: 0;
-      margin-top: $block-margin;
-      margin-bottom: $block-margin;
+      margin-top: var(--sb-block-gap);
+      margin-bottom: var(--sb-block-gap);
       text-align: left;
 
       .metadata-rows {
@@ -328,7 +328,7 @@ export default {
       margin-bottom: 0.5em;
     }
     .additional-metadata-section {
-      margin-top: $block-margin;
+      margin-top: $block-gap;
 
       .additional-metadata-header {
         display: flex;

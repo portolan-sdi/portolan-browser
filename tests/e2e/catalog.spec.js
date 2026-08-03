@@ -5,7 +5,7 @@
  * navigating into collections/items, source view, and share functionality.
  */
 import { test, expect } from './fixtures.js';
-import { waitForBrowserReady } from './helpers.js';
+import { clearClipboard, readClipboard, waitForBrowserReady } from './helpers.js';
 import StaticCatalog from '../fixtures/instances/static.js';
 import API from '../fixtures/instances/api.js';
 
@@ -107,32 +107,32 @@ test.describe('Catalog - toolBar', () => {
     await page.goto(catalog.root.getBrowserPath());
     await waitForBrowserReady(page);
     
-    const shareButton = page.getByRole('button', { name: /share/i });
+    const shareButton = page.locator('#popover-share-btn');
     await expect(shareButton).toBeVisible();
   });
   
-  test('Catalog - share button copies URL to clipboard', async ({ page, worker }) => {
+  test('Catalog - share button copies URL to clipboard', async ({ page, worker, context }) => {
     const { catalog } = createStaticCatalog();
     
+    await context.grantPermissions(['clipboard-write', 'clipboard-read']);
     await catalog.createServer(worker);
     
     await page.goto(catalog.root.getBrowserPath());
     await waitForBrowserReady(page);
     
-    const shareButton = page.getByRole('button', { name: /share/i });
+    const shareButton = page.locator('#popover-share-btn');
     await expect(shareButton).toBeVisible();
     await shareButton.click();
     
     // The share popover contains a copy button; click it to copy the current page URL
     const copyButton = page.getByRole('button', { name: /copy/i });
     await expect(copyButton).toBeVisible();
+    await clearClipboard(page);
     await copyButton.click();
     
     // Verify the URL was copied to the clipboard.
     // Poll because the clipboard write completes asynchronously after the click.
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toContain(catalog.root.getBrowserPath());
+    await expect.poll(() => readClipboard(page)).toContain(catalog.root.getBrowserPath());
   });
 
   // API tests
@@ -161,7 +161,7 @@ test.describe('Catalog - toolBar', () => {
     await page.goto(api.root.getBrowserPath());
     await waitForBrowserReady(page);
     
-    const shareButton = page.getByRole('button', { name: /share/i });
+    const shareButton = page.locator('#popover-share-btn');
     await expect(shareButton).toBeVisible();
   });
   
@@ -174,20 +174,19 @@ test.describe('Catalog - toolBar', () => {
     await page.goto(api.root.getBrowserPath());
     await waitForBrowserReady(page);
     
-    const shareButton = page.getByRole('button', { name: /share/i });
+    const shareButton = page.locator('#popover-share-btn');
     await expect(shareButton).toBeVisible();
     await shareButton.click();
     
     // The share popover contains a copy button; click it to copy the current page URL
     const copyButton = page.getByRole('button', { name: /copy/i });
     await expect(copyButton).toBeVisible();
+    await clearClipboard(page);
     await copyButton.click();
     
     // Verify the URL was copied to the clipboard.
     // Poll because the clipboard write completes asynchronously after the click.
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toContain(api.root.getBrowserPath());
+    await expect.poll(() => readClipboard(page)).toContain(api.root.getBrowserPath());
   });
 });
 
@@ -312,6 +311,50 @@ test.describe('Catalog - Children', () => {
     await expect(page.locator('.catalogs .card-grid > *')).toHaveCount(0);
   });
   
+  test('API - collection list is restored when returning to the page', async ({ page, worker }) => {
+    const { api } = createAPI();
+    const collection = api.addCollection('my-collection').setMetadata({ title: 'Test Collection' });
+    api.addItem(collection, 'my-item');
+
+    await api.createServer(worker);
+
+    await page.goto(api.root.getBrowserPath());
+    await waitForBrowserReady(page);
+    await expect(page.getByRole('link', { name: new RegExp(collection.getMetadata().title) })).toBeVisible();
+
+    // Visit the search page and return to the catalog page (in-app navigation,
+    // not full page loads), the collections should be restored from the cache
+    await page.getByRole('navigation').getByRole('button', { name: /search/i }).click();
+    await expect(page).toHaveURL(/\/search/);
+    await page.goBack();
+    await waitForBrowserReady(page);
+    await expect(page.getByRole('link', { name: new RegExp(collection.getMetadata().title) }))
+      .toBeVisible();
+  });
+
+  test('API - tree auto-loads more collection pages', async ({ page, worker }) => {
+    // One collection per page, so that the second collection is only
+    // available after loading the next page of the collections endpoint
+    const api = API.defaultApi({}, { defaultLimit: 1 });
+    const collection1 = api.addCollection('collection-1').setMetadata({ title: 'Test Collection 1' });
+    const collection2 = api.addCollection('collection-2').setMetadata({ title: 'Test Collection 2' });
+
+    await api.createServer(worker);
+
+    // Open a collection page so that only the tree can trigger loading more collection pages
+    await page.goto(collection1.getBrowserPath());
+    await waitForBrowserReady(page);
+
+    await page.getByRole('button', { name: /browse/i }).click();
+
+    // The sidebar is an async component that is loaded on demand by the click above
+    const sidebar = page.locator('#sidebar');
+    await expect(sidebar).toBeVisible();
+    await expect(sidebar.getByText(collection1.getMetadata().title)).toBeVisible();
+    // The next page of collections loads automatically once the tree is shown
+    await expect(sidebar.getByText(collection2.getMetadata().title)).toBeVisible();
+  });
+
   test('API - navigates into a child collection on click', async ({ page, worker }) => {
     const { api } = createAPI();
     const collection = api.addCollection('my-collection');
