@@ -96,21 +96,21 @@ $link-hover-color: darken($link-color, 20%);
 
 @import 'bootstrap/scss/_variables';
 
-// Main/top header of the website
-$header: $primary;
-$header-background: linear-gradient(to bottom,
-  color-mix(in srgb, var(--sb-header) 85%, #fff),
-  var(--sb-header),
-  color-mix(in srgb, var(--sb-header) 85%, #000)
-);
+// Main/top header of the website.
+// Portolan keeps the near-white site bar it had before the 5.0.0 header
+// redesign, rather than upstream's gradient built from $primary.
+$header: #fafbfc;
+$header-background: $header; // flat, not upstream's linear-gradient
 $header-position: sticky; // sticky or static
 $header-font-size: 1.5rem;
 $header-font-weight: 600;
-$header-text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+$header-text-shadow: none; // a drop shadow under dark-on-light text reads as blur
 
 $header-contrast: color-contrast($header);
-$header-color: tint-color($header, 80%); // Use shade-color if your header has a bright color
-$header-hover-color: $header-contrast;
+// Dark ink on a light bar. tint-color, upstream's default for a saturated
+// header, would render white on white here.
+$header-color: $body-color;
+$header-hover-color: $primary;
 
 $header-button-background: transparent;
 $header-button-border-color: $header-color;
