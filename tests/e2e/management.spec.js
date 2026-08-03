@@ -144,9 +144,9 @@ test.describe('Management - capability gating', () => {
     menu = await openManageMenu(page);
     await menu.getByRole('menuitem', { name: 'Add Item' }).click();
 
-    // Let the async loads (delayed by the slow-network route) settle so a late
-    // response can't leave the page in a broken state after we assert.
-    await page.waitForLoadState('networkidle');
+    // The assertions below auto-wait for the delayed responses to land. A
+    // preceding waitForLoadState('networkidle') was removed: it timed out in
+    // CI, and Playwright discourages it for exactly this reason.
     await expect(page.getByRole('heading', { name: /add item/i })).toBeVisible();
     await expect(page.locator('.cm-content')).toContainText('"type": "Feature"');
     await expect(page.getByRole('button', { name: /manage/i })).toBeVisible();

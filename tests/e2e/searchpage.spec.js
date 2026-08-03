@@ -161,8 +161,10 @@ test.describe('STAC Browser Search page', () => {
         
       await enableSpatialCheckbox.check();
         
-      // Wait for network to be idle, map ready, and input fields to ensure UI is ready
-      await page.waitForLoadState('networkidle');
+      // Wait for the map before touching the bbox inputs. A preceding
+      // waitForLoadState('networkidle') was removed: it timed out in CI, and
+      // Playwright discourages it precisely because "idle" is not reliably
+      // reached on a page that keeps fetching. waitForMapReady is deterministic.
       await waitForMapReady(page);
         
       const westLonInput = page.getByLabel(/west longitude/i);
@@ -868,7 +870,7 @@ test.describe('STAC Browser Search page', () => {
       const enableSpatialCheckbox = page.getByRole('checkbox', { name: /filter by spatial extent/i });
       await enableSpatialCheckbox.check();
 
-      await page.waitForLoadState('networkidle');
+      // See above: waitForMapReady is the deterministic signal, not networkidle.
       await waitForMapReady(page);
 
       await fillBboxInputs(page, {
