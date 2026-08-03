@@ -1,0 +1,39 @@
+// Shared component chrome, expressed in theme variables so a rebrand reaches it.
+//
+// Import alongside variables.scss in a component's <style> block:
+//   @import "../theme/variables.scss";
+//   @import "../theme/mixins.scss";
+
+// The head of a collapsible section: a title on the left, a chevron or badge on
+// the right, and a rule underneath. Used by the Metadata groups, the Catalog
+// thumbnails section and the Parquet viewer, which previously each carried their
+// own copy of the same slate hex values and drifted from the palette on a
+// rebrand.
+//
+// Components supply their own inner markup; the h3/svg rules below apply only
+// where those elements exist.
+@mixin section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba($headings-color, 0.12);
+
+  h3 {
+    font-size: $h3-font-size;
+    font-weight: 600;
+    color: $headings-color;
+  }
+
+  svg {
+    color: $secondary;
+  }
+
+  &:hover {
+    h3,
+    svg {
+      color: $link-color;
+    }
+  }
+}

@@ -191,6 +191,7 @@ export default {
 
 <style lang="scss">
 @import "../theme/variables.scss";
+@import "../theme/mixins.scss";
 
 #stac-browser {
   .metadata {
@@ -331,28 +332,7 @@ export default {
       margin-top: $block-gap;
 
       .additional-metadata-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        cursor: pointer;
-        padding: 0.5rem 0;
-        border-bottom: 1px solid #e8ecef;
-
-        h3 {
-          font-size: 1.1rem;
-          font-weight: 600;
-          color: #4a5c6e;
-        }
-
-        svg {
-          color: #4a5c6e;
-        }
-
-        &:hover {
-          h3, svg {
-            color: #1e3a5f;
-          }
-        }
+        @include section-header;
       }
     }
 

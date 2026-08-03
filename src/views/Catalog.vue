@@ -376,6 +376,7 @@ export default defineComponent({
 <style lang="scss">
 @import 'bootstrap/scss/mixins';
 @import "../theme/variables.scss";
+@import "../theme/mixins.scss";
 
 #stac-browser .cc {
   .hero-map {
@@ -448,28 +449,7 @@ export default defineComponent({
 
   .thumbnail-section {
     .thumbnail-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      cursor: pointer;
-      padding: 0.5rem 0;
-      border-bottom: 1px solid #e8ecef;
-
-      h3 {
-        font-size: 1.1rem;
-        font-weight: 600;
-        color: #4a5c6e;
-      }
-
-      svg {
-        color: #4a5c6e;
-      }
-
-      &:hover {
-        h3, svg {
-          color: #1e3a5f;
-        }
-      }
+      @include section-header;
     }
   }
 
