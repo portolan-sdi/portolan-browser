@@ -379,7 +379,7 @@ test.describe('Search filter carry-over workflows', () => {
     });
 
     await test.step('Reset the collection search', async () => {
-      await page.getByRole('button', { name: /reset/i }).first().click();
+      await page.getByRole('button', { name: 'Reset', exact: true }).first().click();
       await waitForBrowserReady(page);
       const state = await getSearchState(page);
       expect(state.collectionFilters.q).toEqual([]);

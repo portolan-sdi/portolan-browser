@@ -492,7 +492,7 @@ test.describe('STAC Browser Search page', () => {
     });
       
     await test.step('Click Reset then re-submit and verify empty body', async () => {
-      await page.getByRole('button', { name: /reset/i }).click();
+      await page.getByRole('button', { name: 'Reset', exact: true }).click();
         
       const requestPromise = waitForSearchPost(page);
       await page.getByRole('button', { name: /submit/i }).click();
@@ -813,7 +813,7 @@ test.describe('STAC Browser Search page', () => {
     });
 
     await test.step('Click Reset and verify the filter is removed', async () => {
-      await page.getByRole('button', { name: /reset/i }).click();
+      await page.getByRole('button', { name: 'Reset', exact: true }).click();
       
       const limitInput = page.getByLabel(/items per page/i);
       await expect(limitInput).toHaveValue(''); 

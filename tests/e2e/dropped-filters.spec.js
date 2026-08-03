@@ -386,7 +386,7 @@ test.describe('Dropped filter banner — collection search to collection navigat
     });
 
     await test.step('Reset the item filters — the banner disappears', async () => {
-      await page.getByRole('button', { name: /reset/i }).first().click();
+      await page.getByRole('button', { name: 'Reset', exact: true }).first().click();
       await expect(page.locator('.alert-warning')).toHaveCount(0);
     });
   });

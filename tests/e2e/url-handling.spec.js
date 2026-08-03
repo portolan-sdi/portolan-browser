@@ -13,8 +13,14 @@ const CANONICAL = 'https://stac.example/api/';
 // The same URL as a user may enter it (without trailing slash)
 const ENTERED = 'https://stac.example/api';
 
-const CANONICAL_PATH = '/external/stac.example/api/';
-const ENTERED_PATH = '/external/stac.example/api';
+// Portolan runs in hash history mode (config.js `historyMode: "hash"`), which is
+// also what the fixture builders' getBrowserPath() emits. A route prefix such as
+// /search therefore goes inside the hash, not in front of it.
+const CANONICAL_ROUTE = '/external/stac.example/api/';
+const ENTERED_ROUTE = '/external/stac.example/api';
+const routePath = (prefix, route) => `/#${prefix}${route}`;
+const CANONICAL_PATH = routePath('', CANONICAL_ROUTE);
+const ENTERED_PATH = routePath('', ENTERED_ROUTE);
 
 function createApi() {
   const api = API.defaultApi();
@@ -98,10 +104,11 @@ test('corrects the URL on the search page', async ({ page, worker }) => {
   await api.createServer(worker);
   await mockStacResource(worker, ENTERED, api.root.build());
 
-  await page.goto(`/search${ENTERED_PATH}`);
+  await page.goto(routePath('/search', ENTERED_ROUTE));
 
-  // The search page may append state query parameters (e.g. the search type)
-  await expect(page).toHaveURL(url => url.pathname === `/search${CANONICAL_PATH}`);
+  // The search page may append state query parameters (e.g. the search type),
+  // so match the hash's route portion rather than the whole URL.
+  await expect(page).toHaveURL(url => url.hash.startsWith(`#/search${CANONICAL_ROUTE}`));
   await expect(page.locator('main')).toBeVisible();
 });
 
@@ -110,9 +117,9 @@ test('corrects the URL on the validation page', async ({ page, worker }) => {
   await api.createServer(worker);
   await mockStacResource(worker, ENTERED, api.root.build());
 
-  await page.goto(`/validation${ENTERED_PATH}`);
+  await page.goto(routePath('/validation', ENTERED_ROUTE));
 
-  await expect(page).toHaveURL(`/validation${CANONICAL_PATH}`);
+  await expect(page).toHaveURL(routePath('/validation', CANONICAL_ROUTE));
   await expect(page.locator('main')).toBeVisible();
 });
 

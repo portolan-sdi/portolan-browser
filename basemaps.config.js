@@ -76,13 +76,6 @@ export default function configureBasemap(stac) {
     targets = ['earth'];
   }
 
-  if (store.state.colorMode === 'dark') {
-    targets = targets.map(t => {
-      const darkVariant = `${t}-dark`;
-      return Array.isArray(BASEMAPS[darkVariant]) ? darkVariant : t;
-    });
-  }
-
   let layers = [];
   for (const target of targets) {
     const maps = BASEMAPS[target.toLowerCase()];

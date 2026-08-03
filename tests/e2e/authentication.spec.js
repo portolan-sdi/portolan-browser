@@ -136,8 +136,11 @@ test.describe('Global authConfig (legacy single scheme)', () => {
     await page.getByRole('button', { name: /log out/i }).click();
     await expect(page.getByText(/logged out successfully/i)).toBeVisible();
 
-    // Without the credentials the catalog asks for a login again
+    // Without the credentials the catalog asks for a login again.
+    // In hash history mode navigating to the path we are already on only
+    // rewrites the fragment, so force a real reload to refetch the catalog.
     await page.goto(catalog.root.getBrowserPath());
+    await page.reload();
     await expectLoginModal(page);
   });
 

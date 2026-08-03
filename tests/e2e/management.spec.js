@@ -14,14 +14,7 @@
 import { readFileSync } from 'node:fs';
 import { test, expect } from './fixtures.js';
 import { http, HttpResponse } from 'msw';
-import {
-  enableTransactions,
-  configureBrowser,
-  mockOptions,
-  mockTransaction,
-  openManageMenu,
-  waitForBrowserReady
-} from './helpers.js';
+import { configureBrowser, enableTransactions, mockOptions, mockTransaction, openManageMenu, prefixedPath, waitForBrowserReady } from './helpers.js';
 import API from '../fixtures/instances/api.js';
 
 const itemSchema = JSON.parse(readFileSync(new URL('../fixtures/schemas/item-minimal.json', import.meta.url), 'utf-8'));
@@ -112,7 +105,7 @@ test.describe('Management - capability gating', () => {
     await api.createServer(worker);
     await enableTransactions(page);
 
-    await page.goto('/management/edit' + collection.getBrowserPath());
+    await page.goto(prefixedPath('/management/edit', collection.getBrowserPath()));
     await waitForBrowserReady(page);
     await expect(page.getByRole('heading', { name: /^edit/i })).toBeVisible();
 
@@ -282,7 +275,7 @@ test.describe('Management - CRUD flows', () => {
     await mockTransaction(worker, 'put', item.getAbsoluteUrl(), { status: 200, body: item.build() });
     await enableTransactions(page);
 
-    await page.goto('/management/edit' + item.getBrowserPath());
+    await page.goto(prefixedPath('/management/edit', item.getBrowserPath()));
     await waitForBrowserReady(page);
 
     const saveButton = page.getByRole('button', { name: 'Save' });
@@ -310,7 +303,7 @@ test.describe('Management - CRUD flows', () => {
     });
     await enableTransactions(page);
 
-    await page.goto('/management/create-item' + collection.getBrowserPath());
+    await page.goto(prefixedPath('/management/create-item', collection.getBrowserPath()));
     await waitForBrowserReady(page);
 
     const saveButton = page.getByRole('button', { name: 'Save' });
@@ -360,7 +353,7 @@ test.describe('Management - CRUD flows', () => {
     });
     await enableTransactions(page);
 
-    await page.goto('/management/edit' + item.getBrowserPath());
+    await page.goto(prefixedPath('/management/edit', item.getBrowserPath()));
     await waitForBrowserReady(page);
 
     const saveButton = page.getByRole('button', { name: 'Save' });
@@ -396,7 +389,7 @@ test.describe('Management - drafts and leave guards', () => {
     await api.createServer(worker);
     await enableTransactions(page);
 
-    await page.goto('/management/edit' + item.getBrowserPath());
+    await page.goto(prefixedPath('/management/edit', item.getBrowserPath()));
     await waitForBrowserReady(page);
     await expect(page.locator('.cm-content')).toContainText(item.data.id);
 
@@ -429,7 +422,7 @@ test.describe('Management - drafts and leave guards', () => {
     await mockTransaction(worker, 'put', item.getAbsoluteUrl(), { status: 200, body: item.build() });
     await enableTransactions(page);
 
-    await page.goto('/management/edit' + item.getBrowserPath());
+    await page.goto(prefixedPath('/management/edit', item.getBrowserPath()));
     await waitForBrowserReady(page);
     await expect(page.locator('.cm-content')).toContainText(item.data.id);
 
@@ -506,7 +499,7 @@ test.describe('Management - editor validation', () => {
     await api.createServer(worker);
     await mockSchemas(worker);
     await enableTransactions(page);
-    await page.goto('/management/edit' + item.getBrowserPath());
+    await page.goto(prefixedPath('/management/edit', item.getBrowserPath()));
     await waitForBrowserReady(page);
     await expect(page.locator('.cm-content')).toContainText(item.data.id);
   }

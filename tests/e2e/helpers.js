@@ -17,6 +17,22 @@ import { http, HttpResponse } from 'msw';
 export const HOME_PATH = '/#/';
 
 /**
+* Build a prefixed route (`/management/edit`, `/search`, `/validation`, …) for a
+* STAC object's browser path. Portolan runs in hash history mode, so the prefix
+* belongs inside the hash rather than in front of it: naive concatenation
+* produces `/management/edit/#/external/...`, which routes to the root.
+*
+* @param {string} prefix - Route prefix, with a leading slash and no trailing one
+* @param {string} browserPath - Path from a fixture's getBrowserPath()
+* @returns {string}
+*/
+export function prefixedPath(prefix, browserPath) {
+  return browserPath.startsWith('/#')
+    ? `/#${prefix}${browserPath.slice(2)}`
+    : `${prefix}${browserPath}`;
+}
+
+/**
 * Register a mock STAC resource response via MSW.
 * Mocks a successful JSON response with the provided data.
 * Used for homepage.spec.js tests to mock the STAC Index.
@@ -341,13 +357,15 @@ export function getMapState(page) {
     const lat = center ? center.lat : null;
 
     // Rendered footprint: an antimeridian-crossing footprint is split into a
-    // MultiPolygon, so report the number of polygons. The GeoJSON source keeps
-    // the data it was given; `getData` is not available on every MapLibre
-    // version, so fall back to the private field.
+    // MultiPolygon, so report the number of polygons. Read the private `_data`
+    // field rather than getData(), which is async in MapLibre 5 and would hand
+    // back a Promise here.
     const source = map.getSource('stac-footprint');
     let data = null;
     try {
-      data = typeof source?.getData === 'function' ? source.getData() : source?._data;
+      // MapLibre 5 wraps the supplied GeoJSON as `{ geojson: <data> }`, and
+      // getData() is async, so it would hand back a Promise here.
+      data = source?._data?.geojson ?? source?._data ?? null;
     } catch {
       data = null;
     }
