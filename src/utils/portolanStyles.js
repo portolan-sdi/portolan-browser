@@ -157,8 +157,18 @@ export function resolveStyles(stac) {
   // Merge rather than replace. A half-migrated catalog can tag some styles as
   // assets while others are still only named in the manifest; letting a single
   // tagged asset suppress the manifest would silently drop the rest.
-  const seen = new Set(fromAssets.map(s => s.name));
-  const styles = fromAssets.concat(legacy.filter(s => !seen.has(s.name)));
+  //
+  // Identity is the resolved href, not the name: the two sources name the same
+  // style differently. An asset is named by its key ("styles/default"), while a
+  // manifest entry is named by `entry.name` ("default"). Deduping on the name
+  // alone therefore never matches, and a collection that declares its styles
+  // both ways — which is exactly what a half-migrated catalog looks like — gets
+  // every style listed twice.
+  const seenNames = new Set(fromAssets.map(s => s.name));
+  const seenHrefs = new Set(fromAssets.map(s => s.href));
+  const styles = fromAssets.concat(
+    legacy.filter(s => !seenNames.has(s.name) && !seenHrefs.has(s.href))
+  );
   if (styles.length === 0) {return [];}
 
   // Ordering precedence, strongest first:
@@ -169,9 +179,12 @@ export function resolveStyles(stac) {
   // Manifest order is applied as a stable sort, so styles the manifest does
   // not list keep their relative document order behind the ones it does.
   if (legacy.length > 0) {
-    const rank = new Map(legacy.map((style, index) => [style.name, index]));
+    // Ranked by href for the same reason the dedupe is: when a style is
+    // declared both ways the surviving record is the asset one, whose name the
+    // manifest never uses, so a name-keyed rank would not reach it.
+    const rank = new Map(legacy.map((style, index) => [style.href, index]));
     const last = Number.MAX_SAFE_INTEGER;
-    styles.sort((a, b) => (rank.get(a.name) ?? last) - (rank.get(b.name) ?? last));
+    styles.sort((a, b) => (rank.get(a.href) ?? last) - (rank.get(b.href) ?? last));
   }
 
   const defaultName = defaultStyleAssetKey(stac);

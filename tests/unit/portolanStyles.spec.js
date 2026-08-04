@@ -314,6 +314,41 @@ describe('portolanStyles', () => {
           expect(resolveStyles(stac).map(s => s.name)).toEqual(['legacy', 'style-new'])
         })
 
+        // The shape published by portolan-nl: every style declared twice, as a
+        // style-role asset keyed "styles/<name>" and as a manifest object whose
+        // `name` is the bare "<name>". The two sources name the same style
+        // differently, so a name-only dedupe listed all three of them twice.
+        it('does not list a style twice when both forms declare it', () => {
+          const stac = collection({
+            'styles/default': { href: './styles/default.json', roles: ['style', 'default'], type: 'application/vnd.mapbox.style+json', title: 'Monuments — Default' },
+            'styles/by-category': { href: './styles/by-category.json', roles: ['style'], type: 'application/vnd.mapbox.style+json', title: 'Monuments — By Category' },
+            'styles/by-type': { href: './styles/by-type.json', roles: ['style'], type: 'application/vnd.mapbox.style+json', title: 'Monuments — Built vs Archaeological' },
+          }, { 'portolan:styles': [
+            { name: 'default', href: './styles/default.json' },
+            { name: 'by-category', href: './styles/by-category.json' },
+            { name: 'by-type', href: './styles/by-type.json' },
+          ] })
+          const styles = resolveStyles(stac)
+          expect(styles.map(s => s.name))
+            .toEqual(['styles/default', 'styles/by-category', 'styles/by-type'])
+          expect(styles.map(s => s.title))
+            .toEqual(['Default', 'By Category', 'Built vs Archaeological'])
+        })
+
+        // Same duplication, but the manifest curates a different order than the
+        // assets appear in. Ranking is by href, so it still reaches the
+        // surviving asset-named records.
+        it('applies manifest order across the two declaration forms', () => {
+          const stac = collection({
+            'styles/by-type': { href: './styles/by-type.json', roles: ['style'], type: 'application/json', title: 'By Type' },
+            'styles/default': { href: './styles/default.json', roles: ['style'], type: 'application/json', title: 'Default' },
+          }, { 'portolan:styles': [
+            { name: 'default', href: './styles/default.json' },
+            { name: 'by-type', href: './styles/by-type.json' },
+          ] })
+          expect(resolveStyles(stac).map(s => s.name)).toEqual(['styles/default', 'styles/by-type'])
+        })
+
         // Unlisted styles keep their relative document order behind the
         // manifest's — the sort is stable.
         it('keeps document order among styles the manifest omits', () => {
