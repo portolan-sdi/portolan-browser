@@ -78,10 +78,37 @@
         </tbody>
       </table>
     </div>
+    <div v-if="pageCount > 1" class="parquet-pagination">
+      <button
+        type="button" class="btn btn-sm btn-outline-primary"
+        :disabled="currentPage === 0"
+        @click="prevPage"
+      >
+        {{ $t('parquet.prevPage', 'Previous') }}
+      </button>
+      <span class="parquet-page-info">
+        {{ $t('parquet.pageRows', { from: pageFrom.toLocaleString(), to: pageTo.toLocaleString(), total: sortedRows.length.toLocaleString() }, `Rows ${pageFrom.toLocaleString()}–${pageTo.toLocaleString()} of ${sortedRows.length.toLocaleString()}`) }}
+      </span>
+      <button
+        type="button" class="btn btn-sm btn-outline-primary"
+        :disabled="currentPage >= pageCount - 1"
+        @click="nextPage"
+      >
+        {{ $t('parquet.nextPage', 'Next') }}
+      </button>
+    </div>
   </div>
 </template>
 
 <script>
+// How many rows are in the DOM at once. The loader caps what it decodes
+// (MAX_ROWS, 10k), but rendering even that many rows at once is fatal on a
+// wide table: 10k rows × ~140 columns is over a million table cells, which
+// freezes the tab and grows the heap into the gigabytes long after the data
+// itself (a few hundred MB) decoded fine. Filtering and sorting still work
+// across everything that was loaded — only the rendering is windowed.
+export const PAGE_SIZE = 100;
+
 export default {
   name: 'ParquetTable',
   props: {
@@ -122,6 +149,7 @@ export default {
       sortColumn: null,
       sortDirection: null,
       selectedIndex: null,
+      page: 0,
     };
   },
   computed: {
@@ -192,11 +220,51 @@ export default {
         return String(va).localeCompare(String(vb)) * dir;
       });
     },
+    pageCount() {
+      return Math.max(1, Math.ceil(this.sortedRows.length / PAGE_SIZE));
+    },
+    // Clamped rather than trusting `page`: the row set can shrink under the
+    // current page (filtering while on a late page) between the watcher reset
+    // and this read.
+    currentPage() {
+      return Math.min(this.page, this.pageCount - 1);
+    },
+    pageFrom() {
+      return this.sortedRows.length === 0 ? 0 : this.currentPage * PAGE_SIZE + 1;
+    },
+    pageTo() {
+      return Math.min((this.currentPage + 1) * PAGE_SIZE, this.sortedRows.length);
+    },
     visibleRows() {
-      return this.sortedRows;
+      return this.sortedRows.slice(this.currentPage * PAGE_SIZE, (this.currentPage + 1) * PAGE_SIZE);
     }
   },
+  watch: {
+    // A new filter or sort order changes what the pages contain, so stale page
+    // positions are meaningless — start over from the first page.
+    filterText() {
+      this.page = 0;
+    },
+    filterColumn() {
+      this.page = 0;
+    },
+    sortColumn() {
+      this.page = 0;
+    },
+    sortDirection() {
+      this.page = 0;
+    },
+    rows() {
+      this.page = 0;
+    },
+  },
   methods: {
+    prevPage() {
+      this.page = Math.max(0, this.currentPage - 1);
+    },
+    nextPage() {
+      this.page = Math.min(this.pageCount - 1, this.currentPage + 1);
+    },
     toggleSort(col) {
       if (this.sortColumn === col) {
         if (this.sortDirection === 'asc') {
@@ -311,6 +379,22 @@ export default {
 .parquet-scroll-container {
   overflow: auto;
   max-height: 400px;
+}
+
+.parquet-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  background: $light;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.parquet-page-info {
+  font-size: 0.8rem;
+  color: $secondary;
+  white-space: nowrap;
 }
 
 .parquet-data-table {
