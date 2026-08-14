@@ -8,6 +8,10 @@
       "type": ["string", "null"],
       "format": "uri"
     },
+    "registryUrl": {
+      "type": ["string", "null"],
+      "format": "uri"
+    },
     "catalogTitle": {
       "type": ["string", "null"]
     },

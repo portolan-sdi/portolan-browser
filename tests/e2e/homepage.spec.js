@@ -2,24 +2,28 @@
 * Homepage / catalog index tests.
 *
 * Verifies the STAC Browser landing page: catalog list rendering, search input,
-* navigation to a catalog, and STAC Index entry clicks.
+* navigation to a catalog, and registry entry clicks.
 *
-* Fixtures: tests/fixtures/catalogs.json (synthetic STAC Index entries)
+* Fixtures: tests/fixtures/templates/registry.json (synthetic Portolan registry export)
 */
 import { test, expect } from './fixtures.js';
 import { HOME_PATH, mockStacResource } from './helpers.js';
 import StaticCatalog from '../fixtures/instances/static.js';
 import fs from 'fs';
-const catalogs = JSON.parse(fs.readFileSync(
-  new URL('../fixtures/templates/catalogs.json', import.meta.url), 'utf-8'
+const registry = JSON.parse(fs.readFileSync(
+  new URL('../fixtures/templates/registry.json', import.meta.url), 'utf-8'
 ));
+// The list drops catalogs the registry has removed, so it is shorter than the export.
+const listedCatalogs = registry.links.filter(
+  link => link.rel === 'child' && link['portolan_registry:status'] !== 'removed'
+);
 import CONFIG from '../../config.js';
 
 test.describe('STAC Browser Data Source Selection', () => {
-  // ensure every test uses the mocked STAC Index response
+  // ensure every test uses the mocked registry response
   test.beforeEach(async ({ worker }) => {
-    // App loads catalogs from /catalogs.json (relative to BASE_URL)
-    await mockStacResource(worker, '**/catalogs.json', catalogs);
+    // App loads the catalog list from CONFIG.registryUrl
+    await mockStacResource(worker, CONFIG.registryUrl, registry);
   });
   test('should load the data source selection successfully', async ({ page }) => {
     // Navigate to the data source selection (STAC Index already mocked in beforeEach)
@@ -160,7 +164,7 @@ test.describe('STAC Browser Data Source Selection', () => {
     
     await page.goto(HOME_PATH);
     const indexButtons = page.locator('.stac-index button');
-    await expect(indexButtons).toHaveCount(catalogs.length);
+    await expect(indexButtons).toHaveCount(listedCatalogs.length);
     
     // Click the first entry in the STAC index
     await indexButtons.first().click();

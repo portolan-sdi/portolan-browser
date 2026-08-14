@@ -79,7 +79,7 @@ Reusable JSON skeletons stored in `tests/fixtures/templates/`. Each builder type
 - `item/` – STAC Item skeleton
 - `collectionCollection/` – Collection list response
 - `itemCollection/` – Item collection response
-- `catalogs.json` – STAC index mock for homepage testing
+- `registry.json` – Portolan registry export mock for homepage testing
 
 `minimal.json` templates contain only required fields, while `default.json` templates may include additional common optional fields and example data. 
 Templates are loaded once and cloned for each builder instance.

@@ -17,7 +17,10 @@
       </b-form-group>
       <b-button type="submit" variant="primary">{{ $t('index.load') }}</b-button>
     </b-form>
-    <hr v-if="stacIndex.length > 0">
+    <hr v-if="stacIndex.length > 0 || registryError">
+    <b-alert v-if="registryError" variant="warning" show>
+      {{ $t('index.registryUnavailable') }}
+    </b-alert>
     <b-form-group v-if="stacIndex.length > 0" class="stac-index">
       <template #label>
         {{ $t('index.selectPortolan') }}
@@ -47,6 +50,9 @@ import { mapGetters } from "vuex";
 import { defineComponent } from 'vue';
 import Description from '../components/Description.vue';
 import Utils from '../utils';
+import { hasText } from 'stac-js/src/utils.js';
+import CONFIG from '../merged-config';
+import { parseRegistryExport } from '../utils/registry';
 import axios from "axios";
 
 export default defineComponent({
@@ -57,7 +63,8 @@ export default defineComponent({
   data() {
     return {
       url: '',
-      stacIndex: []
+      stacIndex: [],
+      registryError: false
     };
   },
   computed: {
@@ -89,22 +96,22 @@ export default defineComponent({
   async created() {
     // Reset loaded STAC catalog
     this.$store.commit('resetCatalog', true);
-    // Load entries from local catalogs list
+    // Load the registered catalogs from the Portolan registry
+    if (!hasText(CONFIG.registryUrl)) {
+      return;
+    }
     try {
-      let response = await axios.get(import.meta.env.BASE_URL + 'catalogs.json');
-      if(Array.isArray(response.data)) {
-        this.stacIndex = response.data;
-      }
+      let response = await axios.get(CONFIG.registryUrl);
+      this.stacIndex = parseRegistryExport(response.data);
+      this.registryError = this.stacIndex.length === 0;
     } catch (error) {
-      console.error('Failed to load catalogs:', error);
+      console.error('Failed to load the Portolan registry:', error);
+      this.registryError = true;
     }
   },
   methods: {
     show(catalog) {
-      if (catalog.access === 'private') {
-        return false;
-      }
-      else if(!this.url) {
+      if(!this.url) {
         return true;
       }
 
