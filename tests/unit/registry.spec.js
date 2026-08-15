@@ -25,9 +25,11 @@ describe('parseRegistryExport', () => {
     expect(entry).toEqual({
       id: 'example-catalog',
       title: 'Example Catalog',
-      summary: '3 collections · 1.2M features',
       url: 'https://stac.example/catalog.json',
-      isApi: false
+      isApi: false,
+      collectionCount: 3,
+      featureCount: 1234567,
+      countsPartial: false
     });
   });
 
@@ -53,13 +55,13 @@ describe('parseRegistryExport', () => {
     expect(entry.isApi).toBe(true);
   });
 
-  it('marks partial counts as a floor', () => {
+  it('reports partial counts as partial', () => {
     const [entry] = parseRegistryExport(exportDoc([child({
       'portolan_registry:collection_count': 1,
       'portolan_registry:feature_count': 0,
       'portolan_registry:counts_partial': true
     })]));
-    expect(entry.summary).toBe('1+ collection');
+    expect(entry).toMatchObject({ collectionCount: 1, featureCount: null, countsPartial: true });
   });
 
   it('leaves out counts the registry could not measure', () => {
@@ -67,7 +69,39 @@ describe('parseRegistryExport', () => {
       'portolan_registry:collection_count': 0,
       'portolan_registry:feature_count': null
     })]));
-    expect(entry.summary).toBe('');
+    expect(entry).toMatchObject({ collectionCount: null, featureCount: null });
+  });
+
+  // The export is fetched from a host this repo does not control, and a click
+  // follows the href, so anything the browser cannot read a catalog over is not
+  // offered at all.
+  it('refuses hrefs that are not plain http(s) URLs', () => {
+    const entries = parseRegistryExport(exportDoc([
+      child({ 'portolan_registry:id': 'js', href: 'javascript:alert(1)' }),
+      child({ 'portolan_registry:id': 'data', href: 'data:text/html,<script>alert(1)</script>' }),
+      child({ 'portolan_registry:id': 'file', href: 'file:///etc/passwd' }),
+      child({ 'portolan_registry:id': 'blank', href: '   ' }),
+      child({ 'portolan_registry:id': 'relative', href: '/catalog.json' }),
+      child({ 'portolan_registry:id': 'ok', href: 'https://stac.example/catalog.json' })
+    ]));
+    expect(entries.map(e => e.id)).toEqual(['ok']);
+  });
+
+  it('refuses credentials embedded in the URL', () => {
+    const entries = parseRegistryExport(exportDoc([
+      child({ href: 'https://user:pw@stac.example/catalog.json' })
+    ]));
+    expect(entries).toEqual([]);
+  });
+
+  // The id keys the rendered list; a repeat would render the wrong row.
+  it('keeps the ids it returns unique', () => {
+    const entries = parseRegistryExport(exportDoc([
+      child({ href: 'https://a.example/catalog.json' }),
+      child({ href: 'https://b.example/catalog.json' })
+    ]));
+    expect(entries).toHaveLength(2);
+    expect(new Set(entries.map(e => e.id)).size).toBe(2);
   });
 
   it('falls back to the registry id when a title is missing', () => {

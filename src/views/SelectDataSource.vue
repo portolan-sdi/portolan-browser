@@ -17,16 +17,17 @@
       </b-form-group>
       <b-button type="submit" variant="primary">{{ $t('index.load') }}</b-button>
     </b-form>
-    <hr v-if="stacIndex.length > 0 || registryError">
+    <hr v-if="catalogs.length > 0 || registryError || registryLoading">
+    <p v-if="registryLoading" class="text-muted">{{ $t('index.registryLoading') }}</p>
     <b-alert v-if="registryError" variant="warning" show>
       {{ $t('index.registryUnavailable') }}
     </b-alert>
-    <b-form-group v-if="stacIndex.length > 0" class="stac-index">
+    <b-form-group v-if="catalogs.length > 0" class="stac-index">
       <template #label>
         {{ $t('index.selectPortolan') }}
       </template>
       <b-list-group> 
-        <template v-for="catalog in stacIndex" :key="catalog.id">
+        <template v-for="catalog in catalogs" :key="catalog.id">
           <b-list-group-item
             v-if="show(catalog)" button
             :active="url === catalog.url"
@@ -37,7 +38,8 @@
               <b-badge v-if="catalog.isApi" variant="danger">{{ $t('index.api') }}</b-badge>
               <b-badge v-else variant="success">{{ $t('index.catalog') }}</b-badge>
             </div>
-            <Description :description="catalog.summary" compact />
+            <Description v-if="summary(catalog)" :description="summary(catalog)" compact />
+            <small class="text-muted catalog-host">{{ host(catalog.url) }}</small>
           </b-list-group-item>
         </template>
       </b-list-group>
@@ -50,10 +52,14 @@ import { mapGetters } from "vuex";
 import { defineComponent } from 'vue';
 import Description from '../components/Description.vue';
 import Utils from '../utils';
-import { hasText } from 'stac-js/src/utils.js';
+import { hasText, isObject } from 'stac-js/src/utils.js';
 import CONFIG from '../merged-config';
 import { parseRegistryExport } from '../utils/registry';
 import axios from "axios";
+
+// Long enough for a cold CDN fetch, short enough that a hung registry does not
+// hold the page hostage.
+const REGISTRY_TIMEOUT_MS = 15000;
 
 export default defineComponent({
   name: "SelectDataSource",
@@ -63,8 +69,9 @@ export default defineComponent({
   data() {
     return {
       url: '',
-      stacIndex: [],
-      registryError: false
+      catalogs: [],
+      registryError: false,
+      registryLoading: false
     };
   },
   computed: {
@@ -100,16 +107,55 @@ export default defineComponent({
     if (!hasText(CONFIG.registryUrl)) {
       return;
     }
+    this.registryLoading = true;
     try {
-      let response = await axios.get(CONFIG.registryUrl);
-      this.stacIndex = parseRegistryExport(response.data);
-      this.registryError = this.stacIndex.length === 0;
+      // The registry is a third-party host, so a hang must not leave the page
+      // waiting on it forever with nothing said.
+      const response = await axios.get(CONFIG.registryUrl, { timeout: REGISTRY_TIMEOUT_MS });
+      // A registry that legitimately lists nothing is not a failure. Only a
+      // response that is not a registry document at all is — an error page
+      // served with a 200 lands here rather than in the catch.
+      if (!isObject(response.data) || !Array.isArray(response.data.links)) {
+        throw new Error('The response is not a Portolan registry export');
+      }
+      this.catalogs = parseRegistryExport(response.data);
     } catch (error) {
       console.error('Failed to load the Portolan registry:', error);
       this.registryError = true;
+    } finally {
+      this.registryLoading = false;
     }
   },
   methods: {
+    // The registry stores no prose about a catalog, so say what it does
+    // measure. Built here rather than in the parser so the words and the
+    // number formatting follow the interface language.
+    summary(catalog) {
+      const parts = [];
+      if (catalog.collectionCount) {
+        parts.push(this.$t('index.registryCollections', {
+          count: catalog.collectionCount.toLocaleString()
+        }, catalog.collectionCount));
+      }
+      if (catalog.featureCount) {
+        parts.push(this.$t('index.registryFeatures', {
+          count: catalog.featureCount.toLocaleString()
+        }, catalog.featureCount));
+      }
+      if (parts.length === 0) {
+        return '';
+      }
+      const text = parts.join(' · ');
+      return catalog.countsPartial ? this.$t('index.registryCountsPartial', { counts: text }) : text;
+    },
+    host(url) {
+      try {
+        return new URL(url).host;
+      }
+      catch {
+        return url;
+      }
+    },
     show(catalog) {
       if(!this.url) {
         return true;
