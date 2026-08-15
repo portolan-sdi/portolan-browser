@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - The catalog list on the start page is pulled from the [Portolan registry](https://github.com/portolan-sdi/portolan-registry), configurable via the new `registryUrl` option
+- Catalogs on the start page show the publisher's logo where the registry has one
 - Search filters are now preserved for collection and item searches
 - Opening a collection from the collection search results carries the search criteria over into its item filters
 - An indicator on the item filter toggle shows when the filters were changed but not applied yet
