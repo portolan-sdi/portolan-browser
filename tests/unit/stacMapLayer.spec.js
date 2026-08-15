@@ -74,6 +74,14 @@ function createFakeMap() {
     getStyle() {
       return { layers: [...layers.values()] }
     },
+    // Insertion order stands in for draw order. This fake does not model
+    // beforeId, so it says nothing about ordering — layerOrder.spec.js owns
+    // that — but StacMapLayer reads the order on every insert, so it has to
+    // answer.
+    getLayersOrder() {
+      return [...layers.keys()]
+    },
+    moveLayer() {},
     getLayoutProperty() {
       return undefined
     },

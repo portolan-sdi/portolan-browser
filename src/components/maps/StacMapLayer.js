@@ -1304,42 +1304,44 @@ export default class StacMapLayer {
     return ids;
   }
 
-  // The basemap's layers in draw order, cheaply. getLayersOrder avoids
-  // serialising the whole style, which getStyle() would do on every insert.
-  _basemapLayers(extra = null) {
-    const ids = typeof this.map.getLayersOrder === 'function'
-      ? this.map.getLayersOrder()
-      : (this.map.getStyle()?.layers || []).map(l => l.id);
-    const ours = this._ownLayerIds(extra);
-    const out = [];
-    for (const id of ids) {
-      if (ours.has(id)) {continue;}
-      const layer = this.map.getLayer(id);
-      if (layer) {out.push({ id, type: layer.type });}
-    }
-    return out;
+  // Draw order, cheaply. getLayersOrder avoids serialising the whole style,
+  // which getStyle() would do on every insert.
+  _layerOrder() {
+    return this.map.getLayersOrder();
   }
 
   // Data belongs above the basemap's ground and below its labels, so place
-  // names and street names stay legible instead of being drawn over.
+  // names and street names stay legible instead of being drawn over. This only
+  // gets the data close — see _sinkBasemapGeometry for why that is not enough.
   _labelInsertionPoint(extra = null) {
-    const first = this._basemapLayers(extra).find(l => l.type === 'symbol');
-    return first ? first.id : undefined;
+    const ours = this._ownLayerIds(extra);
+    for (const id of this._layerOrder()) {
+      if (ours.has(id)) {continue;}
+      if (this.map.getLayer(id)?.type === 'symbol') {return id;}
+    }
+    return undefined;
   }
 
-  // Basemap 3D buildings sit above the road layers but below the labels, so
-  // data inserted below the labels lands underneath them and vanishes behind
-  // building footprints at street zoom. Sink them under our layers instead,
-  // which leaves the stack as ground, buildings, data, labels.
-  // Idempotent: only moves an extrusion that is currently drawn after our
-  // data, so calling it on every insert costs a couple of array scans once the
-  // stack is already in the right order.
-  _sinkBasemapExtrusions(extra = null) {
+  // Anchoring before the first symbol layer is only an approximation of "below
+  // the labels", because a basemap's first symbol layer is rarely the bottom of
+  // its label band. Carto Voyager and Positron — the two basemaps this app ships
+  // first — open their labels with `waterway_label` at index 13 of 93, beneath
+  // every tunnel, road and building layer. Anchoring there alone would bury the
+  // data under 53 of them, `building` and `building-top` included, which is the
+  // complaint this change exists to answer.
+  //
+  // So the anchor only gets the data close, and this pass finishes the job:
+  // every basemap layer still drawn above the data that is not a label sinks
+  // below it. What remains above is exactly the symbol layers, which is the
+  // stack we want — ground, buildings, data, labels — on any basemap, whether
+  // its labels arrive in one band or several.
+  //
+  // Idempotent: it only moves a layer currently drawn after our data, so once
+  // the stack is right this costs a couple of array scans and no moves.
+  _sinkBasemapGeometry(extra = null) {
     const ours = this._ownLayerIds(extra);
     if (ours.size === 0) {return;}
-    const order = typeof this.map.getLayersOrder === 'function'
-      ? this.map.getLayersOrder()
-      : (this.map.getStyle()?.layers || []).map(l => l.id);
+    const order = this._layerOrder();
     const firstOursAt = order.findIndex(id => ours.has(id));
     if (firstOursAt === -1) {return;}
     const firstOurs = order[firstOursAt];
@@ -1347,7 +1349,8 @@ export default class StacMapLayer {
       const id = order[i];
       if (ours.has(id)) {continue;}
       const layer = this.map.getLayer(id);
-      if (!layer || layer.type !== 'fill-extrusion') {continue;}
+      // Labels stay above the data; everything else sinks below it.
+      if (!layer || layer.type === 'symbol') {continue;}
       try {
         this.map.moveLayer(id, firstOurs);
       }
@@ -1368,7 +1371,7 @@ export default class StacMapLayer {
     }
     const beforeId = spec.type === 'symbol' ? undefined : this._labelInsertionPoint(spec.id);
     this.map.addLayer(spec, beforeId);
-    this._sinkBasemapExtrusions(spec.id);
+    this._sinkBasemapGeometry(spec.id);
   }
 
   _addLayer(spec) {

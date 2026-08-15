@@ -74,6 +74,31 @@ function trimetLikeBasemap() {
   ])
 }
 
+// The shape of the basemaps this app actually ships. Carto Voyager and Positron
+// open their label band with `waterway_label` at index 13 of 93, well beneath
+// the tunnels, roads and buildings that follow it. Anchoring at the first
+// symbol layer and stopping there drops the data under 53 of those, `building`
+// and `building-top` among them — the very thing #32 reports. Abridged from
+// https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json, keeping the
+// order and the layer types.
+function cartoLikeBasemap() {
+  return createOrderedMap([
+    { id: 'background', type: 'background' },
+    { id: 'landcover', type: 'fill' },
+    { id: 'water', type: 'fill' },
+    { id: 'aeroway-runway', type: 'line' },
+    { id: 'waterway_label', type: 'symbol' },
+    { id: 'tunnel_service_case', type: 'line' },
+    { id: 'road_minor_case', type: 'line' },
+    { id: 'road_mot_fill', type: 'line' },
+    { id: 'building', type: 'fill' },
+    { id: 'building-top', type: 'fill' },
+    { id: 'roadname_major', type: 'symbol' },
+    { id: 'place_label_city', type: 'symbol' },
+    { id: 'housenumber', type: 'symbol' },
+  ])
+}
+
 describe('data layer ordering', () => {
   let map, layer
 
@@ -194,5 +219,51 @@ describe('data layer ordering', () => {
     expect(() => layer._addLayerBelowLabels({ id: 'routes', type: 'line', source: 's' })).not.toThrow()
     expect(map.order).toContain('routes')
     warn.mockRestore()
+  })
+})
+
+// The regression that shipped basemaps expose and a hand-written six-layer
+// fixture does not: the first symbol layer is not the bottom of the label band.
+describe('data layer ordering on a shipped basemap', () => {
+  let map, layer
+
+  beforeEach(() => {
+    map = cartoLikeBasemap()
+    layer = new StacMapLayer(map)
+  })
+
+  it('draws no basemap geometry over the data', () => {
+    layer._addLayer({ id: 'parcels', type: 'fill', source: 's' })
+    const at = id => map.order.indexOf(id)
+    const above = map.order
+      .slice(at('parcels') + 1)
+      .filter(id => map.getLayer(id).type !== 'symbol')
+    expect(above).toEqual([])
+  })
+
+  it('keeps the buildings that #32 reports below the data', () => {
+    layer._addLayer({ id: 'parcels', type: 'fill', source: 's' })
+    const at = id => map.order.indexOf(id)
+    expect(at('building')).toBeLessThan(at('parcels'))
+    expect(at('building-top')).toBeLessThan(at('parcels'))
+    expect(at('road_mot_fill')).toBeLessThan(at('parcels'))
+  })
+
+  it('keeps every basemap label above the data, not just the late ones', () => {
+    layer._addLayer({ id: 'parcels', type: 'fill', source: 's' })
+    const at = id => map.order.indexOf(id)
+    for (const label of ['waterway_label', 'roadname_major', 'place_label_city', 'housenumber']) {
+      expect(at(label)).toBeGreaterThan(at('parcels'))
+    }
+  })
+
+  it('leaves the basemap ground in its authored order', () => {
+    layer._addLayer({ id: 'parcels', type: 'fill', source: 's' })
+    const ground = map.order.filter(id => map.getLayer(id).type !== 'symbol' && id !== 'parcels')
+    expect(ground).toEqual([
+      'background', 'landcover', 'water', 'aeroway-runway',
+      'tunnel_service_case', 'road_minor_case', 'road_mot_fill',
+      'building', 'building-top',
+    ])
   })
 })
