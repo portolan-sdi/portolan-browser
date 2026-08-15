@@ -1,0 +1,332 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.1.0",
+  "id": "portolan-registry",
+  "title": "Portolan Registry",
+  "description": "Synthetic Portolan registry export for tests.",
+  "generated": "2026-08-14T00:00:00+00:00",
+  "count": 15,
+  "links": [
+    {
+      "rel": "root",
+      "href": "https://registry.example/exports/catalogs.json",
+      "type": "application/json",
+      "title": "Portolan Registry"
+    },
+    {
+      "rel": "self",
+      "href": "https://registry.example/exports/catalogs.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/stac/catalog.json",
+      "type": "application/json",
+      "title": "Alpha Earth Observation Catalog",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "alpha-earth-catalog",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "static",
+      "portolan_registry:collection_count": 3,
+      "portolan_registry:feature_count": 1000,
+      "portolan_registry:asset_count": 10,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/api/stac/v1",
+      "type": "application/json",
+      "title": "Beta Geospatial API",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "beta-geospatial-api",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "api",
+      "portolan_registry:collection_count": 4,
+      "portolan_registry:feature_count": 2000,
+      "portolan_registry:asset_count": 11,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/climate/catalog.json",
+      "type": "application/json",
+      "title": "Climate Data Catalog",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "climate-data-catalog",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "static",
+      "portolan_registry:collection_count": 5,
+      "portolan_registry:feature_count": 3000,
+      "portolan_registry:asset_count": 12,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/elevation/api",
+      "type": "application/json",
+      "title": "DEM Elevation API",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "dem-elevation-api",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "api",
+      "portolan_registry:collection_count": 6,
+      "portolan_registry:feature_count": 4000,
+      "portolan_registry:asset_count": 13,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/euro-sat/catalog.json",
+      "type": "application/json",
+      "title": "EuroSat Catalog",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "eurosat-catalog",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "static",
+      "portolan_registry:collection_count": 7,
+      "portolan_registry:feature_count": 5000,
+      "portolan_registry:asset_count": 14,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/flood/api",
+      "type": "application/json",
+      "title": "Flood Monitoring API",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "flood-monitoring-api",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "api",
+      "portolan_registry:collection_count": 8,
+      "portolan_registry:feature_count": 6000,
+      "portolan_registry:asset_count": 15,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/geo-archive/catalog.json",
+      "type": "application/json",
+      "title": "Geo Archive Catalog",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "geo-archive-catalog",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "static",
+      "portolan_registry:collection_count": 9,
+      "portolan_registry:feature_count": 7000,
+      "portolan_registry:asset_count": 16,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/hydro/api",
+      "type": "application/json",
+      "title": "Hydrology STAC API",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "hydro-api",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "api",
+      "portolan_registry:collection_count": 10,
+      "portolan_registry:feature_count": 8000,
+      "portolan_registry:asset_count": 17,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/icesat/catalog.json",
+      "type": "application/json",
+      "title": "ICESat Altimetry Catalog",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "icesat-catalog",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "static",
+      "portolan_registry:collection_count": 11,
+      "portolan_registry:feature_count": 9000,
+      "portolan_registry:asset_count": 18,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/imagery/api",
+      "type": "application/json",
+      "title": "Imagery Search API",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "imagery-search-api",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "api",
+      "portolan_registry:collection_count": 12,
+      "portolan_registry:feature_count": 10000,
+      "portolan_registry:asset_count": 19,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/japan-dem/catalog.json",
+      "type": "application/json",
+      "title": "Japan DEM Catalog",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "japan-dem-catalog",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "static",
+      "portolan_registry:collection_count": 13,
+      "portolan_registry:feature_count": 11000,
+      "portolan_registry:asset_count": 20,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/kelp/api",
+      "type": "application/json",
+      "title": "Kelp Forest Monitoring API",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "kelp-forest-api",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "api",
+      "portolan_registry:collection_count": 14,
+      "portolan_registry:feature_count": 12000,
+      "portolan_registry:asset_count": 21,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/landsat/catalog.json",
+      "type": "application/json",
+      "title": "Landsat Collection Catalog",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "landsat-catalog",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "static",
+      "portolan_registry:collection_count": 15,
+      "portolan_registry:feature_count": 13000,
+      "portolan_registry:asset_count": 22,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/marine/api",
+      "type": "application/json",
+      "title": "Marine Observation API",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "marine-api",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "api",
+      "portolan_registry:collection_count": 16,
+      "portolan_registry:feature_count": 14000,
+      "portolan_registry:asset_count": 23,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/ndvi/catalog.json",
+      "type": "application/json",
+      "title": "NDVI Time Series Catalog",
+      "bbox": [
+        -180.0,
+        -90.0,
+        180.0,
+        90.0
+      ],
+      "portolan_registry:id": "ndvi-timeseries-catalog",
+      "portolan_registry:status": "valid",
+      "portolan_registry:api_type": "static",
+      "portolan_registry:collection_count": 17,
+      "portolan_registry:feature_count": 15000,
+      "portolan_registry:asset_count": 24,
+      "portolan_registry:counts_partial": false,
+      "portolan_registry:stac_valid": true
+    },
+    {
+      "rel": "child",
+      "href": "https://stac.example/retired/catalog.json",
+      "type": "application/json",
+      "title": "Retired Catalog",
+      "portolan_registry:id": "retired-catalog",
+      "portolan_registry:status": "removed",
+      "portolan_registry:api_type": "static",
+      "portolan_registry:collection_count": 0
+    }
+  ]
+}

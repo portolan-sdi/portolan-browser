@@ -1,5 +1,6 @@
 export default {
   catalogUrl: null,
+  registryUrl: "https://raw.githubusercontent.com/portolan-sdi/portolan-registry/refs/heads/main/exports/catalogs.json",
   catalogTitle: "Portolan Browser",
   catalogTitleAfterImage: null,
   catalogImage: "/portolan-logo.svg",

@@ -55,7 +55,7 @@ Then switch into the newly created folder and install all dependencies:
 npm install
 ```
 
-By default, STAC Browser will let you browse all catalogs on STAC Index.
+By default, STAC Browser will let you browse every catalog in the [Portolan registry](https://github.com/portolan-sdi/portolan-registry). Point the [`registryUrl`](docs/options.md#registryurl) config parameter elsewhere to offer a different list.
 
 To browse only your own static STAC catalog or STAC API, set the [`catalogUrl`](docs/options.md#catalogurl) config parameter when running the dev server.
 In this example we point to EarthSearch (`https://earth-search.aws.element84.com/v1/`):

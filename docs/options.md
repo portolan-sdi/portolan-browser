@@ -48,6 +48,7 @@ The override order for the configuration is:
 
 - [Basic configuration](#basic-configuration)
   - [catalogUrl](#catalogurl)
+  - [registryUrl](#registryurl)
   - [catalogTitle](#catalogtitle)
   - [catalogTitleAfterImage](#catalogtitleafterimage)
   - [catalogImage](#catalogimage)
@@ -118,7 +119,17 @@ The URL provided here **must** match exactly with the `href` that is provided as
 
 This is usually a URL provided as string, but in the config file you can also provide a function without parameters that returns the URL, e.g. `() => window.origin.toString().replace(/\/?$/, '/')`.
 
-If `catalogUrl` is empty or set to `null` STAC Browser switches to a mode where it defaults to a screen where you can either insert a catalog URL or select a catalog from [stacindex.org](https://stacindex.org).
+If `catalogUrl` is empty or set to `null` STAC Browser switches to a mode where it defaults to a screen where you can either insert a catalog URL or select one of the catalogs listed by [`registryUrl`](#registryurl).
+
+### registryUrl
+
+The URL of the [Portolan registry](https://github.com/portolan-sdi/portolan-registry) export listing the catalogs to offer on that screen.
+
+The registry publishes its list as a STAC Catalog whose child links are the registered catalogs, each carrying `portolan_registry:*` metadata. Catalogs the registry has marked as removed are left out of the list, as are any whose `href` is not a plain `http`/`https` URL.
+
+The default points at the registry on GitHub, so the start page fetches it at runtime. A deployment that must not reach the public internet should host a copy of the export and point `registryUrl` at that, or set it to `null` to offer no catalogs and only accept a URL typed in by the user.
+
+Entries are summarized by the collection and feature counts from the registry's nightly crawl, since the registry stores no prose about a catalog.
 
 ### catalogTitle
 
