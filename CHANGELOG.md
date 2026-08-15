@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Basemap place and street labels draw above collection data, and basemap buildings draw below it
 - Collapsible section headers follow the theme palette instead of hardcoded colours, so a rebrand reaches them
+- The map style picker lists each style once when a collection declares it both as an asset and in a `portolan:styles` manifest
 - The Search page restores the previous results when returning to it
 
 ## [5.0.0] - 2026-07-31

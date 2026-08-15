@@ -349,6 +349,33 @@ describe('portolanStyles', () => {
           expect(resolveStyles(stac).map(s => s.name)).toEqual(['styles/default', 'styles/by-type'])
         })
 
+        // The two hrefs need only differ by a query string for a URL-equality
+        // dedupe to miss them, and a publisher adding a cache-buster to an
+        // asset is routine. The manifest still names the asset, so match on
+        // that too.
+        it('dedupes when the two hrefs differ only by a query string', () => {
+          const stac = collection({
+            'styles/default': { href: './styles/default.json?v=2', roles: ['style'], type: 'application/json', title: 'Default' },
+          }, { 'portolan:styles': [
+            { name: 'default', href: './styles/default.json' },
+          ] })
+          expect(resolveStyles(stac).map(s => s.name)).toEqual(['styles/default'])
+        })
+
+        // First mention wins, so a manifest that names a style twice does not
+        // silently reorder everything listed after it.
+        it('ranks a style by its first mention when the manifest repeats it', () => {
+          const stac = collection({
+            'styles/a': { href: './styles/a.json', roles: ['style'], type: 'application/json', title: 'A' },
+            'styles/b': { href: './styles/b.json', roles: ['style'], type: 'application/json', title: 'B' },
+          }, { 'portolan:styles': [
+            { name: 'b', href: './styles/b.json' },
+            { name: 'a', href: './styles/a.json' },
+            { name: 'b', href: './styles/b.json' },
+          ] })
+          expect(resolveStyles(stac).map(s => s.name)).toEqual(['styles/b', 'styles/a'])
+        })
+
         // Unlisted styles keep their relative document order behind the
         // manifest's — the sort is stable.
         it('keeps document order among styles the manifest omits', () => {

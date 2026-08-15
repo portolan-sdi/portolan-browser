@@ -122,8 +122,14 @@ function stylesFromLegacyManifest(stac, baseUrl) {
 
       if (entry && typeof entry === 'object' && typeof entry.href === 'string') {
         const key = entry.name || entry.href;
-        const matchingAsset = stac.assets?.[`styles/${entry.name}`];
-        return styleRecord(String(key), matchingAsset, absoluteHref(entry.href, baseUrl));
+        // The asset this entry is the manifest's name for, if the catalog
+        // declares it both ways. Carried on the record so the merge can match
+        // the two by the key they share rather than by their hrefs agreeing
+        // character for character.
+        const assetKey = `styles/${entry.name}`;
+        const matchingAsset = stac.assets?.[assetKey];
+        const record = styleRecord(String(key), matchingAsset, absoluteHref(entry.href, baseUrl));
+        return record && matchingAsset ? { ...record, assetKey } : record;
       }
 
       return null;
@@ -158,16 +164,17 @@ export function resolveStyles(stac) {
   // assets while others are still only named in the manifest; letting a single
   // tagged asset suppress the manifest would silently drop the rest.
   //
-  // Identity is the resolved href, not the name: the two sources name the same
-  // style differently. An asset is named by its key ("styles/default"), while a
-  // manifest entry is named by `entry.name` ("default"). Deduping on the name
-  // alone therefore never matches, and a collection that declares its styles
-  // both ways — which is exactly what a half-migrated catalog looks like — gets
-  // every style listed twice.
-  const seenNames = new Set(fromAssets.map(s => s.name));
-  const seenHrefs = new Set(fromAssets.map(s => s.href));
+  // The two sources name the same style differently: an asset by its key
+  // ("styles/default"), a manifest entry by `entry.name` ("default"). Deduping
+  // on the name alone therefore never matches, and a collection that declares
+  // its styles both ways — which is what a half-migrated catalog looks like —
+  // gets every style listed twice. So a manifest entry is the same style as an
+  // asset when it names it, when it points at it, or when its resolved href is
+  // the same. Matching on the name it implies as well as on the href matters
+  // because the two hrefs need only differ by a query string to slip past.
+  const seen = new Set(fromAssets.flatMap(s => [s.name, s.href]));
   const styles = fromAssets.concat(
-    legacy.filter(s => !seenNames.has(s.name) && !seenHrefs.has(s.href))
+    legacy.filter(s => !seen.has(s.name) && !seen.has(s.assetKey) && !seen.has(s.href))
   );
   if (styles.length === 0) {return [];}
 
@@ -179,12 +186,20 @@ export function resolveStyles(stac) {
   // Manifest order is applied as a stable sort, so styles the manifest does
   // not list keep their relative document order behind the ones it does.
   if (legacy.length > 0) {
-    // Ranked by href for the same reason the dedupe is: when a style is
-    // declared both ways the surviving record is the asset one, whose name the
-    // manifest never uses, so a name-keyed rank would not reach it.
-    const rank = new Map(legacy.map((style, index) => [style.href, index]));
+    // Ranked by every key a manifest entry can be recognised by, for the same
+    // reason the dedupe is: when a style is declared both ways the surviving
+    // record is the asset one, whose name the manifest never uses. First
+    // mention wins, so a manifest that lists a style twice does not reorder
+    // everything after it.
+    const rank = new Map();
+    legacy.forEach((style, index) => {
+      for (const key of [style.assetKey, style.name, style.href]) {
+        if (key && !rank.has(key)) {rank.set(key, index);}
+      }
+    });
     const last = Number.MAX_SAFE_INTEGER;
-    styles.sort((a, b) => (rank.get(a.href) ?? last) - (rank.get(b.href) ?? last));
+    const rankOf = style => rank.get(style.name) ?? rank.get(style.href) ?? last;
+    styles.sort((a, b) => rankOf(a) - rankOf(b));
   }
 
   const defaultName = defaultStyleAssetKey(stac);
