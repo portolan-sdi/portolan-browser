@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Adds three new config options: `transactions`, `transactionsRequireLogin` and `transactionsRequirePreflight`
   - Support for external management UIs via `create-form` and `edit-form` links ([RFC 6861](https://www.rfc-editor.org/rfc/rfc6861.html)) in the "Manage" menu
 
+### Changed
+
+- The catalog list on the start page names the Portolan registry and links to it
+
+### Removed
+
+- The "Static Catalog" badge on the start page; only API entries carry a badge now
+- The host line under each catalog on the start page, which repeated the same host down the whole list
+
 ### Fixed
 
 - Basemap place and street labels draw above collection data, and basemap buildings draw below it

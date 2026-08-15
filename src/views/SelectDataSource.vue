@@ -42,11 +42,13 @@
             @click="open(catalog.url)"
           >
             <div class="catalog-entry">
+              <!-- The logo is decorative: the name it stands for is right beside it,
+                   so alt text here would only make a screen reader say it twice. -->
               <span class="catalog-logo">
                 <img
                   v-if="catalog.logo && !failedLogos.has(catalog.id)"
                   :src="catalog.logo.href"
-                  :alt="catalog.logo.title || catalog.title"
+                  alt=""
                   loading="lazy" referrerpolicy="no-referrer"
                   @error="failedLogos.add(catalog.id)"
                 >
