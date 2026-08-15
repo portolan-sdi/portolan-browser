@@ -874,7 +874,7 @@ export default class StacMapLayer {
       const pointLayerId = `${sourceId}-${sourceLayer}-point`;
       const sourceLayerSpec = useSourceLayer ? { 'source-layer': sourceLayer } : {};
 
-      this.map.addLayer({
+      this._addLayerBelowLabels({
         id: fillLayerId,
         type: 'fill',
         source: sourceId,
@@ -887,7 +887,7 @@ export default class StacMapLayer {
       });
       this._trackOverlayLayer(sourceId, fillLayerId);
 
-      this.map.addLayer({
+      this._addLayerBelowLabels({
         id: lineLayerId,
         type: 'line',
         source: sourceId,
@@ -900,7 +900,7 @@ export default class StacMapLayer {
       });
       this._trackOverlayLayer(sourceId, lineLayerId);
 
-      this.map.addLayer({
+      this._addLayerBelowLabels({
         id: pointLayerId,
         type: 'circle',
         source: sourceId,
@@ -925,7 +925,7 @@ export default class StacMapLayer {
     });
 
     const layerId = `${sourceId}-raster`;
-    this.map.addLayer({
+    this._addLayerBelowLabels({
       id: layerId,
       type: 'raster',
       source: sourceId,
@@ -1292,11 +1292,90 @@ export default class StacMapLayer {
     if (!this.sourceIds.includes(id)) {this.sourceIds.push(id);}
   }
 
-  _addLayer(spec) {
+  // Every layer this object owns, by id. Used to tell our own layers apart from
+  // the basemap's when working out where in the stack new layers belong.
+  //
+  // `extra` covers the layer currently being inserted: the callers push into
+  // the tracking arrays only after the add succeeds, so without it the layer
+  // that triggered the reorder would not be counted as ours.
+  _ownLayerIds(extra = null) {
+    const ids = new Set([...this.layerIds, ...this._overlayLayerIds, ...this._glStyleLayerIds]);
+    if (extra) {ids.add(extra);}
+    return ids;
+  }
+
+  // Draw order, cheaply. getLayersOrder avoids serialising the whole style,
+  // which getStyle() would do on every insert.
+  _layerOrder() {
+    return this.map.getLayersOrder();
+  }
+
+  // Data belongs above the basemap's ground and below its labels, so place
+  // names and street names stay legible instead of being drawn over. This only
+  // gets the data close — see _sinkBasemapGeometry for why that is not enough.
+  _labelInsertionPoint(extra = null) {
+    const ours = this._ownLayerIds(extra);
+    for (const id of this._layerOrder()) {
+      if (ours.has(id)) {continue;}
+      if (this.map.getLayer(id)?.type === 'symbol') {return id;}
+    }
+    return undefined;
+  }
+
+  // Anchoring before the first symbol layer is only an approximation of "below
+  // the labels", because a basemap's first symbol layer is rarely the bottom of
+  // its label band. Carto Voyager and Positron — the two basemaps this app ships
+  // first — open their labels with `waterway_label` at index 13 of 93, beneath
+  // every tunnel, road and building layer. Anchoring there alone would bury the
+  // data under 53 of them, `building` and `building-top` included, which is the
+  // complaint this change exists to answer.
+  //
+  // So the anchor only gets the data close, and this pass finishes the job:
+  // every basemap layer still drawn above the data that is not a label sinks
+  // below it. What remains above is exactly the symbol layers, which is the
+  // stack we want — ground, buildings, data, labels — on any basemap, whether
+  // its labels arrive in one band or several.
+  //
+  // Idempotent: it only moves a layer currently drawn after our data, so once
+  // the stack is right this costs a couple of array scans and no moves.
+  _sinkBasemapGeometry(extra = null) {
+    const ours = this._ownLayerIds(extra);
+    if (ours.size === 0) {return;}
+    const order = this._layerOrder();
+    const firstOursAt = order.findIndex(id => ours.has(id));
+    if (firstOursAt === -1) {return;}
+    const firstOurs = order[firstOursAt];
+    for (let i = firstOursAt + 1; i < order.length; i++) {
+      const id = order[i];
+      if (ours.has(id)) {continue;}
+      const layer = this.map.getLayer(id);
+      // Labels stay above the data; everything else sinks below it.
+      if (!layer || layer.type === 'symbol') {continue;}
+      try {
+        this.map.moveLayer(id, firstOurs);
+      }
+      catch (err) {
+        // A basemap we cannot reorder is not worth failing the render over.
+        console.warn(`Failed to move basemap layer "${id}" below the data`, err);
+      }
+    }
+  }
+
+  // Single seam for adding a data layer. Geometry goes below the basemap's
+  // labels so place and street names stay readable over it. A collection's own
+  // symbol layers are the exception: those are the data's labels, and burying
+  // them under the basemap's would defeat the point of a labelled style.
+  _addLayerBelowLabels(spec) {
     if (this.map.getLayer(spec.id)) {
       this.map.removeLayer(spec.id);
     }
-    this.map.addLayer(spec);
+    const beforeId = spec.type === 'symbol' ? undefined : this._labelInsertionPoint(spec.id);
+    this.map.addLayer(spec, beforeId);
+    this._sinkBasemapGeometry(spec.id);
+  }
+
+  _addLayer(spec) {
+    this._addLayerBelowLabels(spec);
     if (!this.layerIds.includes(spec.id)) {this.layerIds.push(spec.id);}
   }
 
@@ -1522,10 +1601,7 @@ export default class StacMapLayer {
       }
 
       try {
-        if (this.map.getLayer(layerSpec.id)) {
-          this.map.removeLayer(layerSpec.id);
-        }
-        this.map.addLayer(layerSpec);
+        this._addLayerBelowLabels(layerSpec);
       } catch (err) {
         // One unusable layer (a symbol layer when the basemap provides no
         // glyphs, say) must not cost the rest of the style.

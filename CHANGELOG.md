@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Basemap place and street labels draw above collection data, and basemap buildings draw below it
 - The Search page restores the previous results when returning to it
 
 ## [5.0.0] - 2026-07-31
