@@ -23,7 +23,7 @@
         </template>
       </span>
     </div>
-    <div class="parquet-scroll-container">
+    <div ref="scrollContainer" class="parquet-scroll-container">
       <table class="table table-sm table-striped parquet-data-table">
         <thead>
           <tr>
@@ -78,10 +78,63 @@
         </tbody>
       </table>
     </div>
+    <div v-if="pageCount > 1" class="parquet-pagination">
+      <button
+        type="button" class="btn btn-sm btn-outline-primary"
+        :disabled="currentPage === 0"
+        @click="goToPage(0)"
+      >
+        {{ $t('pagination.first') }}
+      </button>
+      <button
+        type="button" class="btn btn-sm btn-outline-primary"
+        :disabled="currentPage === 0"
+        @click="goToPage(currentPage - 1)"
+      >
+        {{ $t('pagination.previous') }}
+      </button>
+      <span class="parquet-page-info" role="status" aria-live="polite">
+        {{ $t('parquet.pageRows', { from: pageFrom.toLocaleString(), to: pageTo.toLocaleString(), total: sortedRows.length.toLocaleString() }, `Rows ${pageFrom.toLocaleString()}–${pageTo.toLocaleString()} of ${sortedRows.length.toLocaleString()}`) }}
+      </span>
+      <button
+        type="button" class="btn btn-sm btn-outline-primary"
+        :disabled="currentPage >= pageCount - 1"
+        @click="goToPage(currentPage + 1)"
+      >
+        {{ $t('pagination.next') }}
+      </button>
+      <button
+        type="button" class="btn btn-sm btn-outline-primary"
+        :disabled="currentPage >= pageCount - 1"
+        @click="goToPage(pageCount - 1)"
+      >
+        {{ $t('pagination.last') }}
+      </button>
+    </div>
   </div>
 </template>
 
 <script>
+// The most rows to put in the DOM at once. The loader caps what it decodes
+// (MAX_ROWS, 10k), but rendering even that many at once is fatal on a wide
+// table: 10k rows × ~140 columns is over a million table cells, which freezes
+// the tab and grows the heap into the gigabytes long after the data itself (a
+// few hundred MB) decoded fine. Filtering and sorting still work across
+// everything that was loaded — only the rendering is windowed.
+export const PAGE_SIZE = 100;
+
+// What actually costs is cells, not rows, so a page of a 140-column table has
+// to be shorter than a page of a two-column one to stay within the same budget.
+// 4000 keeps a page's DOM about the size of a 40-column page of PAGE_SIZE rows,
+// which renders comfortably; MIN_PAGE_SIZE stops a pathologically wide table
+// from paginating one row at a time.
+const MAX_CELLS_PER_PAGE = 4000;
+const MIN_PAGE_SIZE = 10;
+
+// Long enough that a burst of typing settles before anything expensive runs,
+// short enough that the table does not feel detached from the keyboard.
+const FILTER_DEBOUNCE_MS = 150;
+
 export default {
   name: 'ParquetTable',
   props: {
@@ -105,10 +158,6 @@ export default {
       type: String,
       default: null
     },
-    geometryTypes: {
-      type: Array,
-      default: () => []
-    },
     bboxMapping: {
       type: Object,
       default: null
@@ -122,6 +171,12 @@ export default {
       sortColumn: null,
       sortDirection: null,
       selectedIndex: null,
+      page: 0,
+      // What filteredRows actually reads. `filterText` follows the input on
+      // every keystroke so typing stays instant; this trails it, so a 10k-row
+      // scan and a full re-render happen once per pause, not once per letter.
+      appliedFilter: '',
+      filterTimer: null,
     };
   },
   computed: {
@@ -154,16 +209,13 @@ export default {
         this.columns.forEach((col, ci) => {
           obj[col] = row[ci];
         });
-        if (this.geometryTypes[i]) {
-          obj._geomType = this.geometryTypes[i];
-        }
         return obj;
       });
     },
     filteredRows() {
       let result = this.indexedRows;
-      if (this.filterText) {
-        const search = this.filterText.toLowerCase();
+      if (this.appliedFilter) {
+        const search = this.appliedFilter.toLowerCase();
         result = result.filter(row => {
           const cols = this.filterColumn ? [this.filterColumn] : this.displayColumns;
           return cols.some(col => {
@@ -192,11 +244,58 @@ export default {
         return String(va).localeCompare(String(vb)) * dir;
       });
     },
+    pageSize() {
+      const columns = Math.max(1, this.displayColumns.length);
+      return Math.max(MIN_PAGE_SIZE, Math.min(PAGE_SIZE, Math.floor(MAX_CELLS_PER_PAGE / columns)));
+    },
+    pageCount() {
+      return Math.max(1, Math.ceil(this.sortedRows.length / this.pageSize));
+    },
+    // Clamped rather than trusting `page`: the row set can shrink under the
+    // current page (filtering while on a late page) between the watcher reset
+    // and this read.
+    currentPage() {
+      return Math.min(this.page, this.pageCount - 1);
+    },
+    pageFrom() {
+      return this.sortedRows.length === 0 ? 0 : this.currentPage * this.pageSize + 1;
+    },
+    pageTo() {
+      return Math.min((this.currentPage + 1) * this.pageSize, this.sortedRows.length);
+    },
     visibleRows() {
-      return this.sortedRows;
+      return this.sortedRows.slice(this.currentPage * this.pageSize, (this.currentPage + 1) * this.pageSize);
     }
   },
+  watch: {
+    filterText(value) {
+      clearTimeout(this.filterTimer);
+      this.filterTimer = setTimeout(() => {
+        this.appliedFilter = value;
+      }, FILTER_DEBOUNCE_MS);
+    },
+    // One watcher, not one per input: `sortedRows` gets a new identity exactly
+    // when the filter, the sort or the row set changes, which is exactly when a
+    // page position stops meaning anything. Reset to the first page rather than
+    // letting `currentPage` clamp to the last — page 1 of a new result set is
+    // what someone who just typed a filter is looking for.
+    sortedRows() {
+      this.page = 0;
+    },
+  },
+  beforeUnmount() {
+    clearTimeout(this.filterTimer);
+  },
   methods: {
+    // The pagination bar sits below a fixed-height scroll box, so reaching it
+    // means being scrolled to the bottom. Without this the next page opens
+    // mid-way down and its first rows are never seen.
+    goToPage(page) {
+      this.page = Math.max(0, Math.min(this.pageCount - 1, page));
+      this.$nextTick(() => {
+        if (this.$refs.scrollContainer) {this.$refs.scrollContainer.scrollTop = 0;}
+      });
+    },
     toggleSort(col) {
       if (this.sortColumn === col) {
         if (this.sortDirection === 'asc') {
@@ -239,7 +338,12 @@ export default {
     },
     selectRow(row) {
       this.selectedIndex = this.selectedIndex === row._origIndex ? null : row._origIndex;
-      if (this.selectedIndex !== null) {
+      // Deselecting has to say so, or the map keeps highlighting a row that may
+      // now be pages away with nothing left to click to clear it.
+      if (this.selectedIndex === null) {
+        this.$emit('select-row', { origIndex: null, bbox: null });
+      }
+      else {
         let bbox = null;
         if (this.bboxMapping) {
           bbox = [
@@ -311,6 +415,22 @@ export default {
 .parquet-scroll-container {
   overflow: auto;
   max-height: 400px;
+}
+
+.parquet-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  background: $light;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.parquet-page-info {
+  font-size: 0.8rem;
+  color: $secondary;
+  white-space: nowrap;
 }
 
 .parquet-data-table {
