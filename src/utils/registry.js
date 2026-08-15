@@ -32,6 +32,20 @@ function catalogUrl(href) {
   return url.toString();
 }
 
+// A logo is fetched and rendered by the browser, so its href goes through the
+// same gate as the catalog's: an `href` the registry supplies is not trusted to
+// be a plain URL just because it sits under a different key.
+function catalogLogo(logo) {
+  if (!isObject(logo)) {
+    return null;
+  }
+  const href = catalogUrl(logo.href);
+  if (href === null) {
+    return null;
+  }
+  return { href, title: hasText(logo.title) ? logo.title : null };
+}
+
 // A count the registry could not measure is left out rather than shown as zero.
 function positiveInteger(value) {
   return Number.isInteger(value) && value > 0 ? value : null;
@@ -48,7 +62,7 @@ function positiveInteger(value) {
  * localise them.
  *
  * @param {object} data The parsed `exports/catalogs.json` of the registry.
- * @returns {Array.<object>} Entries with `id`, `title`, `url`, `isApi` and counts.
+ * @returns {Array.<object>} Entries with `id`, `title`, `url`, `isApi`, `logo` and counts.
  */
 export function parseRegistryExport(data) {
   if (!isObject(data) || !Array.isArray(data.links)) {
@@ -79,6 +93,7 @@ export function parseRegistryExport(data) {
       title: hasText(link.title) ? link.title : id,
       url,
       isApi: link['portolan_registry:api_type'] === 'api',
+      logo: catalogLogo(link['portolan_registry:logo']),
       collectionCount: positiveInteger(link['portolan_registry:collection_count']),
       featureCount: positiveInteger(link['portolan_registry:feature_count']),
       countsPartial: link['portolan_registry:counts_partial'] === true

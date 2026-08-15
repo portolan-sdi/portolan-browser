@@ -17,12 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - The catalog list on the start page is pulled from the [Portolan registry](https://github.com/portolan-sdi/portolan-registry), configurable via the new `registryUrl` option
+- Catalogs on the start page show the publisher's logo where the registry has one
 - Search filters are now preserved for collection and item searches
 - Opening a collection from the collection search results carries the search criteria over into its item filters
 - An indicator on the item filter toggle shows when the filters were changed but not applied yet
 - Added basic support for the STAC API extensions Transactions (for Items) and Collection Transactions, including validation
   - Adds three new config options: `transactions`, `transactionsRequireLogin` and `transactionsRequirePreflight`
   - Support for external management UIs via `create-form` and `edit-form` links ([RFC 6861](https://www.rfc-editor.org/rfc/rfc6861.html)) in the "Manage" menu
+
+### Changed
+
+- The catalog list on the start page names the Portolan registry and links to it
+
+### Removed
+
+- The "Static Catalog" badge on the start page; only API entries carry a badge now
+- The host line under each catalog on the start page, which repeated the same host down the whole list
 
 ### Fixed
 

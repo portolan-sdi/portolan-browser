@@ -41,15 +41,21 @@ test.describe('STAC Browser Data Source Selection', () => {
     const count = await indexButtons.count();
     expect(count).toBeGreaterThan(10);
     
-    // each entry should have a title and mention either API or Catalog
-    await Promise.all(Array.from({ length: count }, (_, i) => {
-      const btn = indexButtons.nth(i);
-      return Promise.all([
-        expect(btn.locator('strong')).toHaveCount(1),
-        // the button text should include 'API' or 'Catalog' indicating badge
-        expect(btn).toContainText(/API|Catalog/i)
-      ]);
-    }));
+    // every entry should have a title
+    await Promise.all(Array.from({ length: count }, (_, i) =>
+      expect(indexButtons.nth(i).locator('strong')).toHaveCount(1)
+    ));
+
+    // Only API entries carry a badge; a static catalog is shown without one. Count
+    // the badges rather than the button text, which would also match a title that
+    // happens to contain the word.
+    const apiCatalogs = listedCatalogs.filter(
+      link => link['portolan_registry:api_type'] === 'api'
+    );
+    expect(apiCatalogs.length).toBeGreaterThan(0);
+    const badges = page.locator('.stac-index button .badge');
+    await expect(badges).toHaveCount(apiCatalogs.length);
+    await expect(badges.first()).toHaveText(/API/i);
   });
   
   test('should render language dropdown with flag icon and correct defaults', async ({ page }) => {

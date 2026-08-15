@@ -27,6 +27,7 @@ describe('parseRegistryExport', () => {
       title: 'Example Catalog',
       url: 'https://stac.example/catalog.json',
       isApi: false,
+      logo: null,
       collectionCount: 3,
       featureCount: 1234567,
       countsPartial: false
@@ -102,6 +103,40 @@ describe('parseRegistryExport', () => {
     ]));
     expect(entries).toHaveLength(2);
     expect(new Set(entries.map(e => e.id)).size).toBe(2);
+  });
+
+  it('carries the logo the registry publishes', () => {
+    const [entry] = parseRegistryExport(exportDoc([child({
+      'portolan_registry:logo': {
+        href: 'https://stac.example/_assets/mark.svg',
+        type: 'image/svg+xml',
+        title: 'Example Org'
+      }
+    })]));
+    expect(entry.logo).toEqual({ href: 'https://stac.example/_assets/mark.svg', title: 'Example Org' });
+  });
+
+  // A logo href is fetched and rendered by the browser, so it gets the same
+  // gate as the catalog href rather than being trusted for sitting elsewhere.
+  it('refuses a logo that is not a plain http(s) URL', () => {
+    for (const logo of [
+      { href: 'javascript:alert(1)' },
+      { href: 'data:image/svg+xml,<svg onload=alert(1)/>' },
+      { href: '   ' },
+      { href: 'https://user:pw@stac.example/mark.svg' },
+      'not-an-object',
+      null
+    ]) {
+      const [entry] = parseRegistryExport(exportDoc([child({ 'portolan_registry:logo': logo })]));
+      expect(entry.logo).toBeNull();
+    }
+  });
+
+  it('keeps a logo with no title', () => {
+    const [entry] = parseRegistryExport(exportDoc([child({
+      'portolan_registry:logo': { href: 'https://stac.example/mark.png' }
+    })]));
+    expect(entry.logo).toEqual({ href: 'https://stac.example/mark.png', title: null });
   });
 
   it('falls back to the registry id when a title is missing', () => {

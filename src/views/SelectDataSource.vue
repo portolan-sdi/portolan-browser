@@ -24,7 +24,15 @@
     </b-alert>
     <b-form-group v-if="catalogs.length > 0" class="stac-index">
       <template #label>
-        {{ $t('index.selectPortolan') }}
+        <i18n-t keypath="index.selectFromRegistry" tag="span" scope="global">
+          <template #registry>
+            <a
+              href="https://github.com/portolan-sdi/portolan-registry"
+              target="_blank" rel="noopener noreferrer"
+              @click.stop
+            >{{ $t('index.portolanRegistry') }}</a>
+          </template>
+        </i18n-t>
       </template>
       <b-list-group> 
         <template v-for="catalog in catalogs" :key="catalog.id">
@@ -33,13 +41,26 @@
             :active="url === catalog.url"
             @click="open(catalog.url)"
           >
-            <div class="d-flex justify-content-between align-items-baseline mb-1">
-              <strong>{{ catalog.title }}</strong>
-              <b-badge v-if="catalog.isApi" variant="danger">{{ $t('index.api') }}</b-badge>
-              <b-badge v-else variant="success">{{ $t('index.catalog') }}</b-badge>
+            <div class="catalog-entry">
+              <!-- The logo is decorative: the name it stands for is right beside it,
+                   so alt text here would only make a screen reader say it twice. -->
+              <span class="catalog-logo">
+                <img
+                  v-if="catalog.logo && !failedLogos.has(catalog.id)"
+                  :src="catalog.logo.href"
+                  alt=""
+                  loading="lazy" referrerpolicy="no-referrer"
+                  @error="failedLogos.add(catalog.id)"
+                >
+              </span>
+              <span class="catalog-detail">
+                <span class="d-flex justify-content-between align-items-baseline mb-1">
+                  <strong>{{ catalog.title }}</strong>
+                  <b-badge v-if="catalog.isApi" variant="danger">{{ $t('index.api') }}</b-badge>
+                </span>
+                <Description v-if="summary(catalog)" :description="summary(catalog)" compact />
+              </span>
             </div>
-            <Description v-if="summary(catalog)" :description="summary(catalog)" compact />
-            <small class="text-muted catalog-host">{{ host(catalog.url) }}</small>
           </b-list-group-item>
         </template>
       </b-list-group>
@@ -71,7 +92,10 @@ export default defineComponent({
       url: '',
       catalogs: [],
       registryError: false,
-      registryLoading: false
+      registryLoading: false,
+      // A logo is a URL on someone else's host; when one 404s or is blocked,
+      // drop it rather than leave a broken-image glyph in the list.
+      failedLogos: new Set()
     };
   },
   computed: {
@@ -148,14 +172,6 @@ export default defineComponent({
       const text = parts.join(' · ');
       return catalog.countsPartial ? this.$t('index.registryCountsPartial', { counts: text }) : text;
     },
-    host(url) {
-      try {
-        return new URL(url).host;
-      }
-      catch {
-        return url;
-      }
-    },
     show(catalog) {
       if(!this.url) {
         return true;
@@ -187,6 +203,37 @@ export default defineComponent({
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+
+  // Logo beside the text rather than above it, in a slot of fixed width so the
+  // titles line up down the list whether or not a catalog has one — only about
+  // half of them do.
+  .catalog-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .catalog-logo {
+    flex: 0 0 4rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-top: 0.1rem;
+
+    img {
+      // Logos arrive as anything from a square mark to a wide wordmark, so bound
+      // both axes and let the aspect ratio survive.
+      max-width: 4rem;
+      max-height: 2.5rem;
+      object-fit: contain;
+    }
+  }
+
+  .catalog-detail {
+    flex: 1;
+    min-width: 0;
+    display: block;
+  }
 
   hr {
     width: 100%;
