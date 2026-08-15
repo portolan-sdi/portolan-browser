@@ -231,14 +231,8 @@ export default {
 }
 
 .parquet-header {
-  @include section-header;
+  @include section-header(".parquet-title");
   gap: 0.5rem;
-
-  &:hover {
-    .parquet-title {
-      color: $dark;
-    }
-  }
 }
 
 .parquet-header-left {
@@ -250,12 +244,6 @@ export default {
     color: $secondary;
     flex-shrink: 0;
   }
-}
-
-.parquet-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: $secondary;
 }
 
 .parquet-file-badge {

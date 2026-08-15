@@ -3,25 +3,32 @@
 // Import alongside variables.scss in a component's <style> block:
 //   @import "../theme/variables.scss";
 //   @import "../theme/mixins.scss";
+@import "variables.scss";
 
 // The head of a collapsible section: a title on the left, a chevron or badge on
 // the right, and a rule underneath. Used by the Metadata groups, the Catalog
-// thumbnails section and the Parquet viewer, which previously each carried their
-// own copy of the same slate hex values and drifted from the palette on a
+// thumbnails section and the Parquet viewer, which previously each carried
+// their own copy of the same slate hex values and drifted from the palette on a
 // rebrand.
 //
-// Components supply their own inner markup; the h3/svg rules below apply only
-// where those elements exist.
-@mixin section-header {
+// The title selector is a parameter because the three call sites do not agree
+// on their markup: two use an `h3`, the Parquet viewer a `span`. Passing it in
+// keeps the viewer's head styled like the other two instead of silently taking
+// only the layout and keeping its own colours.
+//
+// `$h4-font-size` rather than `$h3-font-size`: these heads have always rendered
+// at 1.1rem, and a section head is meant to sit below a page heading. The token
+// carries the intent that the old hardcoded 1.1rem only implied.
+@mixin section-header($title: "h3") {
   display: flex;
   align-items: center;
   justify-content: space-between;
   cursor: pointer;
   padding: 0.5rem 0;
-  border-bottom: 1px solid rgba($headings-color, 0.12);
+  border-bottom: 1px solid $border-color;
 
-  h3 {
-    font-size: $h3-font-size;
+  #{$title} {
+    font-size: $h4-font-size;
     font-weight: 600;
     color: $headings-color;
   }
@@ -31,7 +38,7 @@
   }
 
   &:hover {
-    h3,
+    #{$title},
     svg {
       color: $link-color;
     }
