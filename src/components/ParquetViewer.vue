@@ -39,7 +39,6 @@
         :totalRows="tableData.totalRows"
         :loadedRows="tableData.loadedRows"
         :geometryColumn="geoInfo.geometryColumn"
-        :geometryTypes="geometryTypes"
         :bboxMapping="geoInfo.bboxMapping"
         @zoom-to-feature="onZoomToFeature"
         @select-row="onSelectRow"
@@ -57,7 +56,6 @@ import {
   findParquetAssets,
   loadParquetMetadata,
   loadParquetRows,
-  loadGeometryTypesForRows,
   getBboxForRow,
   MAX_ROWS,
 } from '../utils/parquet';
@@ -89,7 +87,6 @@ export default {
       parquetMetadata: null,
       tableData: null,
       geoInfo: { geometryColumn: null, bboxMapping: null, crs: null, crsDefinition: null },
-      geometryTypes: [],
     };
   },
   computed: {
@@ -129,7 +126,6 @@ export default {
       this.loading = true;
       this.error = null;
       this.tableData = null;
-      this.geometryTypes = [];
 
       try {
         const url = this.selectedAsset.getAbsoluteUrl();
@@ -149,13 +145,6 @@ export default {
           meta.file, meta.metadata, meta.columnNames, meta.geometryColumn
         );
         this.tableData = data;
-
-        if (meta.geometryColumn) {
-          this.loadingMessage = 'Reading geometry types...';
-          this.geometryTypes = await loadGeometryTypesForRows(
-            meta.file, meta.metadata, meta.geometryColumn, data.loadedRows
-          );
-        }
       } catch (err) {
         console.error('ParquetViewer: failed to load', err);
         if (err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
