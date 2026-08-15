@@ -1,0 +1,2 @@
+import{P as n,h as o,p as t,n as r}from"./index-D6CPtrAy.js";const a={viewBox:"0 0 16 16",width:"1.2em",height:"1.2em"};function l(i,e){return o(),t("svg",a,[...e[0]||(e[0]=[r("path",{fill:"currentColor","fill-rule":"evenodd",d:"M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8L4.646 2.354a.5.5 0 0 1 0-.708"},null,-1)])])}const c=n({name:"bi-chevron-right",render:l});export{c as _};
+//# sourceMappingURL=chevron-right-8U62YRS9.js.map
