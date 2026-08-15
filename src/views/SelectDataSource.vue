@@ -57,7 +57,6 @@
                   <b-badge v-if="catalog.isApi" variant="danger">{{ $t('index.api') }}</b-badge>
                 </span>
                 <Description v-if="summary(catalog)" :description="summary(catalog)" compact />
-                <small class="text-muted catalog-host">{{ host(catalog.url) }}</small>
               </span>
             </div>
           </b-list-group-item>
@@ -170,14 +169,6 @@ export default defineComponent({
       }
       const text = parts.join(' · ');
       return catalog.countsPartial ? this.$t('index.registryCountsPartial', { counts: text }) : text;
-    },
-    host(url) {
-      try {
-        return new URL(url).host;
-      }
-      catch {
-        return url;
-      }
     },
     show(catalog) {
       if(!this.url) {
