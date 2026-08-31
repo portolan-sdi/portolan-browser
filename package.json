@@ -1,8 +1,9 @@
 {
-  "name": "@radiantearth/stac-browser",
-  "version": "5.1.0-dev",
+  "name": "portolan-browser",
+  "version": "0.1.0",
+  "private": true,
   "type": "module",
-  "description": "A full-fledged UI in Vue for browsing and searching static STAC catalogs and STAC APIs.",
+  "description": "A web viewer for Portolan catalogs, forked from STAC Browser.",
   "main": "src/main.js",
   "scripts": {
     "start": "vite",
@@ -28,17 +29,13 @@
     "prepare": "husky"
   },
   "bugs": {
-    "url": "https://github.com/radiantearth/stac-browser/issues"
+    "url": "https://github.com/portolan-sdi/portolan-browser/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/radiantearth/stac-browser.git"
+    "url": "https://github.com/portolan-sdi/portolan-browser.git"
   },
-  "funding": {
-    "type": "github",
-    "url": "https://github.com/sponsors/m-mohr"
-  },
-  "author": "moreGeo GmbH <mail@moregeo.it>",
+  "author": "Portolan SDI",
   "contributors": [
     {
       "name": "Matthias Mohr"
@@ -48,6 +45,10 @@
     },
     {
       "name": "Seth Fitzsimmons"
+    },
+    {
+      "name": "moreGeo GmbH",
+      "url": "https://moregeo.it"
     }
   ],
   "license": "ISC",

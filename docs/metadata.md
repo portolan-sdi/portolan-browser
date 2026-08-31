@@ -43,7 +43,7 @@ Please check the field specification for available options.
 
 ### Translation
 
-STAC Browser supports [multiple languages](../README.md#languages).
+STAC Browser supports [multiple languages](./localization.md).
 If you use more than one language, you likely want to also translate the phrases that you've added above (in the example `Data Access`, `Public` and `Private`, assuming that `Radiant Earth` is a name and doesn't need to be translated).
 All new phrases should be added to the [active languages](./options.md#supportedlocales).
 To add the phrases mentioned above you need to go through the folders in `src/locales` and in the folders of the active languages update the file `custom.json` as described in the section that describes [adding custom phrases](./localization.md#custom-phrases).

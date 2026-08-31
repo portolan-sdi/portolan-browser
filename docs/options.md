@@ -7,7 +7,7 @@ The following ways to set config options are possible:
 
 - Customize the **[config file](../config.js)** (recommended)
 - Load an **external config file** via `SB_CONFIG`
-- Additionally, some options can be [provided through the **root catalog**](../README.md#customization-through-root-catalog) for consistency across multiple deployments
+- Additionally, some options can be [provided through the **root catalog**](#customization-through-root-catalog) for consistency across multiple deployments
 - Set **environment variables**, all options need a `SB_` prefix.
   So you could for example set the catalog URL via the environment variable `SB_catalogUrl`.
   Vite loads `.env`, `.env.local`, `.env.[mode]` and `.env.[mode].local` automatically, so `SB_*` variables can be stored there.
@@ -55,6 +55,7 @@ The override order for the configuration is:
   - [footerLinks](#footerlinks)
   - [apiCatalogPriority](#apicatalogpriority)
 - [Deployment](#deployment)
+- [Customization Through Root Catalog](#customization-through-root-catalog)
   - [historyMode](#historymode)
     - [`history`](#history)
     - [`hash`](#hash)
@@ -749,3 +750,25 @@ preprocessSTAC: (stac, state, getters) => {
     return stac;
 }
 ```
+
+## Customization Through Root Catalog
+
+A root catalog can carry some of these options itself, which keeps them consistent across every
+deployment that reads it. Add a `stac_browser` field to the root catalog and set any of the following:
+
+- `apiCatalogPriority`
+- `cardViewMode`
+- `crossOriginMedia`
+- `defaultCollectionSort`
+- `defaultItemSort`
+- `defaultThumbnailSize`
+- `displayGeoTiffByDefault`
+- `preferredAssets`
+- `showThumbnailsAsAssets`
+
+Separately, an `extent` object placed **outside** the `stac_browser` field declares the bounding box and
+temporal extent of the catalog or API, following the
+[Extent Object](https://github.com/radiantearth/stac-spec/blob/master/collection-spec/collection-spec.md#extent-object)
+in the Collection specification. Collection Search and Global Item Search use it to bound their bounding
+box and temporal selections. Where the root catalog cannot be edited, [`preprocessSTAC`](#preprocessstac)
+can add it at runtime.
