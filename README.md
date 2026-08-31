@@ -48,9 +48,6 @@ off the main thread. Where a collection uses the STAC [render extension](https:/
 the browser applies its colormap, rescale, and nodata values, and lists each named render as a style you
 can switch between.
 
-**PMTiles and vector tiles.** Large tiled datasets load from a single PMTiles archive or from an
-XYZ/TileJSON endpoint.
-
 **A start page built from the registry.** The catalog list comes from the Portolan registry's nightly
 crawl rather than a list hardcoded in this repository. Entries show the publisher's logo and the
 collection and feature counts the crawl measured. Point [`registryUrl`](docs/options.md#registryurl)

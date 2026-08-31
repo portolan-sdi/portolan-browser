@@ -35,9 +35,9 @@ These are the differences from upstream STAC Browser, accumulated since the fork
 - A data preview panel lists GeoParquet rows with a per-column filter
 - COG assets decode client-side through deck.gl-geotiff in a Web Worker, and the STAC `render` extension
   supplies colormap, rescale, and nodata values as switchable named styles
-- PMTiles archives and XYZ/TileJSON vector tiles render as collection layers
 - The start page is built from the Portolan registry rather than a list held in this repository
-- MapLibre GL replaces OpenLayers as the mapping library, and basemaps are MapLibre style documents
+- MapLibre GL replaces OpenLayers as the mapping library, so publisher styles, PMTiles archives, and
+  deck.gl layers all run on one renderer. Basemaps are MapLibre style documents
 - The map expands in place instead of entering fullscreen
 
 ### Detailed Changes
