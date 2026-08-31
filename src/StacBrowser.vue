@@ -86,7 +86,9 @@
       </ul>
       <i18n-t tag="small" keypath="poweredBy" class="poweredby text-body-secondary" scope="global">
         <template #link>
-          <a href="https://github.com/radiantearth/stac-browser" target="_blank" rel="noopener noreferrer">STAC Browser</a> {{ browserVersion }}
+          <a href="https://github.com/portolan-sdi/portolan-browser" target="_blank" rel="noopener noreferrer">Portolan Browser</a> {{ browserVersion }},
+          {{ $t('builtOn', 'built on') }}
+          <a href="https://github.com/radiantearth/stac-browser" target="_blank" rel="noopener noreferrer">STAC Browser</a>
         </template>
       </i18n-t>
     </footer>

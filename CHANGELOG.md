@@ -7,14 +7,45 @@
 
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to Portolan Browser are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Portolan Browser is a fork of [STAC Browser](https://github.com/radiantearth/stac-browser) and versions
+independently of it. Entries above [Upstream STAC Browser History](#upstream-stac-browser-history) belong
+to this fork. The upstream history is kept below for reference, and its version numbers are upstream's.
+Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
+
 ## [Unreleased][]
 
-### Added
+## [0.1.0][] - 2026-08-31
+
+First release of the Portolan fork, and the reference implementation for
+[Portolan 0.1](https://github.com/portolan-sdi/portolan-spec).
+
+### Fork Highlights
+
+These are the differences from upstream STAC Browser, accumulated since the fork.
+
+- Collection MapLibre GL styles carried as `style`-role assets are discovered and applied, with a style
+  picker and legend when a collection ships more than one
+- GeoParquet assets are read in the browser with hyparquet and drawn on the map without a tile server,
+  including reprojection to lon/lat for files in a projected CRS
+- A data preview panel lists GeoParquet rows with a per-column filter
+- COG assets decode client-side through deck.gl-geotiff in a Web Worker, and the STAC `render` extension
+  supplies colormap, rescale, and nodata values as switchable named styles
+- The start page is built from the Portolan registry rather than a list held in this repository
+- MapLibre GL replaces OpenLayers as the mapping library, so publisher styles, PMTiles archives, and
+  deck.gl layers all run on one renderer. Basemaps are MapLibre style documents
+- The map expands in place instead of entering fullscreen
+
+### Detailed Changes
+
+The sections below list every change since upstream 5.0.0. Some arrived through upstream syncs rather
+than fork work.
+
+#### Added
 
 - The catalog list on the start page is pulled from the [Portolan registry](https://github.com/portolan-sdi/portolan-registry), configurable via the new `registryUrl` option
 - Catalogs on the start page show the publisher's logo where the registry has one
@@ -25,22 +56,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Adds three new config options: `transactions`, `transactionsRequireLogin` and `transactionsRequirePreflight`
   - Support for external management UIs via `create-form` and `edit-form` links ([RFC 6861](https://www.rfc-editor.org/rfc/rfc6861.html)) in the "Manage" menu
 
-### Changed
+#### Changed
 
 - The catalog list on the start page names the Portolan registry and links to it
 
-### Removed
+#### Removed
 
 - The "Static Catalog" badge on the start page; only API entries carry a badge now
 - The host line under each catalog on the start page, which repeated the same host down the whole list
 
-### Fixed
+#### Fixed
 
 - Basemap place and street labels draw above collection data, and basemap buildings draw below it
 - Collapsible section headers follow the theme palette instead of hardcoded colours, so a rebrand reaches them
 - The map style picker lists each style once when a collection declares it both as an asset and in a `portolan:styles` manifest
 - The GeoParquet data preview no longer freezes the tab on a wide table: rendering is paginated within a fixed cell budget and filtering is debounced
 - The Search page restores the previous results when returning to it
+
+## Upstream STAC Browser History
+
+Everything below is the changelog of [STAC Browser](https://github.com/radiantearth/stac-browser), the
+project this fork is based on. These version numbers are upstream's, not Portolan Browser's.
 
 ## [5.0.0] - 2026-07-31
 
@@ -274,7 +310,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 For releases prior to v4.0.0, please refer to the
 [release notes in the GitHub Releases](https://github.com/radiantearth/stac-browser/releases).
 
-[Unreleased]: https://github.com/radiantearth/stac-browser/compare/v5.0.0...HEAD
+[Unreleased]: https://github.com/portolan-sdi/portolan-browser/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/portolan-sdi/portolan-browser/releases/tag/v0.1.0
 [5.0.0]: https://github.com/radiantearth/stac-browser/compare/v5.0.0-rc.2...v5.0.0
 [5.0.0-rc.2]: https://github.com/radiantearth/stac-browser/compare/v5.0.0-rc.1...v5.0.0-rc.2
 [5.0.0-rc.1]: https://github.com/radiantearth/stac-browser/compare/v5.0.0-beta.1...v5.0.0-rc.1

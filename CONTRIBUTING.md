@@ -16,7 +16,7 @@ STAC Browser is following the [STAC code of conduct](https://github.com/radiante
 STAC Browser builds on top of [VueJS 3](https://vuejs.org/) and [Vite](https://vite.dev),
 so you need a recent version of [NodeJS and npm](https://nodejs.org/en/) installed.
 
-You can run the following commands (see also "[Get started](README.md#get-started)" in the README):
+You can run the following commands (see also "[Quick Start](README.md#quick-start)" in the README):
 
 - Getting Started
   - `npm run install`: Install the dependencies, this is required once at the beginning.
