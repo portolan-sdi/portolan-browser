@@ -19,13 +19,13 @@ records where that colour comes from.
 
 The browser resolves the colouring of each COG asset in this order.
 
-1. **Colour hints on the asset's own classes.** Where the first band of the asset carries
+1. **Colour hints on the asset's own classes.** Where the first band of the asset holds
    `classification:classes` with `color_hint` values, the browser builds a discrete colormap from
-   them. A render that names the asset still supplies the layer title and the nodata values, and its
-   own colormap is ignored.
-2. **A render that names the asset.** The browser applies the `colormap` or `colormap_name`,
+   them. A render that lists the asset still supplies the layer title and the nodata values, and the
+   browser ignores its colormap.
+2. **A render that lists the asset.** The browser applies the `colormap` or `colormap_name`,
    `rescale`, `nodata`, and `bidx` fields of the first render whose `assets` list holds the asset key.
-3. **The first declared render.** For an asset that no render names, the browser reuses the first
+3. **The first declared render.** Where every render omits the asset, the browser reuses the first
    render in declaration order and stretches it to the band statistics of the asset.
 
 An asset that matches none of these draws through the `viridis` ramp.
@@ -60,12 +60,12 @@ A `color_hint` is six hexadecimal digits without a leading `#`, as the extension
 named `background`, `nodata`, `no_data`, or `no-data` draw transparent, as does the class whose value
 matches the `nodata` of the band. A class with no usable hint draws transparent too.
 
-Where no class carries a hint, the browser falls through to the render rules below.
+Where no class has a usable hint, the browser applies the render rules below.
 
 ## Colormaps in a render
 
-The [render extension](https://github.com/stac-extensions/render) names a colormap for one or more
-assets. `colormap_name` selects a built-in ramp. `colormap` carries an explicit table, in any of
+The [render extension](https://github.com/stac-extensions/render) specifies a colormap for one or
+more assets. `colormap_name` selects a built-in ramp. `colormap` holds an explicit table, in any of
 three forms.
 
 ### Discrete colormap
@@ -117,14 +117,14 @@ interpolates between the stops, which suits a continuous band such as a distance
 }
 ```
 
-A colormap that the browser cannot parse falls back to the `viridis` ramp. The tables are also
-bounded: a colormap of more than 1024 entries is rejected, because a catalog is untrusted input.
+A colormap that the browser cannot parse falls back to the `viridis` ramp. The parser also rejects
+a colormap of more than 1024 entries, because a catalog supplies untrusted input.
 
 ## Legend
 
 The layer control lists one row per class under a raster layer that draws from a discrete colormap or
-from class colour hints. Each row shows the swatch and the class name. Where no class names the
-value, the row shows the pixel value instead. An interval row shows its range. A continuous ramp gets
-no rows, because a list of swatches cannot describe one.
+from class colour hints. Each row shows the swatch and the class name. Where the classes define no
+name for a value, the row shows the pixel value instead. An interval row shows its range. A
+continuous ramp gets no rows, because a list of swatches cannot describe one.
 
 The list stops at 32 rows.
