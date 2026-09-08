@@ -26,6 +26,14 @@
               >
                 {{ layer.title }}
               </b-form-checkbox>
+              <!-- A categorical raster is unreadable without the class names,
+                   so the swatches sit under the layer they belong to. -->
+              <ul v-if="layer.legend && layer.legend.length > 0" class="layer-legend">
+                <li v-for="(entry, i) in layer.legend" :key="i">
+                  <span class="legend-swatch" :style="{ backgroundColor: entry.color }" />
+                  {{ entry.label }}
+                </li>
+              </ul>
             </li>
           </ul>
         </section>
@@ -175,6 +183,28 @@ export default {
     li {
       padding-left: 0.5em;
     }
+  }
+
+  .layer-legend {
+    padding-left: 1.75em;
+
+    li {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding-left: 0;
+      font-size: 0.75rem;
+      line-height: 1.6;
+    }
+  }
+
+  .legend-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    flex-shrink: 0;
   }
 }
 

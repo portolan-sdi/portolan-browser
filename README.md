@@ -44,9 +44,11 @@ Reading the attributes no longer means downloading the file and opening somethin
 
 **Cloud-Optimized GeoTIFF rendered client-side.** COG assets decode through
 [deck.gl-geotiff](https://github.com/developmentseed/deck.gl-geotiff) in a Web Worker, which keeps decompression
-off the main thread. Where a collection uses the STAC [render extension](https://github.com/stac-extensions/render),
+off the main thread. A categorical raster takes its colours from the `color_hint` values of its own
+[classification classes](https://github.com/stac-extensions/classification), and the layer control lists those
+classes as a legend. Where a collection uses the STAC [render extension](https://github.com/stac-extensions/render),
 the browser applies its colormap, rescale, and nodata values, and lists each named render as a style you
-can switch between.
+can switch between. See [rasters.md](docs/rasters.md) for the full order of precedence.
 
 **A start page built from the registry.** The catalog list comes from the Portolan registry's nightly
 crawl rather than a list hardcoded in this repository. Entries show the publisher's logo and the
@@ -136,6 +138,7 @@ The full list is in the **[options documentation](docs/options.md)**.
 | Styling and theming | [styling.md](docs/styling.md) |
 | Translations and locales | [localization.md](docs/localization.md) |
 | Metadata rendering and custom fields | [metadata.md](docs/metadata.md) |
+| Raster rendering, colormaps, and legends | [rasters.md](docs/rasters.md) |
 | Widgets | [widgets.md](docs/widgets.md) |
 | Actions on links and assets | [actions.md](docs/actions.md) |
 | Code snippet generators | [code-generators.md](docs/code-generators.md) |

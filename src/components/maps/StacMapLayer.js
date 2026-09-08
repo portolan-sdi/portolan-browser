@@ -1,7 +1,10 @@
 import { STACReference } from 'stac-js';
 import { PMTiles, SharedPromiseCache } from 'pmtiles';
 import { pmtilesProtocol } from './MapMixin.js';
-import { resolveRenders, makeRenderTileLoader } from '../../utils/renders.js';
+import {
+  resolveRenders, makeRenderTileLoader, renderFromClassification,
+  classificationClasses, discreteLegend,
+} from '../../utils/renders.js';
 // Import the @developmentseed/geotiff decode worker via Vite's `?worker` suffix
 // (not a side-effect `import`): the library declares `sideEffects: false`, so a
 // bare re-export gets tree-shaken to an empty worker in production builds. The
@@ -987,16 +990,26 @@ export default class StacMapLayer {
         asset,
         title: resolved.title || asset.title || key,
         render: resolved.render,
+        // Names the colours for the layer picker. Empty for a continuous ramp.
+        legend: discreteLegend(resolved.render, resolved.classes),
         visible: activeKeys.has(key),
       };
     });
   }
 
   /**
-   * Resolve which render (colormap/rescale) to apply to a display asset. Uses a
-   * render that explicitly targets the asset; otherwise synthesises one from the
-   * item's first render, stretched to the asset's own band statistics so an 8-bit
-   * `visual` asset matches the colours of its full-resolution source.
+   * Resolve which render (colormap/rescale) to apply to a display asset, in
+   * this order:
+   *
+   * 1. The asset's own `classification:classes` colour hints, where it has
+   *    them. They colour the pixels and name the classes, so a categorical mask
+   *    draws and legends correctly with no render at all. A render that targets
+   *    the asset still supplies the title and the nodata sentinels; its
+   *    colormap is ignored, because the class hints are more specific.
+   * 2. A render that explicitly targets the asset.
+   * 3. The item's first render, stretched to the asset's own band statistics so
+   *    an 8-bit `visual` asset matches the colours of its full-resolution
+   *    source.
    *
    * "First render" means the first in the render extension's declaration order
    * (`renders` is a JSON object whose key order is preserved through parsing).
@@ -1007,6 +1020,21 @@ export default class StacMapLayer {
     const key = cogKey(asset);
     const entries = Object.entries(renders);
     const direct = entries.find(([, r]) => (r.assets || []).includes(key));
+
+    const classified = renderFromClassification(asset);
+    if (classified) {
+      const targeting = direct?.[1];
+      const nodata = [...new Set([...classified.nodata, ...[targeting?.nodata].flat()])]
+        .filter(v => v != null);
+      return {
+        id: direct?.[0] ?? null,
+        asset,
+        render: { ...classified, nodata },
+        title: targeting?.title || asset.title || key,
+        classes: classificationClasses(asset),
+      };
+    }
+
     if (direct) {
       return { id: direct[0], asset, render: direct[1], title: direct[1].title || direct[0] };
     }
@@ -1201,6 +1229,7 @@ export default class StacMapLayer {
         title: d.title || d.id,
         type: 'deckgl',
         visible: d.visible,
+        legend: d.legend || [],
       });
     }
     return overlays;

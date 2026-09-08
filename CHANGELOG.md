@@ -19,6 +19,13 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ## [Unreleased][]
 
+### Added
+
+- A categorical COG takes its colours from the `color_hint` values of its own `classification:classes`,
+  ahead of any colormap in a render, and the layer control lists the class names as a legend
+- The `colormap` field of a render accepts the discrete object and interval-list forms the render
+  extension documents, besides the linear stops list read until now
+
 ## [0.1.0][] - 2026-08-31
 
 First release of the Portolan fork, and the reference implementation for

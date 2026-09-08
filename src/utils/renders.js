@@ -52,6 +52,97 @@ function isValidStops(stops) {
     && s[1].slice(0, 3).every(c => typeof c === 'number'));
 }
 
+// --- Discrete colormaps -----------------------------------------------------
+//
+// Besides the linear stops list above, the render extension carries titiler's
+// two discrete colormap forms:
+//
+//   { "1": [0, 158, 115, 255], "2": [213, 94, 0, 255] }   value -> RGBA
+//   [ [[0, 1], [0, 158, 115]], [[1, 2], [213, 94, 0]] ]   interval -> RGBA
+//
+// Both look up by pixel VALUE, not by the rescaled 0..1 position a ramp uses. A
+// value with no entry draws transparent, exactly like nodata. An interval
+// matches when `min <= v < max`; the last interval also matches its own `max`.
+
+// Catalog colormaps are untrusted, so cap the table and reject non-numeric
+// channels rather than build NaN colours or an unbounded map.
+const MAX_COLORMAP_ENTRIES = 1024;
+// Values at or below this bound get a dense array instead of a Map, which keeps
+// the per-pixel cost of a class mask (values 0..255) to one array index.
+const MAX_DENSE_VALUE = 4095;
+// A swatch list longer than this is not a legend any more.
+const MAX_LEGEND_ROWS = 32;
+
+/** Normalize `[r, g, b]` or `[r, g, b, a]` to RGBA, or null when malformed. */
+function toRgba(color) {
+  if (!Array.isArray(color) || color.length < 3 || color.length > 4) {return null;}
+  if (!color.every(c => typeof c === 'number' && Number.isFinite(c))) {return null;}
+  return new Uint8ClampedArray([
+    color[0], color[1], color[2], color.length === 4 ? color[3] : 255,
+  ]);
+}
+
+/** Parse the `{ "<value>": [r, g, b(, a)] }` form into [value, RGBA] pairs. */
+function parseDiscreteEntries(colormap) {
+  if (!colormap || typeof colormap !== 'object' || Array.isArray(colormap)) {return null;}
+  const keys = Object.keys(colormap);
+  if (keys.length === 0 || keys.length > MAX_COLORMAP_ENTRIES) {return null;}
+  const entries = [];
+  for (const key of keys) {
+    const value = Number(key);
+    const rgba = toRgba(colormap[key]);
+    if (key.trim() === '' || !Number.isFinite(value) || !rgba) {return null;}
+    entries.push([value, rgba]);
+  }
+  return entries;
+}
+
+/** Parse the `[[[min, max], [r, g, b(, a)]], ...]` form into intervals. */
+function parseIntervalEntries(colormap) {
+  if (!Array.isArray(colormap) || colormap.length === 0
+    || colormap.length > MAX_COLORMAP_ENTRIES) {return null;}
+  const intervals = [];
+  for (const entry of colormap) {
+    if (!Array.isArray(entry) || entry.length !== 2) {return null;}
+    const [range, color] = entry;
+    if (!Array.isArray(range) || range.length !== 2) {return null;}
+    if (!range.every(n => typeof n === 'number' && Number.isFinite(n))) {return null;}
+    const rgba = toRgba(color);
+    if (!rgba) {return null;}
+    intervals.push({ min: range[0], max: range[1], rgba });
+  }
+  return intervals;
+}
+
+/**
+ * Build a `value -> RGBA` sampler for a discrete or interval colormap. Returns
+ * null when the colormap is neither, so the caller falls back to the ramp path.
+ * The sampler returns null for a value the colormap does not cover.
+ */
+function buildValueSampler(colormap) {
+  const discrete = parseDiscreteEntries(colormap);
+  if (discrete) {
+    const dense = discrete.every(([v]) => Number.isInteger(v) && v >= 0 && v <= MAX_DENSE_VALUE);
+    if (dense) {
+      const table = new Array(Math.max(...discrete.map(([v]) => v)) + 1).fill(null);
+      for (const [value, rgba] of discrete) {table[value] = rgba;}
+      return v => table[v] || null;
+    }
+    const map = new Map(discrete);
+    return v => map.get(v) || null;
+  }
+  const intervals = parseIntervalEntries(colormap);
+  if (!intervals) {return null;}
+  const last = intervals.length - 1;
+  return (v) => {
+    for (let i = 0; i <= last; i++) {
+      const { min, max, rgba } = intervals[i];
+      if (v >= min && (v < max || (i === last && v === max))) {return rgba;}
+    }
+    return null;
+  };
+}
+
 /** Build a 256x RGBA lookup table (Uint8ClampedArray) from a render definition. */
 function buildLut(render) {
   let stops = COLORMAPS[render.colormap_name];
@@ -93,7 +184,10 @@ const MAX_TILE_PIXELS = 2048 * 2048;
 const MAX_NODATA_VALUES = 256;
 
 export function makeRenderTileLoader(render) {
-  const lut = buildLut(render);
+  // A discrete or interval colormap colours by pixel value, so it bypasses the
+  // rescaled ramp entirely. `colormap_name` still wins, as it always did.
+  const sampler = COLORMAPS[render.colormap_name] ? null : buildValueSampler(render.colormap);
+  const lut = sampler ? null : buildLut(render);
   const [min, max] = (render.rescale && render.rescale[0]) || [0, 1];
   const span = (max - min) || 1;
   const band = ((render.bidx && render.bidx[0]) || 1) - 1; // 1-based -> 0-based
@@ -103,6 +197,29 @@ export function makeRenderTileLoader(render) {
     (Array.isArray(render.nodata) ? render.nodata : [render.nodata])
       .filter(v => v != null)
       .slice(0, MAX_NODATA_VALUES));
+
+  // Chosen once, outside the per-pixel loop. A value the colormap does not
+  // cover leaves alpha at 0, which is the same "draw nothing" the nodata list
+  // gives — the only sane result for a class mask with an unlabelled value.
+  const writePixel = sampler
+    ? (v, out, o) => {
+      const c = sampler(v);
+      if (!c) {return;}
+      out[o] = c[0];
+      out[o + 1] = c[1];
+      out[o + 2] = c[2];
+      out[o + 3] = c[3];
+    }
+    : (v, out, o) => {
+      let t = (v - min) / span;
+      if (t < 0) {t = 0;}
+      else if (t > 1) {t = 1;}
+      const idx = (t * 255 + 0.5 | 0) * 4;
+      out[o] = lut[idx];
+      out[o + 1] = lut[idx + 1];
+      out[o + 2] = lut[idx + 2];
+      out[o + 3] = lut[idx + 3];
+    };
 
   // deck.gl-geotiff 0.7 COGLayer callbacks. The default GPU pipeline only supports
   // unsigned-integer COGs, so for float (and to apply a colormap) we read the tile
@@ -129,18 +246,111 @@ export function makeRenderTileLoader(render) {
     for (let i = 0; i < npix; i++) {
       const v = data[i * stride + band];
       if (nodataSet.has(v) || Number.isNaN(v)) { continue; } // alpha stays 0
-      let t = (v - min) / span;
-      if (t < 0) {t = 0;}
-      else if (t > 1) {t = 1;}
-      const idx = (t * 255 + 0.5 | 0) * 4;
-      out[i * 4] = lut[idx];
-      out[i * 4 + 1] = lut[idx + 1];
-      out[i * 4 + 2] = lut[idx + 2];
-      out[i * 4 + 3] = lut[idx + 3];
+      writePixel(v, out, i * 4);
     }
     return { colorImage: new ImageData(out, w, h), width: w, height: h, byteLength: out.byteLength };
   };
 
   const renderTile = (data) => (data ? { image: data.colorImage } : null);
   return { getTileData, renderTile };
+}
+
+// --- Classification-derived renders -----------------------------------------
+//
+// A categorical COG usually names its own colours. The classification extension
+// puts a `color_hint` next to the name of every class, on the band the mask
+// stores. Because that names the class as well as colouring it, a mask drawn
+// from hints also legends itself, and it needs no `renders` entry on the item.
+// The browser therefore reads the hints first and treats `renders[].colormap`
+// as the fallback for an asset that carries none.
+
+// The classification extension writes `color_hint` as 6 hex digits, RRGGBB,
+// with no leading "#".
+const COLOR_HINT = /^[0-9a-fA-F]{6}$/;
+// A class that means "nothing here". Painting it opaque hides the basemap under
+// every empty pixel, which no label mask wants.
+const TRANSPARENT_CLASS_NAMES = new Set(['background', 'nodata', 'no_data', 'no-data']);
+
+/** The band a single-band render reads. STAC 1.0 assets name it `raster:bands`. */
+function firstBand(asset) {
+  const bands = asset?.bands || asset?.['raster:bands'] || [];
+  return bands[0] || {};
+}
+
+/** Classification classes on the asset's first band, or on the asset itself. */
+export function classificationClasses(asset) {
+  const classes = firstBand(asset)['classification:classes']
+    || asset?.['classification:classes'];
+  return Array.isArray(classes) ? classes.slice(0, MAX_COLORMAP_ENTRIES) : [];
+}
+
+function hintToRgb(hint) {
+  if (typeof hint !== 'string' || !COLOR_HINT.test(hint)) {return null;}
+  return [
+    parseInt(hint.slice(0, 2), 16),
+    parseInt(hint.slice(2, 4), 16),
+    parseInt(hint.slice(4, 6), 16),
+  ];
+}
+
+function isTransparentClass(cls, bandNodata) {
+  if (TRANSPARENT_CLASS_NAMES.has(String(cls.name || '').toLowerCase())) {return true;}
+  return bandNodata != null && cls.value === bandNodata;
+}
+
+/**
+ * Synthesize a discrete render from an asset's `classification:classes` colour
+ * hints. Background, nodata, and the band's own nodata value draw transparent.
+ * Returns null when no class carries a usable hint, so the caller can fall back
+ * to a render.
+ */
+export function renderFromClassification(asset) {
+  const classes = classificationClasses(asset);
+  const bandNodata = firstBand(asset).nodata;
+  const colormap = {};
+  const nodata = [];
+  for (const cls of classes) {
+    if (!cls || typeof cls.value !== 'number') {continue;}
+    const rgb = hintToRgb(cls.color_hint);
+    if (!rgb) {continue;}
+    if (isTransparentClass(cls, bandNodata)) {nodata.push(cls.value);}
+    else {colormap[String(cls.value)] = [...rgb, 255];}
+  }
+  if (Object.keys(colormap).length === 0) {return null;}
+  if (bandNodata != null && !nodata.includes(bandNodata)) {nodata.push(bandNodata);}
+  return { colormap, nodata, bidx: [1] };
+}
+
+function cssColor(rgba) {
+  const [r, g, b, a] = rgba;
+  return a >= 255 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${(a / 255).toFixed(2)})`;
+}
+
+/**
+ * Legend rows, `[{ color, label }]`, for a render that colours by value. Class
+ * names label the rows where the caller passes the asset's classification
+ * classes. A continuous ramp gets no rows: a swatch list cannot describe one.
+ */
+export function discreteLegend(render, classes = []) {
+  if (!render || COLORMAPS[render.colormap_name]) {return [];}
+  const names = new Map((Array.isArray(classes) ? classes : [])
+    .filter(c => c && typeof c.value === 'number')
+    .map(c => [c.value, c.name]));
+  const discrete = parseDiscreteEntries(render.colormap);
+  if (discrete) {
+    return discrete
+      .filter(([, rgba]) => rgba[3] > 0)
+      .sort((a, b) => a[0] - b[0])
+      .slice(0, MAX_LEGEND_ROWS)
+      .map(([value, rgba]) => ({
+        color: cssColor(rgba),
+        label: names.get(value) || String(value),
+      }));
+  }
+  const intervals = parseIntervalEntries(render.colormap);
+  if (!intervals) {return [];}
+  return intervals
+    .filter(iv => iv.rgba[3] > 0)
+    .slice(0, MAX_LEGEND_ROWS)
+    .map(iv => ({ color: cssColor(iv.rgba), label: `${iv.min}-${iv.max}` }));
 }
