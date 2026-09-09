@@ -143,6 +143,7 @@ The full list is in the **[options documentation](docs/options.md)**.
 | Actions on links and assets | [actions.md](docs/actions.md) |
 | Code snippet generators | [code-generators.md](docs/code-generators.md) |
 | Running under Docker | [docker.md](docs/docker.md) |
+| Default map layers, stacking, and the layer picker | [layers.md](docs/layers.md) |
 | Opening catalogs from disk | [local_files.md](docs/local_files.md) |
 
 To publish a catalog this browser can read, start with the

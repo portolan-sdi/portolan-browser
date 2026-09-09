@@ -3,6 +3,7 @@
 - [Actions for Links and Assets](./actions.md)
 - [Basemaps](./basemaps.md)
 - [Docker](./docker.md)
+- [Layers and stacking](./layers.md)
 - [Localization](./localization.md)
 - [Loading local files](./docker.md)
 - [Metadata rendering](./metadata.md)

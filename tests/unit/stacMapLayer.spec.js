@@ -206,11 +206,21 @@ describe('StacMapLayer', () => {
       expect(visibleCogIds(layer)).toEqual(['b'])
     })
 
-    it('caps the list at 8 COGs', async () => {
-      const assets = Array.from({ length: 10 }, (_, i) => cogAsset(`c${i}`))
+    it('caps the list at 16 COGs and counts what it dropped', async () => {
+      const assets = Array.from({ length: 20 }, (_, i) => cogAsset(`c${i}`))
       layer.setStac(fakeStac(assets))
       await layer.setAssets([assets[0]])
-      expect(cogIds(layer)).toHaveLength(8)
+      expect(cogIds(layer)).toHaveLength(16)
+      // Silently short lists read as a broken catalog, so the remainder is
+      // counted for the picker to say out loud.
+      expect(layer.getCogOverflowCount()).toBe(4)
+    })
+
+    it('reports no overflow when every COG fits', async () => {
+      const assets = ['a', 'b'].map(k => cogAsset(k))
+      layer.setStac(fakeStac(assets))
+      await layer.setAssets([assets[0]])
+      expect(layer.getCogOverflowCount()).toBe(0)
     })
 
     it('setCogVisible toggles by id and allows multiple visible at once', async () => {
@@ -234,19 +244,104 @@ describe('StacMapLayer', () => {
     })
 
     it('swaps a not-listed COG into the capped list, evicting the last entry', async () => {
-      const assets = Array.from({ length: 9 }, (_, i) => cogAsset(`c${i}`))
+      const assets = Array.from({ length: 17 }, (_, i) => cogAsset(`c${i}`))
       layer.setStac(fakeStac(assets))
       await layer.setAssets([assets[0]])
-      expect(cogIds(layer)).toEqual([
-        'c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7',
-      ])
+      expect(cogIds(layer)).toEqual(
+        Array.from({ length: 16 }, (_, i) => `c${i}`)
+      )
 
-      await layer.setAssets([assets[8]])
+      await layer.setAssets([assets[16]])
       const ids = cogIds(layer)
-      expect(ids).toHaveLength(8)
-      expect(ids).toContain('c8')
-      expect(ids).not.toContain('c7')
-      expect(visibleCogIds(layer)).toEqual(['c8'])
+      expect(ids).toHaveLength(16)
+      expect(ids).toContain('c16')
+      expect(ids).not.toContain('c15')
+      expect(visibleCogIds(layer)).toEqual(['c16'])
+    })
+
+    // `portolan:render_order` names the renders an item opens with, in the
+    // order they stack. See docs/layers.md.
+    describe('portolan:render_order', () => {
+      const RENDERS = {
+        rgb: { title: 'True colour', assets: ['scene'], bidx: [1, 2, 3] },
+        labels: { title: 'Labels', assets: ['mask'], colormap_name: 'viridis' },
+      }
+      const withOrder = (assets, order, renders = RENDERS) => ({
+        ...fakeStac(assets, renders),
+        properties: { 'portolan:render_order': order },
+      })
+      // setAssets() short-circuits on an empty list, and any COG handed to it
+      // counts as an explicit "show on map". This is the shape of a run where
+      // nothing was selected: the layer decides for itself what to open with.
+      const selectNothing = l => l._addCogAssets([], l._overlayEpoch)
+
+      it('turns on every asset the ordered renders name', async () => {
+        const assets = [cogAsset('mask'), cogAsset('scene', { roles: ['visual'] })]
+        layer.setStac(withOrder(assets, ['rgb', 'labels']))
+        await selectNothing(layer)
+        expect(visibleCogIds(layer)).toEqual(['scene', 'mask'])
+      })
+
+      it('stacks them in the declared order, bottom first', async () => {
+        const assets = [cogAsset('mask'), cogAsset('scene', { roles: ['visual'] })]
+        layer.setStac(withOrder(assets, ['rgb', 'labels']))
+        await selectNothing(layer)
+        // Item order would draw the mask under the scene and hide it; the
+        // declared order leads the list, so the mask sits on top.
+        expect(cogIds(layer)).toEqual(['scene', 'mask'])
+      })
+
+      it('reads the field from the root as well as from properties', async () => {
+        const assets = [cogAsset('mask'), cogAsset('scene')]
+        layer.setStac({ ...fakeStac(assets, RENDERS), 'portolan:render_order': ['labels'] })
+        await selectNothing(layer)
+        expect(visibleCogIds(layer)).toEqual(['mask'])
+      })
+
+      it('applies the render the order named, not the first one listing the asset', async () => {
+        const renders = {
+          wrong: { title: 'Wrong', assets: ['mask'], colormap_name: 'magma' },
+          right: { title: 'Right', assets: ['mask'], colormap_name: 'ylgn' },
+        }
+        const assets = [cogAsset('mask')]
+        layer.setStac(withOrder(assets, ['right'], renders))
+        await selectNothing(layer)
+        expect(layer._cogList[0].render.colormap_name).toBe('ylgn')
+        expect(layer._cogList[0].title).toBe('Right')
+      })
+
+      it('falls back to the display asset when no key resolves', async () => {
+        const assets = [cogAsset('a'), cogAsset('scene', { roles: ['visual'] })]
+        layer.setStac(withOrder(assets, ['nope']))
+        await selectNothing(layer)
+        expect(visibleCogIds(layer)).toEqual(['scene'])
+      })
+
+      it('is ignored when it is not a list', async () => {
+        const assets = [cogAsset('a'), cogAsset('scene', { roles: ['visual'] })]
+        layer.setStac(withOrder(assets, 'labels'))
+        await selectNothing(layer)
+        expect(visibleCogIds(layer)).toEqual(['scene'])
+      })
+
+      it('yields to an explicit show-on-map selection', async () => {
+        const assets = [cogAsset('mask'), cogAsset('scene')]
+        layer.setStac(withOrder(assets, ['labels']))
+        await layer.setAssets([assets[1]])
+        expect(visibleCogIds(layer)).toEqual(['scene'])
+      })
+
+      it('keeps the stacked layers listed when the cap would drop them', async () => {
+        const assets = Array.from({ length: 20 }, (_, i) => cogAsset(`c${i}`))
+        const renders = {
+          last: { assets: ['c19'] },
+          nextLast: { assets: ['c18'] },
+        }
+        layer.setStac(withOrder(assets, ['last', 'nextLast'], renders))
+        await selectNothing(layer)
+        expect(cogIds(layer).slice(0, 2)).toEqual(['c19', 'c18'])
+        expect(visibleCogIds(layer)).toEqual(['c19', 'c18'])
+      })
     })
   })
 
@@ -436,14 +531,185 @@ describe('StacMapLayer', () => {
     })
 
     it('synthesizes a render from the first declared render for an untargeted asset', async () => {
-      const assets = [cogAsset('disp')]
+      // A single-band derivative of an asset a render targets: the colormap is
+      // the right tool for it, stretched to its own statistics.
+      const asset = {
+        ...cogAsset('disp'),
+        'raster:bands': [{ data_type: 'uint8', statistics: { minimum: 0, maximum: 200 } }],
+      }
       const renders = {
         alpha: { colormap_name: 'viridis', assets: ['other'] },
         beta: { colormap_name: 'magma', assets: ['other'] },
       }
+      dlayer.setStac(fakeStac([asset], renders))
+      await dlayer.setAssets([asset])
+      expect(dlayer._cogList[0].render.colormap_name).toBe('viridis')
+      expect(dlayer._cogList[0].render.rescale).toEqual([[0, 200]])
+    })
+
+    // The two features that landed together here pull in opposite directions:
+    // one takes an asset's colours from its class hints, the other keeps a
+    // multi-band scene off the colormap path entirely. Each has to survive the
+    // other.
+    it('keeps class hints for a mask the render order names', async () => {
+      const assets = [classifiedCogAsset('mask')]
+      const renders = {
+        labels: { title: 'Declared labels', assets: ['mask'], colormap: { 1: [255, 0, 0, 255] } },
+      }
+      dlayer.setStac({
+        ...fakeStac(assets, renders),
+        properties: { 'portolan:render_order': ['labels'] },
+      })
+      await dlayer._addCogAssets([], dlayer._overlayEpoch)
+      const descriptor = dlayer._cogList[0]
+      // The order picks the render; the hints still overrule its colours.
+      expect(descriptor.render.colormap).toEqual({ 1: [0, 158, 115, 255], 2: [213, 94, 0, 255] })
+      expect(descriptor.title).toBe('Declared labels')
+      expect(descriptor.legend.map(r => r.label)).toEqual(['field', 'boundary'])
+    })
+
+    it('does not divert a classified mask onto the true-colour path', async () => {
+      // A one-band mask cannot trip synthesizeRgbRender, whatever else changes.
+      const assets = [classifiedCogAsset('mask')]
+      dlayer.setStac(fakeStac(assets))
+      await dlayer.setAssets([assets[0]])
+      expect(dlayer._cogList[0].render.bidx).toEqual([1])
+      expect(dlayer._cogList[0].render.colormap['1']).toEqual([0, 158, 115, 255])
+    })
+
+    it('keeps a three-band scene off the class-hint and colormap paths', async () => {
+      // No classes to draw hints from, and three bands means no colormap: it
+      // has to reach the true-colour composite.
+      const band = (min, max) => ({ data_type: 'uint16', statistics: { minimum: min, maximum: max } })
+      const asset = {
+        ...cogAsset('scene', { roles: ['visual'] }),
+        'raster:bands': [band(10, 20), band(11, 21), band(12, 22)],
+      }
+      const renders = { labels: { assets: ['mask'], colormap: { 1: [255, 0, 0, 255] } } }
+      dlayer.setStac(fakeStac([asset], renders))
+      await dlayer.setAssets([asset])
+      const descriptor = dlayer._cogList[0]
+      expect(descriptor.render.bidx).toEqual([1, 2, 3])
+      expect(descriptor.render.colormap).toBeUndefined()
+      // A true-colour composite has no classes to list.
+      expect(descriptor.legend).toEqual([])
+    })
+
+    it('synthesizes a true-colour render from three bands of statistics', async () => {
+      // No render covers this asset. Drawn raw, a 16-bit chip is nearly black;
+      // its own statistics already say how to stretch it.
+      const stats = (min, max) => ({ data_type: 'uint16', nodata: 0, statistics: { minimum: min, maximum: max } })
+      const asset = {
+        ...cogAsset('scene'),
+        'raster:bands': [stats(1076, 3633), stats(1077, 3400), stats(1050, 3295), stats(1, 9)],
+      }
+      dlayer.setStac(fakeStac([asset], { alpha: { colormap_name: 'viridis', assets: ['other'] } }))
+      await dlayer.setAssets([asset])
+      const render = dlayer._cogList[0].render
+      expect(render.bidx).toEqual([1, 2, 3])
+      expect(render.rescale).toEqual([[1076, 3633], [1077, 3400], [1050, 3295]])
+      expect(render.nodata).toEqual([0])
+    })
+
+    it('does not synthesize a true-colour render without usable statistics', async () => {
+      const asset = {
+        ...cogAsset('scene'),
+        'raster:bands': [{ data_type: 'uint8' }, { data_type: 'uint8' }, { data_type: 'uint8' }],
+      }
+      dlayer.setStac(fakeStac([asset], { alpha: { colormap_name: 'viridis', assets: ['other'] } }))
+      await dlayer.setAssets([asset])
+      expect(dlayer._cogList[0].render).toBeNull()
+    })
+
+    it('lets a render that names the asset beat the synthesized true-colour one', async () => {
+      const asset = {
+        ...cogAsset('scene'),
+        'raster:bands': [1, 2, 3].map(() => ({ statistics: { minimum: 0, maximum: 10 } })),
+      }
+      const renders = { rgb: { title: 'Publisher stretch', assets: ['scene'], bidx: [1, 2, 3] } }
+      dlayer.setStac(fakeStac([asset], renders))
+      await dlayer.setAssets([asset])
+      expect(dlayer._cogList[0].title).toBe('Publisher stretch')
+      expect(dlayer._cogList[0].render.rescale).toBeUndefined()
+    })
+
+    it('does not inherit a render for an asset with no band metadata', async () => {
+      // Nothing says how many bands it holds, and there are no statistics to
+      // stretch to. A colormap here is a guess that paints an RGB scene in
+      // false colour; deck.gl's default path draws it as it is instead.
+      const assets = [cogAsset('unknown', { roles: ['source-scene'] })]
+      dlayer.setStac(fakeStac(assets, { alpha: { colormap_name: 'viridis', assets: ['other'] } }))
+      await dlayer.setAssets([assets[0]])
+      expect(dlayer._cogList[0].render).toBeNull()
+    })
+
+    it('stretches the synthesized rescale to raster:bands statistics', async () => {
+      // A raster-extension 1.x catalog publishes `raster:bands`, which stac-js
+      // does not migrate to STAC 1.1's `bands`. Reading only `bands` left the
+      // rescale at [0, 255], and a uint16 scene drew as one flat block of the
+      // ramp's top colour.
+      const asset = {
+        ...cogAsset('scene16'),
+        'raster:bands': [{ data_type: 'uint16', nodata: 0, statistics: { minimum: 1067, maximum: 7045 } }],
+      }
+      dlayer.setStac(fakeStac([asset], { alpha: { colormap_name: 'viridis', assets: ['other'] } }))
+      await dlayer.setAssets([asset])
+      expect(dlayer._cogList[0].render.rescale).toEqual([[1067, 7045]])
+      expect(dlayer._cogList[0].render.nodata).toContain(0)
+    })
+
+    it('still prefers bands over raster:bands where both are present', async () => {
+      const asset = {
+        ...cogAsset('both'),
+        bands: [{ data_type: 'uint16', statistics: { minimum: 10, maximum: 20 } }],
+        'raster:bands': [{ data_type: 'uint16', statistics: { minimum: 500, maximum: 900 } }],
+      }
+      dlayer.setStac(fakeStac([asset], { alpha: { colormap_name: 'viridis', assets: ['other'] } }))
+      await dlayer.setAssets([asset])
+      expect(dlayer._cogList[0].render.rescale).toEqual([[10, 20]])
+    })
+
+    it('leaves a bandless visual-role asset unrendered instead of ramping it', async () => {
+      // An RGB scene inheriting the item's first render draws as false colour;
+      // with no render deck.gl's default GPU path draws its bands as they are.
+      const assets = [cogAsset('scene', { roles: ['visual'] })]
+      dlayer.setStac(fakeStac(assets, { alpha: { colormap_name: 'viridis', assets: ['mask'] } }))
+      await dlayer.setAssets([assets[0]])
+      expect(dlayer._cogList[0].render).toBeNull()
+    })
+
+    it('leaves a three-band uint8 asset unrendered even without the visual role', async () => {
+      const asset = {
+        ...cogAsset('rgb'),
+        'raster:bands': [
+          { data_type: 'uint8' }, { data_type: 'uint8' }, { data_type: 'uint8' },
+        ],
+      }
+      dlayer.setStac(fakeStac([asset], { alpha: { colormap_name: 'viridis', assets: ['mask'] } }))
+      await dlayer.setAssets([asset])
+      expect(dlayer._cogList[0].render).toBeNull()
+    })
+
+    it('applies a render that names the visual asset outright', async () => {
+      const assets = [cogAsset('scene', { roles: ['visual'] })]
+      const renders = { rgb: { title: 'True colour', assets: ['scene'], colormap_name: 'magma' } }
       dlayer.setStac(fakeStac(assets, renders))
       await dlayer.setAssets([assets[0]])
-      expect(dlayer._cogList[0].render.colormap_name).toBe('viridis')
+      expect(dlayer._cogList[0].render.colormap_name).toBe('magma')
+      expect(dlayer._cogList[0].title).toBe('True colour')
+    })
+
+    it('draws portolan:render_order in the declared order, last on top', async () => {
+      const assets = [cogAsset('mask'), cogAsset('scene', { roles: ['visual'] })]
+      dlayer.setStac({
+        ...fakeStac(assets, {
+          rgb: { assets: ['scene'], bidx: [1, 2, 3] },
+          labels: { assets: ['mask'], colormap_name: 'viridis' },
+        }),
+        properties: { 'portolan:render_order': ['rgb', 'labels'] },
+      })
+      await dlayer._addCogAssets([], dlayer._overlayEpoch)
+      expect(overlayLayerIds(dlayer)).toEqual(['stac-cog-scene', 'stac-cog-mask'])
     })
 
     it('colours a categorical asset from its own class hints when no render exists', async () => {

@@ -26,6 +26,26 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
   class names as a legend, whichever rule supplies the colours
 - The `colormap` field of a render accepts the discrete object and interval-list forms the render
   extension documents, besides the linear stops list read until now
+- `portolan:render_order` names the renders an item opens with, bottom first, so a chip
+  can show its true-colour imagery with a label mask drawn over it
+- A render whose `bidx` names three bands draws as a true-colour composite, stretching
+  each band by its own `rescale`, instead of ramping the first band through a colormap
+- The layer picker says how many raster assets it could not list, instead of quietly
+  showing a shorter list
+
+### Changed
+
+- The layer picker lists up to 16 raster assets, up from 8
+
+### Fixed
+
+- A raster layer no longer paints over the map controls: the layer picker, the style
+  picker and the map notices stayed clickable but became invisible behind an enabled COG
+- Band statistics are read from `raster:bands` as well as `bands`, so a raster-extension
+  1.x catalog gets a rescale stretched to its real values instead of a flat block of colour
+- An asset only inherits the item's first render when its band metadata describes a
+  single band, so a multi-band scene no longer draws as a false-colour ramp of its red
+  band
 
 ## [0.1.0][] - 2026-08-31
 

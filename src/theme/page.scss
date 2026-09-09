@@ -279,6 +279,26 @@ svg {
     overflow: hidden;
     position: relative;
     z-index: 0;
+
+    // MapLibre's control corners (.maplibregl-ctrl-*) carry z-index 2 and are
+    // appended to the map after our own controls, so on a tie in tree order
+    // they win. That was harmless while they only held small buttons, but
+    // deck.gl's overlaid COG canvas is hosted in one of those corners and spans
+    // the whole map: enabling a raster hid the layer picker, the style picker
+    // and the map notices behind it — invisible, yet still clickable, because
+    // the canvas takes no pointer events. Our controls sit above that layer
+    // rather than tying with it.
+    //
+    // Scoped to direct children of .map so it reaches only the app's own
+    // controls, and specific enough (#stac-browser .map > x) to outrank the
+    // z-index in each component's scoped block.
+    > .map-layercontrol,
+    > .map-stylepicker,
+    > .map-textcontrol,
+    > .map-location-control,
+    > .terrain-control {
+      z-index: 4;
+    }
   }
 
   h2 {

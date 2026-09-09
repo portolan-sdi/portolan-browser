@@ -225,7 +225,125 @@ const MAX_TILE_PIXELS = 2048 * 2048;
 // Cap it so a hostile/garbage array can't build a huge Set.
 const MAX_NODATA_VALUES = 256;
 
+// --- RGB renders -------------------------------------------------------------
+//
+// A render whose `bidx` names three bands is a true-colour composite, not a
+// colormap: a lookup table is a function of one band and has nothing to say
+// about three. Reading only `bidx[0]`, as the colormap path does, draws a
+// scene as a false-colour ramp of its red band — which is what the browser did
+// with every RGB render until now.
+//
+// `rescale` gives the stretch. The render extension lists one [min, max] per
+// band; a single pair is applied to all three, which is what a publisher who
+// wrote one means.
+
+/**
+ * An asset's band metadata. STAC 1.1 folded the raster extension's bands into a
+ * plain `bands` array, but a 1.0-era catalog — which is most of them, and the
+ * only form the raster extension itself ever specified — publishes
+ * `raster:bands`, and stac-js does not migrate one into the other. Reading only
+ * `bands` makes such an asset's statistics and classes invisible.
+ *
+ * `bands` is checked for length, not truth: an asset that writes `"bands": []`
+ * beside a populated `raster:bands` states an absence, not that it has none.
+ */
+export function assetBands(asset) {
+  const bands = asset?.bands;
+  if (Array.isArray(bands) && bands.length > 0) {return bands;}
+  const rasterBands = asset?.['raster:bands'];
+  return Array.isArray(rasterBands) ? rasterBands : [];
+}
+
+/** The zero-based band indexes of an RGB render, or null when it is not one. */
+function rgbBands(render) {
+  const bidx = render?.bidx;
+  if (!Array.isArray(bidx) || bidx.length !== 3) {return null;}
+  if (!bidx.every(b => Number.isInteger(b) && b >= 1)) {return null;}
+  return bidx.map(b => b - 1);
+}
+
+/** Per-band [min, span] stretches for an RGB render, in band order. */
+function rgbStretches(render) {
+  const rescale = Array.isArray(render.rescale) ? render.rescale : [];
+  return [0, 1, 2].map(i => {
+    const pair = rescale[i] || rescale[0] || [0, 255];
+    const [min, max] = Array.isArray(pair) ? pair : [0, 255];
+    const lo = typeof min === 'number' ? min : 0;
+    const hi = typeof max === 'number' ? max : 255;
+    return [lo, (hi - lo) || 1];
+  });
+}
+
+function nodataSetOf(render) {
+  return new Set(
+    (Array.isArray(render.nodata) ? render.nodata : [render.nodata])
+      .filter(v => v != null)
+      .slice(0, MAX_NODATA_VALUES));
+}
+
+// Read one interleaved tile and hand back its samples, or null when the tile is
+// degenerate or too big to loop over on the main thread. Shared by both loaders
+// so they cannot disagree about the budget.
+async function readTile(image, x, y, signal) {
+  const tile = await image.fetchTile(x, y, { boundless: false, signal });
+  const arr = tile.array;
+  const { data, width: w, height: h } = arr;
+  if (arr.layout === 'band-separate') {
+    throw new Error('band-separate COGs are not supported by the render colormap loader');
+  }
+  const npix = w * h;
+  if (!(w > 0) || !(h > 0) || npix > MAX_TILE_PIXELS) {
+    if (npix > MAX_TILE_PIXELS) {
+      console.warn(`COG tile ${w}x${h} exceeds the colormap budget; skipping`);
+    }
+    return null;
+  }
+  return { data, w, h, npix, stride: Math.max(1, Math.round(data.length / npix)) };
+}
+
+/** COGLayer callbacks that composite three bands into true colour. */
+function makeRgbTileLoader(render, bands) {
+  const stretches = rgbStretches(render);
+  const nodataSet = nodataSetOf(render);
+
+  const getTileData = async (image, { x, y, signal }) => {
+    const tile = await readTile(image, x, y, signal);
+    if (!tile) {return null;}
+    const { data, w, h, npix, stride } = tile;
+    const out = new Uint8ClampedArray(npix * 4);
+    for (let i = 0; i < npix; i++) {
+      const base = i * stride;
+      // A pixel is empty only where every channel reads as empty: a single
+      // channel that happens to equal the sentinel is real data, and punching
+      // it out would perforate the scene.
+      let empty = true;
+      for (let c = 0; c < 3; c++) {
+        const v = data[base + bands[c]];
+        if (!nodataSet.has(v) && !Number.isNaN(v)) {empty = false;}
+      }
+      if (empty) {continue;} // alpha stays 0
+      const o = i * 4;
+      for (let c = 0; c < 3; c++) {
+        const [min, span] = stretches[c];
+        let t = (data[base + bands[c]] - min) / span;
+        if (t < 0) {t = 0;}
+        else if (t > 1) {t = 1;}
+        out[o + c] = t * 255 + 0.5 | 0;
+      }
+      out[o + 3] = 255;
+    }
+    return { colorImage: new ImageData(out, w, h), width: w, height: h, byteLength: out.byteLength };
+  };
+
+  const renderTile = (data) => (data ? { image: data.colorImage } : null);
+  return { getTileData, renderTile };
+}
+
 export function makeRenderTileLoader(render) {
+  // A `bidx` triple is a true-colour composite, which no colormap of any form
+  // can express, so it settles the path before either of them is consulted.
+  const rgb = rgbBands(render);
+  if (rgb) {return makeRgbTileLoader(render, rgb);}
   // A discrete or interval colormap colours by pixel value, so it bypasses the
   // rescaled ramp entirely. `colormap_name` still wins, as it always did.
   const sampler = builtinStops(render.colormap_name) ? null : buildValueSampler(render.colormap);
@@ -268,22 +386,9 @@ export function makeRenderTileLoader(render) {
   // ourselves and CPU-colormap a single band into an ImageData, returned via the
   // RenderTileResult `image` field (which accepts any TextureSource).
   const getTileData = async (image, { x, y, signal }) => {
-    const tile = await image.fetchTile(x, y, { boundless: false, signal });
-    const arr = tile.array;
-    const { data, width: w, height: h } = arr;
-    if (arr.layout === 'band-separate') {
-      throw new Error('band-separate COGs are not supported by the render colormap loader');
-    }
-    const npix = w * h;
-    // Guard against degenerate or pathologically large tiles before allocating
-    // or looping (see MAX_TILE_PIXELS) — render nothing rather than freeze.
-    if (!(w > 0) || !(h > 0) || npix > MAX_TILE_PIXELS) {
-      if (npix > MAX_TILE_PIXELS) {
-        console.warn(`COG tile ${w}x${h} exceeds the colormap budget; skipping`);
-      }
-      return null;
-    }
-    const stride = Math.max(1, Math.round(data.length / npix)); // samples per pixel (interleaved)
+    const tile = await readTile(image, x, y, signal);
+    if (!tile) {return null;}
+    const { data, w, h, npix, stride } = tile;
     const out = new Uint8ClampedArray(npix * 4);
     for (let i = 0; i < npix; i++) {
       const v = data[i * stride + band];
@@ -315,10 +420,7 @@ const TRANSPARENT_CLASS_NAMES = new Set(['background', 'nodata', 'no_data', 'no-
 
 /** The band a single-band render reads. STAC 1.0 assets name it `raster:bands`. */
 function firstBand(asset) {
-  // `bands` is checked for length, not truth: an asset that writes `"bands": []`
-  // beside a populated `raster:bands` would otherwise lose its classes.
-  const bands = asset?.bands?.length ? asset.bands : (asset?.['raster:bands'] || []);
-  return bands[0] || {};
+  return assetBands(asset)[0] || {};
 }
 
 /** Classification classes on the asset's first band, or on the asset itself. */

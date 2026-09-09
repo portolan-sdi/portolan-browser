@@ -1,6 +1,8 @@
 import Utils from '../utils';
 import { mapGetters, mapState } from 'vuex';
 import { stacBrowserSpecialHandling } from "../rels";
+import { orderedRenderLayers } from '../utils/renderOrder.js';
+import { resolveRenders } from '../utils/renders.js';
 
 const COG_MIME_TYPES = [
   'image/tiff',
@@ -127,10 +129,17 @@ export default {
       });
       if (cogAssets.length === 0) {return;}
 
+      // A publisher who declared `portolan:render_order` has already answered
+      // the question this method guesses at, and answered it for several layers
+      // at once — an RGB scene with its labels drawn over it, say. Guess only
+      // where nothing was declared.
+      const declared = orderedRenderLayers(this.data, resolveRenders(this.data), cogAssets);
       const visual = cogAssets.find(a =>
         Array.isArray(a.roles) && a.roles.includes('visual')
       );
-      this.selectedAssets = [visual || cogAssets[0]];
+      this.selectedAssets = declared.length
+        ? declared.map(l => l.asset)
+        : [visual || cogAssets[0]];
       this.hasAutoSelected = true;
     }
   }

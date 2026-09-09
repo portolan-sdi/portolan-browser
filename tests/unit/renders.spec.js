@@ -464,3 +464,85 @@ describe('discreteLegend', () => {
     expect(discreteLegend({ colormap }).length).toBe(32)
   })
 })
+
+// A render whose bidx names three bands is a true-colour composite, not a
+// colormap. Before this the loader read bidx[0] and drew the scene as a
+// viridis ramp of its red band.
+describe('RGB renders', () => {
+  // One 1x2 tile of 4-band uint16 samples (R, G, B, NIR interleaved).
+  const rgbTile = (...pixels) =>
+    fakeImage(new Uint16Array(pixels.flat()), pixels.length, 1)
+
+  it('composites three bands instead of ramping the first', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100], [0, 100], [0, 100]] }
+    const res = await call(render, rgbTile([100, 50, 0, 900]))
+    expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
+  })
+
+  it('stretches each band by its own rescale', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100], [0, 200], [0, 400]] }
+    const res = await call(render, rgbTile([100, 100, 100, 0]))
+    expect(pixel(res, 0)).toEqual([255, 128, 64, 255])
+  })
+
+  it('applies a single rescale pair to every band', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100]] }
+    const res = await call(render, rgbTile([100, 50, 0, 0]))
+    expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
+  })
+
+  it('reads the bands bidx names, in the order it names them', async () => {
+    // Band 4 (NIR) first makes a false-colour composite, which is a legitimate
+    // thing for a publisher to ask for.
+    const render = { bidx: [4, 1, 2], rescale: [[0, 100]] }
+    const res = await call(render, rgbTile([0, 50, 900, 100]))
+    expect(pixel(res, 0)).toEqual([255, 0, 128, 255])
+  })
+
+  it('clamps values outside the rescale range', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[10, 20]] }
+    const res = await call(render, rgbTile([0, 15, 900, 0]))
+    expect(pixel(res, 0)).toEqual([0, 128, 255, 255])
+  })
+
+  it('draws a pixel transparent only where every band is nodata', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100]], nodata: 0 }
+    const res = await call(render, rgbTile([0, 0, 0, 0], [0, 100, 100, 0]))
+    expect(pixel(res, 0)[3]).toBe(0)
+    // One zero channel in otherwise real data must not perforate the scene.
+    expect(pixel(res, 1)).toEqual([0, 255, 255, 255])
+  })
+
+  it('defaults to an 8-bit stretch when the render gives no rescale', async () => {
+    const render = { bidx: [1, 2, 3] }
+    const res = await call(render, rgbTile([255, 128, 0, 0]))
+    expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
+  })
+
+  it('keeps the colormap path for a single-band bidx', async () => {
+    const render = { colormap_name: 'viridis', bidx: [1], rescale: [[0, 1]] }
+    const res = await call(render, fakeImage(new Float32Array([1]), 1, 1))
+    expect(pixel(res, 0)).toEqual([253, 231, 37, 255])
+  })
+
+  it('keeps the colormap path for a bidx that is not three whole bands', async () => {
+    // Two, four, zero-based, and string indexes are all "not an RGB triple", so
+    // they stay on the single-band path rather than compositing arbitrary bytes.
+    for (const bidx of [[1, 2], [1, 2, 3, 4], [0, 1, 2], ['1', '2', '3'], [1.5, 2, 3]]) {
+      const render = { colormap_name: 'viridis', bidx, rescale: [[0, 1]] }
+      const res = await call(render, fakeImage(new Float32Array([1]), 1, 1))
+      expect(pixel(res, 0).slice(0, 3)).not.toEqual([1, 1, 1])
+    }
+  })
+
+  it('still bails on a pathologically large tile', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 1]] }
+    expect(await call(render, fakeImage(new Uint16Array(1), 3000, 3000))).toBeNull()
+  })
+
+  it('rejects a band-separate tile rather than misreading it', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 1]] }
+    const image = fakeImage(new Uint16Array(3), 1, 1, 'band-separate')
+    await expect(call(render, image)).rejects.toThrow(/band-separate/)
+  })
+})

@@ -222,6 +222,7 @@
     "layers": {
       "base": "Base Layers",
       "footprint": "Footprint",
+      "overflow": "{count} more layer(s) not shown",
       "title": "Layers",
       "unnamed": "Unnamed #{id}"
     },

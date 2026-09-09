@@ -35,6 +35,11 @@
                 </li>
               </ul>
             </li>
+            <!-- An asset the picker had to drop is said out loud: a list that
+                 quietly comes up short reads as a catalog missing its data. -->
+            <li v-if="overflowCount > 0" class="layer-overflow">
+              {{ $t('mapping.layers.overflow', { count: overflowCount }) }}
+            </li>
           </ul>
         </section>
       </div>
@@ -74,6 +79,7 @@ export default {
       buttonId: null,
       selectedIndex: this.activeBasemapIndex,
       overlayLayers: [],
+      overflowCount: 0,
     };
   },
   computed: {
@@ -100,8 +106,10 @@ export default {
     update() {
       if (!this.stacLayer) {
         this.overlayLayers = [];
+        this.overflowCount = 0;
         return;
       }
+      this.overflowCount = this.stacLayer.getCogOverflowCount?.() || 0;
       const footprintIds = this.stacLayer.getFootprintLayerIds();
       const childrenIds = this.stacLayer.getChildrenLayerIds();
       const layers = [];
@@ -182,6 +190,13 @@ export default {
 
     li {
       padding-left: 0.5em;
+    }
+
+    li.layer-overflow {
+      padding-left: 1.75em;
+      font-size: 0.8rem;
+      font-style: italic;
+      opacity: 0.75;
     }
   }
 
