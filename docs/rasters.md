@@ -62,10 +62,10 @@ match is exact. Classes named `background`, `nodata`, `no_data`, or `no-data` dr
 whatever their case, and so does the class whose value matches the `nodata` of the band. A
 transparent class needs no hint.
 
-Every other class must carry a readable hint and a numeric `value`. A single class without one sends
-the whole asset to the render rules below, because partial hints cannot colour a mask. The classes
-the browser could not read would leave transparent holes across the raster, and the render that
-colours them correctly would go unused.
+Every other class must carry a readable hint and a numeric `value`. One class without either sends
+the whole asset to the render rules below. Partial hints cannot colour a mask. The browser would draw
+a transparent hole for each class it cannot read, and it would ignore the render that colours those
+classes correctly.
 
 ## Colormaps in a render
 
