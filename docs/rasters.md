@@ -20,9 +20,10 @@ records where that colour comes from.
 The browser resolves the colouring of each COG asset in this order.
 
 1. **Colour hints on the asset's own classes.** Where the first band of the asset holds
-   `classification:classes` with `color_hint` values, the browser builds a discrete colormap from
-   them. A render that lists the asset still supplies the layer title and the nodata values, and the
-   browser ignores its colormap.
+   `classification:classes` and every class resolves to a colour or to transparent, the browser
+   builds a discrete colormap from the `color_hint` values. A render that lists the asset still
+   supplies the layer title and the nodata values, and the browser ignores its colormap and its
+   `bidx`. The hints describe band 1, so the browser reads band 1.
 2. **A render that lists the asset.** The browser applies the `colormap` or `colormap_name`,
    `rescale`, `nodata`, and `bidx` fields of the first render whose `assets` list holds the asset key.
 3. **The first declared render.** Where every render omits the asset, the browser reuses the first
@@ -56,11 +57,15 @@ values of a categorical raster. The browser reads the classes from `bands[0]` of
 }
 ```
 
-A `color_hint` is six hexadecimal digits without a leading `#`, as the extension defines it. Classes
-named `background`, `nodata`, `no_data`, or `no-data` draw transparent, as does the class whose value
-matches the `nodata` of the band. A class with no usable hint draws transparent too.
+A `color_hint` is six hexadecimal digits without a leading `#`, as the extension defines it. The
+match is exact. Classes named `background`, `nodata`, `no_data`, or `no-data` draw transparent,
+whatever their case, and so does the class whose value matches the `nodata` of the band. A
+transparent class needs no hint.
 
-Where no class has a usable hint, the browser applies the render rules below.
+Every other class must carry a readable hint and a numeric `value`. Where one class does not, the
+browser drops the hints for the whole asset and applies the render rules below. Colouring only the
+readable classes would draw a mask full of transparent holes, and would also discard the render that
+could have coloured it.
 
 ## Colormaps in a render
 
@@ -71,7 +76,8 @@ three forms.
 ### Discrete colormap
 
 An object whose keys are pixel values and whose values are `[r, g, b]` or `[r, g, b, a]`. This is
-the form the render extension documents, and the form titiler consumes.
+the form the render extension documents, and the form titiler consumes. A key is a decimal integer.
+A channel is an integer from 0 to 255.
 
 ```json
 {
@@ -94,8 +100,13 @@ also draws transparent. Where the entry gives three channels, the browser reads 
 ### Interval list
 
 A list of `[[min, max], [r, g, b(, a)]]` pairs, which is titiler's other discrete form. A pixel takes
-the colour of the first interval where `min <= value < max`. The last interval also accepts a pixel
-equal to its own `max`.
+the colour of the interval where `min <= value < max`. The interval with the highest `max` also
+accepts a pixel equal to that `max`. The order the list is written in does not matter.
+
+The intervals must not overlap, and every `min` must be below its `max`. The browser rejects a list
+that breaks either rule and falls back to the ramp. rio-tiler paints the last matching interval of an
+overlapping pair, which the browser cannot reproduce, so it declines to guess and draw a different
+map from the tile server.
 
 ```json
 {
@@ -123,8 +134,13 @@ a colormap of more than 1024 entries, because a catalog supplies untrusted input
 ## Legend
 
 The layer control lists one row per class under a raster layer that draws from a discrete colormap or
-from class colour hints. Each row shows the swatch and the class name. Where the classes define no
-name for a value, the row shows the pixel value instead. An interval row shows its range. A
-continuous ramp gets no rows, because a list of swatches cannot describe one.
+from class colour hints. Each row shows the swatch and the class name. The names come from
+`classification:classes` whichever rule above chose the colours, so a mask that names its classes
+but takes its colours from a render still gets a named legend. Where the classes define no name for a
+value, the row shows the pixel value instead. An interval row shows its range. A continuous ramp gets
+no rows, because a list of swatches cannot describe one.
 
-The list stops at 32 rows.
+A row appears only for a colour the map actually draws. The browser leaves out a fully transparent
+entry, and an entry whose value the render lists as `nodata`.
+
+The list stops at 32 rows, and a row label stops at 64 characters.

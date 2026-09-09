@@ -195,6 +195,11 @@ export default {
       padding-left: 0;
       font-size: 0.75rem;
       line-height: 1.6;
+      // A class name is catalog text of any length. Clip it so one row cannot
+      // stretch the picker past the map.
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
     }
   }
 

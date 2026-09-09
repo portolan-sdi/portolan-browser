@@ -22,7 +22,8 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 ### Added
 
 - A categorical COG takes its colours from the `color_hint` values of its own `classification:classes`,
-  ahead of any colormap in a render, and the layer control lists the class names as a legend
+  ahead of any colormap in a render, where every class carries a hint. The layer control lists the
+  class names as a legend, whichever rule supplies the colours
 - The `colormap` field of a render accepts the discrete object and interval-list forms the render
   extension documents, besides the linear stops list read until now
 

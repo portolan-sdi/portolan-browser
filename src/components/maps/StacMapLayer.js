@@ -991,7 +991,7 @@ export default class StacMapLayer {
         title: resolved.title || asset.title || key,
         render: resolved.render,
         // Names the colours for the layer picker. Empty for a continuous ramp.
-        legend: discreteLegend(resolved.render, resolved.classes),
+        legend: discreteLegend(resolved.render, classificationClasses(asset)),
         visible: activeKeys.has(key),
       };
     });
@@ -1001,11 +1001,12 @@ export default class StacMapLayer {
    * Resolve which render (colormap/rescale) to apply to a display asset, in
    * this order:
    *
-   * 1. The asset's own `classification:classes` colour hints, where it has
-   *    them. They colour the pixels and name the classes, so a categorical mask
-   *    draws and legends correctly with no render at all. A render that targets
-   *    the asset still supplies the title and the nodata sentinels; its
-   *    colormap is ignored, because the class hints are more specific.
+   * 1. The asset's own `classification:classes` colour hints, where every class
+   *    carries one. They colour the pixels and name the classes, so a
+   *    categorical mask draws and legends correctly with no render at all. A
+   *    render that targets the asset still supplies the title and the nodata
+   *    sentinels; its colormap is ignored, because the class hints are more
+   *    specific, and its `bidx` is ignored because the hints describe band 1.
    * 2. A render that explicitly targets the asset.
    * 3. The item's first render, stretched to the asset's own band statistics so
    *    an 8-bit `visual` asset matches the colours of its full-resolution
@@ -1024,19 +1025,20 @@ export default class StacMapLayer {
     const classified = renderFromClassification(asset);
     if (classified) {
       const targeting = direct?.[1];
-      const nodata = [...new Set([...classified.nodata, ...[targeting?.nodata].flat()])]
-        .filter(v => v != null);
+      // `concat` appends a scalar as-is and flattens an array by one level,
+      // which are the two shapes `nodata` takes. `makeRenderTileLoader` caps,
+      // dedupes, and drops the nulls, so doing any of that again here only
+      // built an uncapped Set out of whatever the catalog sent.
+      const nodata = classified.nodata.concat(targeting?.nodata ?? []);
       return {
-        id: direct?.[0] ?? null,
         asset,
         render: { ...classified, nodata },
         title: targeting?.title || asset.title || key,
-        classes: classificationClasses(asset),
       };
     }
 
     if (direct) {
-      return { id: direct[0], asset, render: direct[1], title: direct[1].title || direct[0] };
+      return { asset, render: direct[1], title: direct[1].title || direct[0] };
     }
     const first = entries[0]?.[1];
     if (first) {
@@ -1054,9 +1056,9 @@ export default class StacMapLayer {
         nodata,
         bidx: [1],
       };
-      return { id: null, asset, render, title: asset.title || key };
+      return { asset, render, title: asset.title || key };
     }
-    return { id: null, asset, render: null, title: asset.title || key };
+    return { asset, render: null, title: asset.title || key };
   }
 
   // Lazily load the deck.gl backend (overlay + COG layer + decoder pool). Split

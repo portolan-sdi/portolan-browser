@@ -36,6 +36,14 @@ const COLORMAPS = {
   ],
 };
 
+// `COLORMAPS` is an object literal, so a bare `COLORMAPS[name]` also answers
+// every `Object.prototype` key. A catalog that names its colormap `toString`
+// would hand `buildLut` a function and throw out of layer construction, which
+// drops every COG on the item. Read own properties only.
+function builtinStops(name) {
+  return typeof name === 'string' && Object.hasOwn(COLORMAPS, name) ? COLORMAPS[name] : null;
+}
+
 /** Read `renders` from a STAC Item or Collection (top-level per the render extension). */
 export function resolveRenders(stac) {
   const renders = stac?.renders || stac?.properties?.renders || {};
@@ -76,11 +84,19 @@ const MAX_LEGEND_ROWS = 32;
 /** Normalize `[r, g, b]` or `[r, g, b, a]` to RGBA, or null when malformed. */
 function toRgba(color) {
   if (!Array.isArray(color) || color.length < 3 || color.length > 4) {return null;}
-  if (!color.every(c => typeof c === 'number' && Number.isFinite(c))) {return null;}
+  // 8-bit integers, as titiler writes them. `Uint8ClampedArray` would round a
+  // 0..1 float silently, so `[0.5, 0.5, 0.5, 1]` would draw an invisible black
+  // pixel instead of falling back to the ramp.
+  if (!color.every(c => Number.isInteger(c) && c >= 0 && c <= 255)) {return null;}
   return new Uint8ClampedArray([
     color[0], color[1], color[2], color.length === 4 ? color[3] : 255,
   ]);
 }
+
+// A colormap key is a pixel value, which titiler writes as a decimal integer.
+// Bare `Number()` would also accept `"0x10"`, `" 1 "`, and `"1e3"`, and would
+// collide `"1"` with `"1.0"` on one dense-table slot. Match the exact form.
+const DECIMAL_INT = /^-?\d+$/;
 
 /** Parse the `{ "<value>": [r, g, b(, a)] }` form into [value, RGBA] pairs. */
 function parseDiscreteEntries(colormap) {
@@ -89,15 +105,29 @@ function parseDiscreteEntries(colormap) {
   if (keys.length === 0 || keys.length > MAX_COLORMAP_ENTRIES) {return null;}
   const entries = [];
   for (const key of keys) {
-    const value = Number(key);
     const rgba = toRgba(colormap[key]);
-    if (key.trim() === '' || !Number.isFinite(value) || !rgba) {return null;}
-    entries.push([value, rgba]);
+    if (!DECIMAL_INT.test(key) || !Number.isSafeInteger(Number(key)) || !rgba) {return null;}
+    entries.push([Number(key), rgba]);
   }
   return entries;
 }
 
-/** Parse the `[[[min, max], [r, g, b(, a)]], ...]` form into intervals. */
+/**
+ * Parse the `[[[min, max], [r, g, b(, a)]], ...]` form into intervals, sorted by
+ * `min`. Returns null unless the intervals are a disjoint partition.
+ *
+ * Sorting is what makes the lookup safe as well as correct. A per-pixel linear
+ * scan of the 1024 intervals the cap allows costs 2.3s for one 1024x1024 tile
+ * on the main thread; a binary search over sorted intervals costs 10 comparisons
+ * per pixel whatever the entry count. Sorting also decouples the "last interval
+ * also matches its own max" rule from declaration order, so a list written
+ * high-to-low no longer drops the top value of the raster.
+ *
+ * Overlapping intervals are rejected rather than resolved. rio-tiler paints the
+ * last matching interval and this code cannot binary-search that, so a guess
+ * either way would draw a different map from the tile server for the same
+ * catalog. A malformed colormap falls back to the ramp, as everywhere else.
+ */
 function parseIntervalEntries(colormap) {
   if (!Array.isArray(colormap) || colormap.length === 0
     || colormap.length > MAX_COLORMAP_ENTRIES) {return null;}
@@ -106,11 +136,16 @@ function parseIntervalEntries(colormap) {
     if (!Array.isArray(entry) || entry.length !== 2) {return null;}
     const [range, color] = entry;
     if (!Array.isArray(range) || range.length !== 2) {return null;}
-    if (!range.every(n => typeof n === 'number' && Number.isFinite(n))) {return null;}
+    if (!range.every(Number.isFinite)) {return null;}
+    // A reversed range matches no value at all, so it would punch a silent
+    // transparent hole in the raster.
+    if (range[0] >= range[1]) {return null;}
     const rgba = toRgba(color);
     if (!rgba) {return null;}
     intervals.push({ min: range[0], max: range[1], rgba });
   }
+  intervals.sort((a, b) => a.min - b.min);
+  if (intervals.some((iv, i) => i > 0 && intervals[i - 1].max > iv.min)) {return null;}
   return intervals;
 }
 
@@ -133,19 +168,26 @@ function buildValueSampler(colormap) {
   }
   const intervals = parseIntervalEntries(colormap);
   if (!intervals) {return null;}
+  // `parseIntervalEntries` sorts and proves the intervals disjoint, so the last
+  // interval whose `min` is at or below the value is the only one that can hold
+  // it. Binary search for that interval, then confirm the upper bound.
   const last = intervals.length - 1;
   return (v) => {
-    for (let i = 0; i <= last; i++) {
-      const { min, max, rgba } = intervals[i];
-      if (v >= min && (v < max || (i === last && v === max))) {return rgba;}
+    let lo = 0, hi = last, found = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (intervals[mid].min <= v) {found = mid; lo = mid + 1;}
+      else {hi = mid - 1;}
     }
-    return null;
+    if (found < 0) {return null;}
+    const { max, rgba } = intervals[found];
+    return (v < max || (found === last && v === max)) ? rgba : null;
   };
 }
 
 /** Build a 256x RGBA lookup table (Uint8ClampedArray) from a render definition. */
 function buildLut(render) {
-  let stops = COLORMAPS[render.colormap_name];
+  let stops = builtinStops(render.colormap_name);
   // Allow an explicit linear-gradient colormap: [[t,[r,g,b(,a)]], ...]
   if (!stops && isValidStops(render.colormap)) {
     stops = render.colormap;
@@ -186,7 +228,7 @@ const MAX_NODATA_VALUES = 256;
 export function makeRenderTileLoader(render) {
   // A discrete or interval colormap colours by pixel value, so it bypasses the
   // rescaled ramp entirely. `colormap_name` still wins, as it always did.
-  const sampler = COLORMAPS[render.colormap_name] ? null : buildValueSampler(render.colormap);
+  const sampler = builtinStops(render.colormap_name) ? null : buildValueSampler(render.colormap);
   const lut = sampler ? null : buildLut(render);
   const [min, max] = (render.rescale && render.rescale[0]) || [0, 1];
   const span = (max - min) || 1;
@@ -273,7 +315,9 @@ const TRANSPARENT_CLASS_NAMES = new Set(['background', 'nodata', 'no_data', 'no-
 
 /** The band a single-band render reads. STAC 1.0 assets name it `raster:bands`. */
 function firstBand(asset) {
-  const bands = asset?.bands || asset?.['raster:bands'] || [];
+  // `bands` is checked for length, not truth: an asset that writes `"bands": []`
+  // beside a populated `raster:bands` would otherwise lose its classes.
+  const bands = asset?.bands?.length ? asset.bands : (asset?.['raster:bands'] || []);
   return bands[0] || {};
 }
 
@@ -301,8 +345,12 @@ function isTransparentClass(cls, bandNodata) {
 /**
  * Synthesize a discrete render from an asset's `classification:classes` colour
  * hints. Background, nodata, and the band's own nodata value draw transparent.
- * Returns null when no class carries a usable hint, so the caller can fall back
- * to a render.
+ *
+ * Every class must resolve, to a colour or to transparent. One class that does
+ * not returns null for the whole asset, and the caller falls back to a render.
+ * The common mistake is a hint written as `#RRGGBB`, which the extension does
+ * not allow. Skipping only that class draws a mask full of transparent holes,
+ * and discards the render that could have coloured it.
  */
 export function renderFromClassification(asset) {
   const classes = classificationClasses(asset);
@@ -310,15 +358,24 @@ export function renderFromClassification(asset) {
   const colormap = {};
   const nodata = [];
   for (const cls of classes) {
-    if (!cls || typeof cls.value !== 'number') {continue;}
+    if (!cls || typeof cls.value !== 'number') {return null;}
+    // Tested before the hint, so a `background` class needs no hint to be read.
+    if (isTransparentClass(cls, bandNodata)) {nodata.push(cls.value); continue;}
     const rgb = hintToRgb(cls.color_hint);
-    if (!rgb) {continue;}
-    if (isTransparentClass(cls, bandNodata)) {nodata.push(cls.value);}
-    else {colormap[String(cls.value)] = [...rgb, 255];}
+    if (!rgb) {return null;}
+    colormap[String(cls.value)] = [...rgb, 255];
   }
   if (Object.keys(colormap).length === 0) {return null;}
   if (bandNodata != null && !nodata.includes(bandNodata)) {nodata.push(bandNodata);}
   return { colormap, nodata, bidx: [1] };
+}
+
+// A class name comes from the catalog, at whatever length the catalog chose. A
+// row has to stay a row, so cut it here as well as clipping it in the CSS.
+const MAX_LEGEND_LABEL = 64;
+
+function legendLabel(name) {
+  return String(name ?? '').slice(0, MAX_LEGEND_LABEL);
 }
 
 function cssColor(rgba) {
@@ -330,21 +387,29 @@ function cssColor(rgba) {
  * Legend rows, `[{ color, label }]`, for a render that colours by value. Class
  * names label the rows where the caller passes the asset's classification
  * classes. A continuous ramp gets no rows: a swatch list cannot describe one.
+ *
+ * The `colormap_name` test repeats the one `makeRenderTileLoader` makes. Keep
+ * the two in step, or the legend will describe a different colouring from the
+ * one the pixels take.
  */
 export function discreteLegend(render, classes = []) {
-  if (!render || COLORMAPS[render.colormap_name]) {return [];}
+  if (!render || builtinStops(render.colormap_name)) {return [];}
   const names = new Map((Array.isArray(classes) ? classes : [])
     .filter(c => c && typeof c.value === 'number')
     .map(c => [c.value, c.name]));
+  // The loader drops a nodata value before it reaches the colormap, so a swatch
+  // for one would advertise a colour that never lands on the map.
+  const nodata = new Set((Array.isArray(render.nodata) ? render.nodata : [render.nodata])
+    .filter(v => v != null));
   const discrete = parseDiscreteEntries(render.colormap);
   if (discrete) {
     return discrete
-      .filter(([, rgba]) => rgba[3] > 0)
+      .filter(([value, rgba]) => rgba[3] > 0 && !nodata.has(value))
       .sort((a, b) => a[0] - b[0])
       .slice(0, MAX_LEGEND_ROWS)
       .map(([value, rgba]) => ({
         color: cssColor(rgba),
-        label: names.get(value) || String(value),
+        label: legendLabel(names.has(value) ? names.get(value) : value),
       }));
   }
   const intervals = parseIntervalEntries(render.colormap);

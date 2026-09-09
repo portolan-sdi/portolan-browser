@@ -121,16 +121,57 @@ describe('discrete colormaps', () => {
     expect(pixel(res, 0)[3]).toBe(255)
   })
 
-  it('falls back to a ramp when the entries are garbage', async () => {
+  it('falls back to viridis when the entries are garbage', async () => {
     for (const colormap of [
       { 1: [0, 158] },                       // too few channels
       { 1: ['red', 'green', 'blue'] },       // non-numeric channels
       { notanumber: [1, 2, 3] },             // key is not a pixel value
       { 1: [0, 158, 115, 255, 9] },          // too many channels
+      { 1: [0.5, 0.5, 0.5] },                // 0..1 floats, not 8-bit channels
+      { 1: [300, 0, 0] },                    // channel out of range
+      { '0x10': [1, 2, 3] },                 // not a decimal pixel value
+      { ' 1 ': [1, 2, 3] },                  // padded key
+      { '1e3': [1, 2, 3] },                  // exponent key
+      { '': [1, 2, 3] },                     // empty key
     ]) {
       const res = await call({ colormap, rescale: [[0, 1]] }, fakeImage(new Float32Array([1]), 1, 1))
-      expect(pixel(res, 0)[3]).toBe(255)
-      expect(pixel(res, 0).slice(0, 3)).not.toEqual([0, 0, 0])
+      expect(pixel(res, 0)).toEqual([253, 231, 37, 255])  // viridis at t=1
+    }
+  })
+
+  it('falls back to a ramp on a fractional key instead of throwing', async () => {
+    // `new Array(1.5)` throws RangeError, which would abort every COG layer on
+    // the item, so the key form has to be rejected before the dense table.
+    const res = await call({ colormap: { '0.5': [1, 2, 3] }, rescale: [[0, 1]] },
+      fakeImage(new Float32Array([0.5]), 1, 1))
+    expect(pixel(res, 0)).toEqual([33, 145, 140, 255])  // viridis at t=0.5
+  })
+
+  it('uses the sparse path for a value past the dense table bound', async () => {
+    const res = await call({ colormap: { 100000000: [1, 2, 3] }, rescale: [[0, 1]] },
+      fakeImage(new Float64Array([100000000]), 1, 1))
+    expect(pixel(res, 0)).toEqual([1, 2, 3, 255])
+  })
+
+  it('drops a nodata value even when the colormap names it', async () => {
+    const render = { colormap: { 1: [255, 0, 0, 255] }, nodata: [1] }
+    const res = await call(render, fakeImage(new Float32Array([1]), 1, 1))
+    expect(pixel(res, 0)).toEqual([0, 0, 0, 0])
+  })
+
+  it('draws NaN transparent on the discrete path', async () => {
+    const render = { colormap: { 1: [255, 0, 0, 255] } }
+    const res = await call(render, fakeImage(new Float32Array([NaN]), 1, 1))
+    expect(pixel(res, 0)).toEqual([0, 0, 0, 0])
+  })
+
+  it('does not treat an Object.prototype key as a built-in colormap', async () => {
+    // `COLORMAPS.toString` is a function, which used to reach buildLut and throw
+    // out of layer construction, dropping every COG on the item.
+    for (const name of ['toString', 'constructor', 'valueOf', 'hasOwnProperty']) {
+      const render = { colormap_name: name, colormap: { 1: [1, 2, 3] }, rescale: [[0, 1]] }
+      const res = await call(render, fakeImage(new Float32Array([1]), 1, 1))
+      expect(pixel(res, 0)).toEqual([1, 2, 3, 255])
     }
   })
 
@@ -175,11 +216,51 @@ describe('interval colormaps', () => {
     expect(pixel(res, 1)[3]).toBe(0)
   })
 
+  it('reads the upper bound off the highest interval, not the last written', async () => {
+    // A legend is often written high to low. Trusting declaration order made the
+    // top value of the raster transparent.
+    const descending = {
+      colormap: [
+        [[20, 30], [0, 0, 255]],
+        [[10, 20], [0, 255, 0]],
+        [[0, 10], [255, 0, 0]],
+      ],
+    }
+    const res = await call(descending, fakeImage(new Float32Array([5, 15, 25, 30]), 4, 1))
+    expect(pixel(res, 0)).toEqual([255, 0, 0, 255])
+    expect(pixel(res, 1)).toEqual([0, 255, 0, 255])
+    expect(pixel(res, 2)).toEqual([0, 0, 255, 255])
+    expect(pixel(res, 3)).toEqual([0, 0, 255, 255])
+  })
+
   it('falls back to a ramp on a malformed interval list', async () => {
-    const render = { colormap: [[[0], [1, 2, 3]]], rescale: [[0, 1]] }
-    const res = await call(render, fakeImage(new Float32Array([1]), 1, 1))
-    expect(pixel(res, 0)[3]).toBe(255)
-    expect(pixel(res, 0).slice(0, 3)).not.toEqual([1, 2, 3])
+    for (const colormap of [
+      [[[0], [1, 2, 3]]],                          // range is not a pair
+      [[[20, 10], [1, 2, 3]]],                     // reversed range matches nothing
+      [[[0, 0], [1, 2, 3]]],                       // empty range
+      [[[0, 10], [1, 2, 3]], [[5, 15], [4, 5, 6]]],  // overlapping intervals
+    ]) {
+      const res = await call({ colormap, rescale: [[0, 1]] }, fakeImage(new Float32Array([1]), 1, 1))
+      expect(pixel(res, 0)).toEqual([253, 231, 37, 255])  // viridis at t=1
+    }
+  })
+
+  it('falls back to a ramp when the interval list has too many entries', async () => {
+    const colormap = Array.from({ length: 2000 }, (_, i) => [[i, i + 1], [1, 2, 3]])
+    const res = await call({ colormap, rescale: [[0, 1]] }, fakeImage(new Float32Array([1]), 1, 1))
+    expect(pixel(res, 0)).toEqual([253, 231, 37, 255])
+  })
+
+  it('colours a full-size tile from a large interval list without stalling', async () => {
+    // A per-pixel linear scan of the cap took seconds per tile on the main
+    // thread, which the MAX_TILE_PIXELS budget exists to prevent.
+    const colormap = Array.from({ length: 1024 }, (_, i) => [[i, i + 1], [1, 2, 3]])
+    const side = 1024
+    const data = new Float64Array(side * side).map((_, i) => i % 1024)
+    const started = Date.now()
+    const res = await call({ colormap }, fakeImage(data, side, side))
+    expect(pixel(res, 0)).toEqual([1, 2, 3, 255])
+    expect(Date.now() - started).toBeLessThan(1000)
   })
 })
 
@@ -238,13 +319,58 @@ describe('renderFromClassification', () => {
     expect(renderFromClassification(null)).toBeNull()
   })
 
-  it('ignores a malformed colour hint and keeps the valid classes', () => {
+  it('gives up the whole asset when one colour hint is malformed', () => {
+    // Colouring only the readable classes drew a mask that was mostly holes,
+    // and threw away the render that could have coloured it properly.
     const classes = [
       { value: 1, name: 'field', color_hint: '#009E73' },  // hint carries a "#"
       { value: 2, name: 'boundary', color_hint: 'D55E00' },
     ]
+    expect(renderFromClassification(classifiedAsset(classes))).toBeNull()
+  })
+
+  it('gives up the whole asset when a class value is not a number', () => {
+    const classes = [
+      { value: '1', name: 'field', color_hint: '009E73' },
+      { value: 2, name: 'boundary', color_hint: 'D55E00' },
+    ]
+    expect(renderFromClassification(classifiedAsset(classes))).toBeNull()
+  })
+
+  it('reads a transparent class that carries no hint at all', () => {
+    // "background" says what to draw without a colour, so it must not count as
+    // a gap in the hints.
+    const classes = [
+      { value: 0, name: 'background' },
+      { value: 1, name: 'field', color_hint: '009E73' },
+    ]
     const render = renderFromClassification(classifiedAsset(classes))
-    expect(render.colormap).toEqual({ 2: [213, 94, 0, 255] })
+    expect(render.colormap).toEqual({ 1: [0, 158, 115, 255] })
+    expect(render.nodata).toContain(0)
+  })
+
+  it('matches a transparent class name whatever its case', () => {
+    const classes = [
+      { value: 0, name: 'Background', color_hint: '000000' },
+      { value: 1, name: 'field', color_hint: '009E73' },
+    ]
+    const render = renderFromClassification(classifiedAsset(classes))
+    expect(render.colormap['0']).toBeUndefined()
+    expect(render.nodata).toContain(0)
+  })
+
+  it('adds the band nodata that no class declares', () => {
+    const classes = [{ value: 1, name: 'field', color_hint: '009E73' }]
+    const render = renderFromClassification(classifiedAsset(classes, { nodata: 255 }))
+    expect(render.nodata).toEqual([255])
+  })
+
+  it('does not let an empty bands array hide raster:bands', () => {
+    const asset = {
+      bands: [],
+      'raster:bands': [{ 'classification:classes': FTW_CLASSES }],
+    }
+    expect(renderFromClassification(asset).colormap['1']).toEqual([0, 158, 115, 255])
   })
 
   it('drives the tile loader end to end', async () => {
@@ -279,6 +405,36 @@ describe('discreteLegend', () => {
   it('labels a discrete colormap with the pixel value when no class names it', () => {
     const legend = discreteLegend({ colormap: { 2: [213, 94, 0, 255], 1: [0, 158, 115, 255] } })
     expect(legend.map(r => r.label)).toEqual(['1', '2'])
+  })
+
+  it('sorts the rows by pixel value, not by key order', () => {
+    // A negative key sorts after "10" as a string, so only a numeric sort gets
+    // this right. Integer-like keys alone would pass whatever the code did.
+    const legend = discreteLegend({
+      colormap: { 10: [1, 1, 1, 255], '-1': [2, 2, 2, 255], 2: [3, 3, 3, 255] },
+    })
+    expect(legend.map(r => r.label)).toEqual(['-1', '2', '10'])
+  })
+
+  it('names the rows from the classes even when a render supplies the colours', () => {
+    // Precedence 2: the publisher wrote the colormap, the asset still names the
+    // classes. The picker should read "field", not "1".
+    const render = { colormap: { 1: [255, 0, 0, 255], 2: [0, 0, 255, 255] } }
+    const legend = discreteLegend(render, classificationClasses(classifiedAsset(FTW_CLASSES)))
+    expect(legend.map(r => r.label)).toEqual(['field', 'boundary'])
+  })
+
+  it('leaves out a value the loader drops as nodata', () => {
+    // The loader never paints a nodata value, so a swatch for one would promise
+    // a colour that is not on the map.
+    const legend = discreteLegend({ colormap: { 0: [0, 0, 0, 255], 1: [255, 0, 0, 255] }, nodata: [0] })
+    expect(legend).toEqual([{ color: 'rgb(255, 0, 0)', label: '1' }])
+  })
+
+  it('cuts a class name that would stretch the picker', () => {
+    const classes = [{ value: 1, name: 'x'.repeat(500) }]
+    const legend = discreteLegend({ colormap: { 1: [1, 2, 3, 255] } }, classes)
+    expect(legend[0].label).toHaveLength(64)
   })
 
   it('leaves out a fully transparent entry', () => {
