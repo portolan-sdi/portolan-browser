@@ -55,6 +55,12 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
   main thread or colours tiles that left the viewport
 - A render whose `bidx` names a band the COG does not have draws nothing, instead of
   reading the neighbouring pixel's samples as that band
+- Hiding a raster layer and showing it again no longer fails with `deck.gl: assertion
+  failed`. The map hands deck.gl a new layer instance each time instead of the one it
+  had already finalized
+- Without a declared `portolan:render_order`, one-band and classified rasters draw above
+  the pictures on the item, so a label mask turned on is no longer hidden under a scene
+  listed after it
 
 ## [0.1.0][] - 2026-08-31
 

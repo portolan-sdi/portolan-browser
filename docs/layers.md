@@ -39,6 +39,12 @@ rasters, the map layer chooses for itself. It prefers, in order, the
 One layer is the safe guess, because the metadata says nothing about how two
 rasters are meant to sit together.
 
+Where the catalog declares no order, the layer picker lists the pictures first
+and the masks after them, each group in item order. A mask is a raster whose
+band metadata describes one band, or one that carries classification classes.
+List order is draw order, bottom first, so a mask the user turns on draws above
+the scene rather than under it.
+
 ## Declaring the stack
 
 `portolan:render_order` is an array of keys into the item's own `renders`,

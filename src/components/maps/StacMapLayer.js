@@ -106,6 +106,13 @@ function isHttpHref(url) {
   }
 }
 
+// A raster that reads as an overlay rather than a picture: one band of
+// metadata, or classification classes. Drawn above the pictures when the item
+// declares no order of its own.
+function isOverlayAsset(asset) {
+  return assetBands(asset).length === 1 || classificationClasses(asset).length > 0;
+}
+
 // Pick the cheapest COG asset to display. Prefers display-optimized assets:
 // the `visual`/`overview` role, Web Mercator (EPSG:3857 → no client reprojection),
 // and an 8-bit data type (cheap decode). Higher score wins; ties keep input order.
@@ -973,7 +980,11 @@ export default class StacMapLayer {
     const stacked = new Set(stack.map(l => l.asset));
     const unselected = stacked.size ? [...stacked] : [pickDisplayAsset(allCogs)];
     const active = activeCogs.length ? activeCogs : unselected;
-    const ordered = [...stacked, ...allCogs.filter(a => !stacked.has(a))];
+    const rest = allCogs.filter(a => !stacked.has(a));
+    // Undeclared assets keep item order among themselves, except that a mask
+    // draws above a picture: a one-band or classified raster is an overlay, and
+    // a scene listed after it would otherwise cover it.
+    const ordered = [...stacked, ...rest.filter(a => !isOverlayAsset(a)), ...rest.filter(isOverlayAsset)];
     const preferred = new Map(stack.map(l => [cogKey(l.asset), l]));
     this._cogList = this._buildCogList(ordered, active, renders, preferred);
     await this._syncCogLayers(epoch);
@@ -1131,19 +1142,25 @@ export default class StacMapLayer {
       const { MapboxOverlay, COGLayer, DecoderPool } = await this._loadDeckDeps();
       if (epoch !== this._overlayEpoch) {return;}
 
-      // Drop cached layers no longer listed (e.g. evicted by the cap).
+      // Drop cached props no longer listed (e.g. evicted by the cap).
       const liveIds = new Set(this._cogList.map(d => d.id));
       for (const id of [...this._cogLayerCache.keys()]) {
         if (!liveIds.has(id)) {this._cogLayerCache.delete(id);}
       }
 
+      // A fresh COGLayer instance every sync, built from cached props. deck
+      // matches instances by id and carries state across, so an unchanged
+      // props object costs nothing. Reusing an instance is what breaks: deck
+      // finalizes a layer it stops receiving, and refuses that instance if it
+      // comes back ("finalized layer cannot be reused"), which is what a
+      // hide-then-show of one layer did.
       const layers = visible.map(d => {
-        let layer = this._cogLayerCache.get(d.id);
-        if (!layer) {
-          layer = this._makeCogLayer(d, COGLayer, DecoderPool);
-          this._cogLayerCache.set(d.id, layer);
+        let props = this._cogLayerCache.get(d.id);
+        if (!props) {
+          props = this._makeCogLayerProps(d, DecoderPool);
+          this._cogLayerCache.set(d.id, props);
         }
-        return layer;
+        return new COGLayer(props);
       });
 
       if (this._deckOverlay) {
@@ -1157,7 +1174,7 @@ export default class StacMapLayer {
     }
   }
 
-  _makeCogLayer(descriptor, COGLayer, DecoderPool) {
+  _makeCogLayerProps(descriptor, DecoderPool) {
     const { asset, render } = descriptor;
     const url = asset.getAbsoluteUrl?.() || asset.href;
     const props = {
@@ -1183,7 +1200,7 @@ export default class StacMapLayer {
       props.getTileData = getTileData;
       props.renderTile = renderTile;
     }
-    return new COGLayer(props);
+    return props;
   }
 
   fit(padding = { top: 160, bottom: 50, left: 50, right: 50 }) {

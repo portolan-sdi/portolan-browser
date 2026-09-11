@@ -291,6 +291,38 @@ describe('StacMapLayer', () => {
         expect(cogIds(layer)).toEqual(['scene', 'mask'])
       })
 
+      it('draws undeclared masks above undeclared pictures, in item order', async () => {
+        // The shape of a published FTW chip: masks listed first, then a visual
+        // with no band metadata, then 4-band imagery. Item order alone would
+        // draw the scene over every mask.
+        const band = (data_type) => ({ data_type, statistics: { minimum: 0, maximum: 1 } })
+        const assets = [
+          cogAsset('instance_mask', { bands: [band('uint32')] }),
+          cogAsset('class_mask', { bands: [band('uint8')] }),
+          cogAsset('planting_visual', { roles: ['visual'] }),
+          cogAsset('planting_image', { bands: [band('uint16'), band('uint16'), band('uint16'), band('uint16')] }),
+          cogAsset('harvest_visual', { roles: ['visual'] }),
+        ]
+        layer.setStac(fakeStac(assets, {}))
+        await selectNothing(layer)
+        expect(cogIds(layer)).toEqual([
+          'planting_visual', 'planting_image', 'harvest_visual', 'instance_mask', 'class_mask',
+        ])
+        expect(visibleCogIds(layer)).toEqual(['planting_visual'])
+      })
+
+      it('keeps undeclared assets after the declared stack, masks last', async () => {
+        const assets = [
+          cogAsset('mask', { bands: [{ data_type: 'uint8' }] }),
+          cogAsset('scene', { roles: ['visual'] }),
+          cogAsset('other_mask', { bands: [{ data_type: 'uint8' }] }),
+          cogAsset('other_scene'),
+        ]
+        layer.setStac(withOrder(assets, ['labels']))
+        await selectNothing(layer)
+        expect(cogIds(layer)).toEqual(['mask', 'scene', 'other_scene', 'other_mask'])
+      })
+
       it('reads the field from the root as well as from properties', async () => {
         const assets = [cogAsset('mask'), cogAsset('scene')]
         layer.setStac({ ...fakeStac(assets, RENDERS), 'portolan:render_order': ['labels'] })
@@ -490,15 +522,32 @@ describe('StacMapLayer', () => {
       expect(dmap.controls).toHaveLength(1)
     })
 
-    it('reuses the cached COGLayer instance when toggling another COG on', async () => {
+    it('reuses the cached COGLayer props when toggling another COG on', async () => {
       const assets = ['a', 'b'].map(k => cogAsset(k))
       dlayer.setStac(fakeStac(assets))
       await dlayer.setAssets([assets[0]])
       const firstA = dlayer._cogLayerCache.get('a')
+      const firstInstance = dlayer._deckOverlay.props.layers[0]
       await dlayer.setCogVisible('b', true)
-      // 'a' must be the same instance — re-creating it would abort its tiles.
+      // Same props object: deck sees nothing changed on 'a' and keeps its tiles.
       expect(dlayer._cogLayerCache.get('a')).toBe(firstA)
+      expect(dlayer._deckOverlay.props.layers[0].props).toBe(firstInstance.props)
       expect(overlayLayerIds(dlayer).sort()).toEqual(['stac-cog-a', 'stac-cog-b'])
+    })
+
+    it('hands deck a new instance after a hide-then-show, never a finalized one', async () => {
+      // deck finalizes a layer it stops receiving and asserts if that instance
+      // comes back. Reproduced by toggling one of two layers off and on.
+      const assets = ['a', 'b'].map(k => cogAsset(k))
+      dlayer.setStac(fakeStac(assets))
+      await dlayer.setAssets(assets)
+      const before = dlayer._deckOverlay.props.layers.find(l => l.props.id === 'stac-cog-b')
+      await dlayer.setCogVisible('b', false)
+      expect(overlayLayerIds(dlayer)).toEqual(['stac-cog-a'])
+      await dlayer.setCogVisible('b', true)
+      const after = dlayer._deckOverlay.props.layers.find(l => l.props.id === 'stac-cog-b')
+      expect(after).not.toBe(before)
+      expect(after.props).toBe(before.props)
     })
 
     it('prunes cached layers that drop off the list', async () => {
