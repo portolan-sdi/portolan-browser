@@ -27,7 +27,11 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 - The `colormap` field of a render accepts the discrete object and interval-list forms the render
   extension documents, besides the linear stops list read until now
 - `portolan:render_order` names the renders an item opens with, bottom first, so a chip
-  can show its true-colour imagery with a label mask drawn over it
+  can show its true-colour imagery with a label mask drawn over it. The field is a
+  browser-side hint pending a proposal in portolan-spec (see [docs/layers.md](docs/layers.md))
+- An asset with three or more bands of statistics and no render of its own draws as a
+  true-colour composite stretched to those statistics, instead of near-black through the
+  default GPU path
 - A render whose `bidx` names three bands draws as a true-colour composite, stretching
   each band by its own `rescale`, instead of ramping the first band through a colormap
 - The layer picker says how many raster assets it could not list, instead of quietly
@@ -46,6 +50,11 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 - An asset only inherits the item's first render when its band metadata describes a
   single band, so a multi-band scene no longer draws as a false-colour ramp of its red
   band
+- The render tile loaders hand deck.gl's decoder worker pool to the tile fetch and stop
+  after a cancelled fetch, so a colormapped or composited COG no longer decodes on the
+  main thread or colours tiles that left the viewport
+- A render whose `bidx` names a band the COG does not have draws nothing, instead of
+  reading the neighbouring pixel's samples as that band
 
 ## [0.1.0][] - 2026-08-31
 

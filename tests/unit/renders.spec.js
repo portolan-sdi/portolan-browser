@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   makeRenderTileLoader, resolveRenders, renderFromClassification,
-  classificationClasses, discreteLegend,
+  classificationClasses, discreteLegend, assetBands, synthesizeRgbRender, canInheritRender,
 } from '../../src/utils/renders.js'
 
 // Build a fake deck.gl-geotiff COGLayer `image` whose fetchTile returns one
@@ -544,5 +544,91 @@ describe('RGB renders', () => {
     const render = { bidx: [1, 2, 3], rescale: [[0, 1]] }
     const image = fakeImage(new Uint16Array(3), 1, 1, 'band-separate')
     await expect(call(render, image)).rejects.toThrow(/band-separate/)
+  })
+
+  it('draws nothing when the tile has fewer bands than bidx names', async () => {
+    // A one-band tile read as RGB would take its neighbours' samples as G and B.
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100]], nodata: 0 }
+    expect(await call(render, fakeImage(new Uint16Array([10, 50, 100]), 3, 1))).toBeNull()
+  })
+
+  it('leaves a band with no rescale entry unstretched rather than borrowing another', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100], [0, 200]] }
+    const res = await call(render, rgbTile([100, 100, 100, 0]))
+    expect(pixel(res, 0)).toEqual([255, 128, 100, 255])
+  })
+
+  it('ignores a non-finite rescale bound', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, Infinity]] }
+    const res = await call(render, rgbTile([255, 128, 0, 0]))
+    expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
+  })
+})
+
+describe('tile loader plumbing', () => {
+  it('hands deck\'s decoder pool to fetchTile', async () => {
+    const seen = []
+    const image = { fetchTile: async (x, y, opts) => { seen.push(opts); return { array: { data: new Uint8Array(3), width: 1, height: 1, layout: 'pixel-interleaved' } } } }
+    const pool = { decode: () => {} }
+    await makeRenderTileLoader({ bidx: [1, 2, 3] }).getTileData(image, { x: 0, y: 0, signal: undefined, pool })
+    await makeRenderTileLoader({ bidx: [1] }).getTileData(image, { x: 0, y: 0, signal: undefined, pool })
+    expect(seen).toHaveLength(2)
+    expect(seen.every(o => o.pool === pool)).toBe(true)
+  })
+
+  it('returns null for a tile cancelled while in flight, before the pixel loop', async () => {
+    const controller = new AbortController()
+    const image = { fetchTile: async () => { controller.abort(); return { array: { data: new Uint8Array(3), width: 1, height: 1, layout: 'pixel-interleaved' } } } }
+    const opts = { x: 0, y: 0, signal: controller.signal }
+    expect(await makeRenderTileLoader({ bidx: [1, 2, 3] }).getTileData(image, opts)).toBeNull()
+    expect(await makeRenderTileLoader({ bidx: [1] }).getTileData(image, opts)).toBeNull()
+  })
+
+  it('draws nothing for a single-band bidx the tile does not have', async () => {
+    const render = { colormap_name: 'viridis', rescale: [[0, 1]], bidx: [3] }
+    expect(await call(render, fakeImage(new Float32Array([0.5]), 1, 1))).toBeNull()
+  })
+
+  it('falls back to a unit stretch when rescale is malformed', async () => {
+    const render = { colormap_name: 'viridis', rescale: [5], bidx: [1] }
+    const res = await call(render, fakeImage(new Float32Array([0.5]), 1, 1))
+    expect(res.colorImage.data[3]).toBe(255)
+  })
+})
+
+describe('assetBands', () => {
+  it('reads bands, then raster:bands, then nothing', () => {
+    expect(assetBands({ bands: [{ a: 1 }] })).toEqual([{ a: 1 }])
+    expect(assetBands({ 'raster:bands': [{ b: 2 }] })).toEqual([{ b: 2 }])
+    expect(assetBands({ bands: [], 'raster:bands': [{ b: 2 }] })).toEqual([{ b: 2 }])
+    expect(assetBands({})).toEqual([])
+    expect(assetBands(null)).toEqual([])
+  })
+})
+
+describe('synthesizeRgbRender', () => {
+  const band = (min, max, nodata) => ({ statistics: { minimum: min, maximum: max }, nodata })
+
+  it('builds a stretched RGB render from three bands of statistics', () => {
+    const asset = { 'raster:bands': [band(1, 9, 0), band(2, 8, 0), band(3, 7), band(0, 1)] }
+    expect(synthesizeRgbRender(asset)).toEqual({
+      bidx: [1, 2, 3], rescale: [[1, 9], [2, 8], [3, 7]], nodata: [0],
+    })
+  })
+
+  it('returns null with fewer than three bands or a band without statistics', () => {
+    expect(synthesizeRgbRender({ bands: [band(0, 1), band(0, 1)] })).toBeNull()
+    expect(synthesizeRgbRender({ bands: [band(0, 1), band(0, 1), {}] })).toBeNull()
+    expect(synthesizeRgbRender({ bands: [band(0, 1), band(0, 1), band(5, 5)] })).toBeNull()
+    expect(synthesizeRgbRender({})).toBeNull()
+  })
+})
+
+describe('canInheritRender', () => {
+  it('admits exactly one band of metadata', () => {
+    expect(canInheritRender({ bands: [{}] })).toBe(true)
+    expect(canInheritRender({ 'raster:bands': [{}] })).toBe(true)
+    expect(canInheritRender({ bands: [{}, {}, {}] })).toBe(false)
+    expect(canInheritRender({})).toBe(false)
   })
 })

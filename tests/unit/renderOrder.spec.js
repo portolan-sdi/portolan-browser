@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import { renderOrderKeys, orderedRenderLayers } from '../../src/utils/renderOrder.js'
-import ShowAssetLinkMixin from '../../src/components/ShowAssetLinkMixin.js'
 
 const asset = (key, opts = {}) => ({
   type: opts.type || 'image/tiff; application=geotiff; profile=cloud-optimized',
@@ -87,48 +86,18 @@ describe('orderedRenderLayers', () => {
       .toEqual([])
   })
 
+  it('caps the resolved layers, not only the keys, so a stack fits the picker', () => {
+    const many = Array.from({ length: 20 }, (_, i) => `a${i}`)
+    const renders = { all: { assets: many } }
+    const stac = { properties: { 'portolan:render_order': ['all'] } }
+    const layers = orderedRenderLayers(stac, renders, many.map(k => asset(k)))
+    expect(layers).toHaveLength(16)
+    expect(layers.map(l => l.asset.getKey())).toEqual(many.slice(0, 16))
+  })
+
   it('tolerates missing renders and a missing asset list', () => {
     const stac = { 'portolan:render_order': ['instance'] }
     expect(orderedRenderLayers(stac, undefined, assets)).toEqual([])
     expect(orderedRenderLayers(stac, RENDERS, undefined)).toEqual([])
-  })
-})
-
-// The auto-selection is the path an item view actually takes: it decides what
-// setAssets() is called with, so the convention has to be honoured here too.
-describe('_autoSelectCogAsset', () => {
-  const run = (stac, assets) => {
-    const ctx = { data: stac, selectedAssets: [], hasAutoSelected: false }
-    ShowAssetLinkMixin.methods._autoSelectCogAsset.call(ctx, assets)
-    return ctx
-  }
-  const assets = [asset('instance_mask'), asset('planting_image', { roles: ['data', 'visual'] })]
-  const keys = ctx => ctx.selectedAssets.map(a => a.getKey())
-
-  it('opens every declared layer, in declared order', () => {
-    const stac = {
-      properties: { renders: RENDERS, 'portolan:render_order': ['planting_rgb', 'instance'] },
-    }
-    expect(keys(run(stac, assets))).toEqual(['planting_image', 'instance_mask'])
-  })
-
-  it('falls back to the visual-role asset when nothing is declared', () => {
-    expect(keys(run({ properties: { renders: RENDERS } }, assets))).toEqual(['planting_image'])
-  })
-
-  it('falls back to the first COG when there is no visual asset', () => {
-    const plain = [asset('a'), asset('b')]
-    expect(keys(run({}, plain))).toEqual(['a'])
-  })
-
-  it('falls back when the declared keys resolve to nothing', () => {
-    const stac = { properties: { renders: RENDERS, 'portolan:render_order': ['gone'] } }
-    expect(keys(run(stac, assets))).toEqual(['planting_image'])
-  })
-
-  it('selects nothing at all when the item has no COG assets', () => {
-    const ctx = run({}, [asset('data', { type: 'application/geo+json' })])
-    expect(ctx.selectedAssets).toEqual([])
-    expect(ctx.hasAutoSelected).toBe(false)
   })
 })

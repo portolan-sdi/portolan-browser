@@ -1,32 +1,49 @@
 # Layers <!-- omit in toc -->
 
-An item can hold a dozen rasters: a true-colour scene per season, the imagery
-they were cut from, and a label mask for every way the data has been encoded.
-Portolan Browser has to decide which of them the map opens with, and in what
-order they stack. This page records how that decision is made, and how a catalog
-can make it instead.
+An item can list many rasters. A benchmark chip stores one true-colour scene
+per season beside the source imagery and a label mask for each encoding of its
+labels. Portolan Browser decides which of those rasters the map opens with and
+how they stack. This page records that decision and the field a catalog can
+use to make it instead.
 
 ## Table of contents <!-- omit in toc -->
 
+- [Status of `portolan:render_order`](#status-of-portolanrender_order)
 - [What opens by default](#what-opens-by-default)
 - [Declaring the stack](#declaring-the-stack)
-  - [Why a namespaced field](#why-a-namespaced-field)
+  - [Reasons for a separate field](#reasons-for-a-separate-field)
 - [Which render colours which asset](#which-render-colours-which-asset)
 - [True-colour renders](#true-colour-renders)
 - [The layer picker](#the-layer-picker)
 
+## Status of `portolan:render_order`
+
+`portolan:render_order` is a browser-side hint that the Portolan specification
+does not define. Raster styling is an open question in portolan-spec, tracked in
+[issue #41](https://github.com/portolan-sdi/portolan-spec/issues/41) and the
+[raster styling
+note](https://github.com/portolan-sdi/portolan-spec/blob/main/specs/incubating/raster-styling.md).
+The field can change or disappear once the specification defines raster
+styling. A catalog that uses it today loses nothing if it goes away, because
+every reader that does not know the field still renders the item.
+
 ## What opens by default
 
-Where the catalog says nothing, the browser picks exactly one raster: the first
-asset with the `visual` role, or failing that the first COG the item lists. One
-layer is the only guess a viewer can make safely, because nothing in the
-metadata says how two rasters are meant to sit together.
+Where the catalog says nothing, the browser opens one raster. On the item page
+that is the first asset with the `visual` role, or the first COG the item lists
+when no asset has that role. When the map receives a selection with no COG in
+it, as after the user shows a GeoParquet asset on an item that also has
+rasters, the map layer chooses for itself. It prefers, in order, the
+`visual` role, the `overview` role, an EPSG:3857 projection, and 8-bit samples.
+
+One layer is the safe guess, because the metadata says nothing about how two
+rasters are meant to sit together.
 
 ## Declaring the stack
 
 `portolan:render_order` is an array of keys into the item's own `renders`,
-**bottom first**. The browser opens with every asset those renders name, in that
-order, drawing each over the one before it.
+**bottom first**. The browser opens with the assets those renders reference, in
+that order, and draws each over the one before it.
 
 ```json
 {
@@ -52,90 +69,103 @@ order, drawing each over the one before it.
 }
 ```
 
-That item opens showing its true-colour imagery with the field instances drawn
-on top. The layer picker lists the two in the same order, and the user can turn
-either one off.
+That item opens with its true-colour imagery under the field instances. The
+layer picker lists both in the same order, and the user can turn either one off.
 
-Naming renders rather than assets means one key settles both which layer to draw
-and how to colour it. A render that lists several assets contributes one layer
-per asset, in the render's own asset order — they share a colouring, so they
-share a place in the stack.
+Because the field references renders rather than assets, one key settles both
+which layer to draw and how to colour it. A render that lists several assets
+contributes one layer per asset, in the render's own asset order, since those
+assets share a colouring.
 
-The field is read from `properties` first and then from the document root, the
-same two places `portolan:styles` is read from. It also drives which assets the
-item page marks as shown on the map.
+The browser reads the field from `properties` first and then from the document
+root. The item page marks the same assets as shown on the map.
 
-Everything about it degrades:
+The field degrades in every case where it cannot apply:
 
 - A catalog that omits the field keeps the single-asset default above.
-- A key naming no render in the document is skipped.
+- A key that references no render in the document is skipped.
 - A render whose assets the browser cannot draw contributes nothing.
-- An asset named twice is drawn once, at its first position.
+- An asset referenced twice is drawn once, at its first position.
 - If nothing resolves, the single-asset default applies as though the field were
   absent.
 - A value that is not an array is ignored.
-- A viewer that has never heard of the field still renders the item.
+- A stack longer than 16 layers is cut at 16, which is the layer picker's cap.
 
-An explicit "show on map" from the user always wins over the declared stack: the
-field says how the item *opens*, not what it is pinned to.
+An explicit "show on map" from the user replaces the declared stack. The field
+says how the item opens, not what it is pinned to.
 
-### Why a namespaced field
+### Reasons for a separate field
 
-The tempting alternative is to widen the `visual` role — mark the label mask
-`visual` too, and draw every `visual` asset. It is not worth it. STAC defines
-`visual` as "an image suitable for display", meaning a picture of the scene; a
-one-band instance-id raster is not that, and a catalog that claims it is misleads
-every other STAC client that reads the role. Roles also carry no order, so a
-two-layer stack would silently depend on the order the assets happen to appear
-in.
+Widening the `visual` role would mean marking the label mask `visual` too and
+drawing every `visual` asset. STAC defines `visual` as an image suitable for
+display, which describes a picture of the scene. A one-band instance-id raster
+is not a picture, and a catalog that claims it is misleads every other STAC
+client that reads the role. Roles also have no order, so a two-layer stack
+would depend on the order the assets happen to appear in.
 
-Leaning on the declaration order of `renders` alone is no better: it is a JSON
-object, and object key order is not something a specification can rely on.
+The declaration order of `renders` is no better as a signal. `renders` is a
+JSON object, and a specification cannot rely on object key order.
 
-STAC genuinely cannot express stacking. A namespaced field is the honest answer,
-and it keeps the STAC-defined terms meaning what STAC says they mean.
+STAC has no way to express stacking, so the browser reads a separate field and
+keeps the STAC-defined terms meaning what STAC says they mean. Whether that
+field becomes part of the Portolan specification is decided in portolan-spec,
+not here.
 
 ## Which render colours which asset
 
-An asset can be named by more than one render. The browser resolves the
+An asset can be referenced by more than one render. The browser resolves the
 colouring of each raster layer in this order:
 
-1. **The render `portolan:render_order` named for it**, where the item declares
-   a stack. The publisher said which colouring belongs to this layer.
-2. **A render that lists the asset** in its `assets`.
-3. **The item's first declared render**, stretched to the asset's own band
-   statistics — for an 8-bit derivative of an asset a render already covers.
+1. **The asset's own classification colour hints**, where every class has one.
+   They colour the pixels and name the classes, so a categorical mask draws and
+   legends itself with no render at all. The render chosen in step 2 still
+   supplies the title and the nodata sentinels.
+2. **The render `portolan:render_order` references for the asset**, where the
+   item declares a stack. Otherwise, the first render that lists the asset in
+   its `assets`.
+3. **A true-colour render synthesized from the asset's own band statistics**,
+   where three or more bands each carry a minimum and a maximum. See
+   [True-colour renders](#true-colour-renders).
+4. **The item's first declared render**, stretched to the asset's own band
+   statistics. This suits an 8-bit derivative of an asset a render already
+   covers.
 
-Step 3 applies only to an asset whose band metadata describes exactly one band.
-A colormap is a function of one band: running it over an asset with three draws
-a true-colour scene as a false-colour ramp of its red band, and running it over
-an asset with no band metadata at all is a guess with no statistics to stretch
-to. Those assets are drawn through deck.gl's default path instead, which shows
-the file as it is.
+Step 4 applies only to an asset whose band metadata describes exactly one band.
+A colormap is a function of one band. Applied to an asset with three, it draws
+a true-colour scene as a false-colour ramp of its red band. Applied to an asset
+with no band metadata, it has no statistics to stretch to. Steps 3 and 4 cannot
+both apply to one asset, so their order does not matter.
 
-Band metadata is read from `bands` (STAC 1.1) and from `raster:bands` (the
-raster extension), because most published catalogs still use the latter and
-nothing migrates between them.
+An asset that matches none of the four steps, such as a two-band raster or a
+three-band raster without statistics, draws through the deck.gl default path,
+which shows the file as it is.
+
+Band metadata comes from `bands` (STAC 1.1) or from `raster:bands` (raster
+extension 1.x). The STAC migration step folds `raster:bands` into `bands` for a
+document older than STAC 1.1. A STAC 1.1 document that still uses the raster
+extension keeps `raster:bands`, so the browser reads both fields.
 
 ## True-colour renders
 
-A render whose `bidx` names exactly three bands is a true-colour composite
+A render whose `bidx` references exactly three bands is a true-colour composite
 rather than a colormap. The browser reads those three bands in the order given
-and stretches each by its own entry in `rescale`; a single `rescale` pair
-applies to all three. `bidx` is 1-based, so `[4, 1, 2]` is the usual
-false-colour infrared composite.
+and stretches each by its own entry in `rescale`. A `rescale` with one pair
+applies that pair to all three. A band with no entry of its own is left at
+`[0, 255]`. `bidx` is 1-based, so `[4, 1, 2]` is the usual false-colour infrared composite.
 
-A pixel is drawn transparent only where *every* named band reads as `nodata` —
-one zero channel inside real data is data, and punching it out would perforate
-the scene.
+A pixel is drawn transparent only where all three bands read as `nodata`. One
+zero channel inside real data is data, and making it transparent would
+perforate the scene.
 
-Any other `bidx` — one band, two, four — takes the single-band colormap path,
-where `bidx[0]` chooses the band and `rescale[0]` stretches it.
+A `bidx` of any other length takes the single-band colormap path, where
+`bidx[0]` chooses the band and `rescale[0]` stretches it.
+
+A `bidx` that references a band the file does not have draws nothing. Reading
+past the last band would take the next pixel's samples as data.
 
 ## The layer picker
 
-The picker lists every raster asset of the item, up to 16. Listing is cheap —
-an asset is only decoded once it is switched on — but a list longer than that
-stops being usable. Where an item carries more, the picker says how many it left
-out rather than quietly showing a shorter list, and "show on map" on an unlisted
-asset swaps it into the list.
+The picker lists the raster assets of the item, up to 16. Listing is cheap,
+because an asset is decoded only after it is switched on, but a longer list
+stops being usable. Where an item has more rasters, the picker says how many it
+left out, and "show on map" on an unlisted asset swaps it into the list.

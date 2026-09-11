@@ -35,8 +35,6 @@
                 </li>
               </ul>
             </li>
-            <!-- An asset the picker had to drop is said out loud: a list that
-                 quietly comes up short reads as a catalog missing its data. -->
             <li v-if="overflowCount > 0" class="layer-overflow">
               {{ $t('mapping.layers.overflow', { count: overflowCount }) }}
             </li>
@@ -109,7 +107,7 @@ export default {
         this.overflowCount = 0;
         return;
       }
-      this.overflowCount = this.stacLayer.getCogOverflowCount?.() || 0;
+      this.overflowCount = this.stacLayer.getCogOverflowCount();
       const footprintIds = this.stacLayer.getFootprintLayerIds();
       const childrenIds = this.stacLayer.getChildrenLayerIds();
       const layers = [];

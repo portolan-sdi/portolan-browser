@@ -3,7 +3,7 @@ import { PMTiles, SharedPromiseCache } from 'pmtiles';
 import { pmtilesProtocol } from './MapMixin.js';
 import {
   resolveRenders, makeRenderTileLoader, renderFromClassification,
-  classificationClasses, discreteLegend, assetBands,
+  classificationClasses, discreteLegend, assetBands, synthesizeRgbRender, canInheritRender,
 } from '../../utils/renders.js';
 import { orderedRenderLayers } from '../../utils/renderOrder.js';
 // Import the @developmentseed/geotiff decode worker via Vite's `?worker` suffix
@@ -106,42 +106,6 @@ function isHttpHref(url) {
   }
 }
 
-// A true-colour render synthesized from an asset's own band metadata, for an
-// asset no render covers. Three bands of statistics already say both "this is a
-// picture" and how to stretch it, and drawing it without a render instead leaves
-// a 16-bit scene nearly black: deck.gl's default GPU path spreads the raw values
-// over the whole type range, and a Sentinel-2 reflectance chip occupies a tenth
-// of it. Returns null unless every one of the first three bands carries usable
-// statistics — an asset that does not say how to stretch it is not one we can
-// stretch.
-function synthesizeRgbRender(asset) {
-  const bands = assetBands(asset).slice(0, 3);
-  if (bands.length < 3) {return null;}
-  const rescale = bands.map(b => [b?.statistics?.minimum, b?.statistics?.maximum]);
-  const usable = rescale.every(([lo, hi]) =>
-    typeof lo === 'number' && typeof hi === 'number' && hi > lo);
-  if (!usable) {return null;}
-  const nodata = [...new Set(bands.map(b => b?.nodata).filter(v => v != null))];
-  return { bidx: [1, 2, 3], rescale, nodata };
-}
-
-// Whether an asset may inherit the item's first render, for want of one of its
-// own. The synthesized render exists to stretch that colormap to this asset's
-// own band statistics, so it has something to offer exactly one kind of asset:
-// one with band metadata, describing a single band.
-//
-// More than one band and a colormap is the wrong tool — running it anyway reads
-// `bidx[0]` and paints a true-colour scene as a false-colour ramp of its red
-// band, which is what a chip's RGB imagery used to look like here. No band
-// metadata and there are no statistics to stretch to either, and no way to tell
-// how many bands the asset holds; the roles do not settle it, since a catalog
-// may describe its imagery with a role this browser has never seen. Guessing
-// wrong there is confidently wrong. Drawing the file through deck.gl's default
-// GPU path instead is at worst plain.
-function canInheritRender(asset) {
-  return assetBands(asset).length === 1;
-}
-
 // Pick the cheapest COG asset to display. Prefers display-optimized assets:
 // the `visual`/`overview` role, Web Mercator (EPSG:3857 → no client reprojection),
 // and an 8-bit data type (cheap decode). Higher score wins; ties keep input order.
@@ -182,13 +146,10 @@ function cogKey(asset) {
 
 // The layer picker lists at most this many COG overlays. "Show on map" for a
 // COG beyond the cap swaps it in, evicting the last (non-active) listed entry.
-// Listing is cheap — a descriptor only decodes once it is switched on — so the
-// cap is about keeping the picker readable, not about memory. It was 8, which
-// an item carrying a scene, a preview, and a handful of label masks per season
-// quietly overflows; anything dropped is now counted and reported rather than
-// vanishing (see getCogOverflowCount).
+// Listing is cheap (a descriptor decodes only once it is switched on), so the
+// cap keeps the picker readable rather than bounding memory. Dropped entries
+// are counted (see getCogOverflowCount).
 const COG_LAYER_CAP = 16;
-
 
 // Normalize a PMTiles source URL for comparison. Strips the `pmtiles://`
 // prefix and resolves relative URLs to absolute so that a style source URL
@@ -1005,35 +966,29 @@ export default class StacMapLayer {
     // display-optimized asset.
     const renders = resolveRenders(this.stac);
     const activeCogs = (assets || []).filter(isCogAsset);
-    // `portolan:render_order` declares a stack: which layers open, in which
-    // order, and which render colours each of them. Its assets therefore lead
-    // the list (list order is draw order) and carry their declared render,
-    // rather than whichever render happens to name them first. Without the
-    // field nothing moves and nothing is preferred.
+    // `portolan:render_order` declares a stack. Its assets lead the list (list
+    // order is draw order) and carry their declared render. Without the field
+    // nothing moves and nothing is preferred.
     const stack = orderedRenderLayers(this.stac, renders, allCogs);
-    const stacked = stack.map(l => l.asset);
-    const unselected = stacked.length ? stacked : [pickDisplayAsset(allCogs)];
+    const stacked = new Set(stack.map(l => l.asset));
+    const unselected = stacked.size ? [...stacked] : [pickDisplayAsset(allCogs)];
     const active = activeCogs.length ? activeCogs : unselected;
-    const ordered = stacked.length
-      ? [...stacked, ...allCogs.filter(a => !stacked.includes(a))]
-      : allCogs;
+    const ordered = [...stacked, ...allCogs.filter(a => !stacked.has(a))];
     const preferred = new Map(stack.map(l => [cogKey(l.asset), l]));
-
     this._cogList = this._buildCogList(ordered, active, renders, preferred);
     await this._syncCogLayers(epoch);
   }
 
   // Build the capped, ordered list of COG descriptors. List order is preserved
-  // (and is also the draw order, bottom first); active assets are always kept;
-  // remaining slots fill with other COGs in order until COG_LAYER_CAP, dropping
-  // trailing ("last") entries. `visible` mirrors the active set, so re-selecting
-  // a single asset solos it.
-  _buildCogList(allCogs, activeAssets, renders, preferred = new Map()) {
+  // (and is also the draw order, bottom first); active assets are always kept,
+  // even past the cap; remaining slots fill with other COGs in order until
+  // COG_LAYER_CAP, dropping trailing ("last") entries. `visible` mirrors the
+  // active set, so re-selecting a single asset solos it.
+  _buildCogList(allCogs, activeAssets, renders, preferred) {
     const activeKeys = new Set(activeAssets.map(cogKey));
     const kept = [];
     let othersBudget = COG_LAYER_CAP - activeKeys.size;
     for (const asset of allCogs) {
-      if (kept.length >= COG_LAYER_CAP) {break;}
       if (activeKeys.has(cogKey(asset))) {
         kept.push(asset);
       } else if (othersBudget > 0) {
@@ -1041,9 +996,6 @@ export default class StacMapLayer {
         othersBudget--;
       }
     }
-    // Anything the cap dropped is reported in the picker instead of disappearing
-    // without a word: an asset the user cannot see and cannot ask for reads as a
-    // broken catalog rather than a full one.
     this._cogOverflow = allCogs.length - kept.length;
     return kept.map(asset => {
       const key = cogKey(asset);
@@ -1077,24 +1029,22 @@ export default class StacMapLayer {
    *    where it has three bands' worth — see synthesizeRgbRender.
    * 4. The item's first render, stretched to the asset's own band statistics so
    *    an 8-bit derivative matches the colours of its full-resolution source.
+   *    Only for an asset whose metadata describes exactly one band — see
+   *    canInheritRender.
    *
    * "First render" means the first in the render extension's declaration order
    * (`renders` is a JSON object whose key order is preserved through parsing).
    * This is deterministic for a given document; multi-render items where no
    * render targets the display asset fall back to that first declared render.
-   *
-   * That last fallback applies only to an asset with exactly one band of
-   * metadata — see canInheritRender.
+   * Steps 3 and 4 are mutually exclusive (three or more bands versus exactly
+   * one), so their order is immaterial.
    */
-  _resolveCogRender(asset, renders, preferred = null) {
+  _resolveCogRender(asset, renders, preferred) {
     const key = cogKey(asset);
-    const entries = Object.entries(renders);
-    // A declared stack names the render for this layer; otherwise the first
-    // render that lists the asset. Either way it is one [id, render] pair, and
-    // the class hints below override its colours just the same.
+    const entries = Object.entries(renders).filter(([, r]) => r && typeof r === 'object');
     const direct = preferred
       ? [preferred.id, preferred.render]
-      : entries.find(([, r]) => (r.assets || []).includes(key));
+      : entries.find(([, r]) => Array.isArray(r.assets) && r.assets.includes(key));
 
     const classified = renderFromClassification(asset);
     if (classified) {

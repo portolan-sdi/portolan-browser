@@ -5,17 +5,18 @@ import LayerControl from '../../src/components/maps/LayerControl.vue'
 // The control renders its list inside a popover that loads asynchronously and
 // teleports. Stub it down to its slot so the test can read the markup, and
 // drive `update()` the way the popover's @show does.
-const factory = async (overlays) => {
+const factory = async (overlays, overflow = 0) => {
   const stacLayer = {
     getFootprintLayerIds: () => [],
     getChildrenLayerIds: () => [],
     getAssetOverlays: () => overlays,
+    getCogOverflowCount: () => overflow,
     setCogVisible: () => {},
   }
   const wrapper = mount(LayerControl, {
     props: { basemaps: [], activeBasemapIndex: 0, stacLayer },
     global: {
-      mocks: { $t: key => key },
+      mocks: { $t: (key, params) => (params ? `${key}:${JSON.stringify(params)}` : key) },
       stubs: {
         BPopover: { template: '<div><slot /></div>' },
         BFormCheckbox: { template: '<label><slot /></label>' },
@@ -65,5 +66,19 @@ describe('LayerControl legend', () => {
     const row = wrapper.find('.layer-legend li')
     expect(row.find('img').exists()).toBe(false)
     expect(row.text()).toContain('<img src=x onerror=alert(1)>')
+  })
+})
+
+describe('LayerControl overflow', () => {
+  it('says how many COG assets the cap left out', async () => {
+    const wrapper = await factory([cogOverlay([])], 3)
+    const line = wrapper.find('.layer-overflow')
+    expect(line.exists()).toBe(true)
+    expect(line.text()).toBe('mapping.layers.overflow:{"count":3}')
+  })
+
+  it('renders no overflow line when every asset is listed', async () => {
+    const wrapper = await factory([cogOverlay([])], 0)
+    expect(wrapper.find('.layer-overflow').exists()).toBe(false)
   })
 })

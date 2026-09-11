@@ -341,6 +341,17 @@ describe('StacMapLayer', () => {
         await selectNothing(layer)
         expect(cogIds(layer).slice(0, 2)).toEqual(['c19', 'c18'])
         expect(visibleCogIds(layer)).toEqual(['c19', 'c18'])
+        expect(cogIds(layer)).toHaveLength(16)
+        expect(layer.getCogOverflowCount()).toBe(4)
+      })
+
+      it('never drops an active asset past the cap, and counts only the unlisted ones', async () => {
+        const assets = Array.from({ length: 20 }, (_, i) => cogAsset(`c${i}`))
+        layer.setStac(withOrder(assets, [], {}))
+        await layer._addCogAssets(assets.slice(0, 17), layer._overlayEpoch)
+        expect(visibleCogIds(layer)).toHaveLength(17)
+        expect(cogIds(layer)).toHaveLength(17)
+        expect(layer.getCogOverflowCount()).toBe(3)
       })
     })
   })
@@ -644,8 +655,9 @@ describe('StacMapLayer', () => {
     })
 
     it('stretches the synthesized rescale to raster:bands statistics', async () => {
-      // A raster-extension 1.x catalog publishes `raster:bands`, which stac-js
-      // does not migrate to STAC 1.1's `bands`. Reading only `bands` left the
+      // A STAC 1.1 item that still uses raster extension 1.x publishes
+      // `raster:bands`, which neither stac-migrate (it only folds the field for
+      // pre-1.1 documents) nor stac-js reads. Reading only `bands` left the
       // rescale at [0, 255], and a uint16 scene drew as one flat block of the
       // ramp's top colour.
       const asset = {
