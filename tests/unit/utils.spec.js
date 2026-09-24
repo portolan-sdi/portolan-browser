@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import Utils from '../../src/utils.js'
 import { isMediaType } from 'stac-js/src/mediatypes.js'
+import create from 'stac-js'
 
 describe('Utils', () => {
   describe('isMediaType', () => {
@@ -285,6 +286,54 @@ describe('Utils', () => {
 
     it('returns empty array for non-array', () => {
       expect(Utils.getLinksWithRels(null, ['root'])).toEqual([])
+    })
+  })
+
+  describe('getIcons', () => {
+    const catalog = (links) => create({
+      stac_version: '1.1.0',
+      type: 'Catalog',
+      id: 'group',
+      description: 'A browsing group',
+      links: [
+        { rel: 'self', href: 'https://example.com/group/catalog.json', type: 'application/json' },
+        ...links
+      ]
+    })
+
+    it('keeps an SVG icon with a relative href', () => {
+      const stac = catalog([{ rel: 'icon', href: '../_assets/icons/x.svg', type: 'image/svg+xml', title: 'X' }])
+      const icon = Utils.getIcon(stac)
+      expect(icon).not.toBeNull()
+      expect(icon.getAbsoluteUrl()).toBe('https://example.com/_assets/icons/x.svg')
+    })
+
+    it('keeps an untyped icon with an .svg extension', () => {
+      const stac = catalog([{ rel: 'icon', href: 'https://example.com/x.svg' }])
+      expect(Utils.getIcons(stac)).toHaveLength(1)
+    })
+
+    it('still keeps raster icons that stac-js accepts', () => {
+      const stac = catalog([
+        { rel: 'icon', href: 'a.png', type: 'image/png' },
+        { rel: 'icon', href: 'b.svg', type: 'image/svg+xml' }
+      ])
+      expect(Utils.getIcons(stac).map(link => link.href)).toEqual(['a.png', 'b.svg'])
+    })
+
+    it('rejects an SVG icon on a non-browser protocol', () => {
+      const stac = catalog([{ rel: 'icon', href: 's3://bucket/x.svg', type: 'image/svg+xml' }])
+      expect(Utils.getIcons(stac)).toEqual([])
+    })
+
+    it('rejects icons of other media types', () => {
+      const stac = catalog([{ rel: 'icon', href: 'x.tif', type: 'image/tiff' }])
+      expect(Utils.getIcon(stac)).toBeNull()
+    })
+
+    it('returns nothing for non-STAC input', () => {
+      expect(Utils.getIcons(null)).toEqual([])
+      expect(Utils.getIcon({})).toBeNull()
     })
   })
 })
