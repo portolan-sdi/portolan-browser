@@ -138,6 +138,8 @@ export default {
     toggleOverlay(layer, visible) {
       if (layer.type === 'deckgl') {
         this.stacLayer.setCogVisible(layer.id, visible);
+      } else if (layer.asset) {
+        this.stacLayer.setOverlayVisible(layer.id, visible);
       } else {
         const val = visible ? 'visible' : 'none';
         for (const id of layer.layerIds) {

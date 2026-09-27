@@ -262,6 +262,13 @@ export default class StacMapLayer {
     // sourceId -> the layer ids currently on the map for it. Ownership is
     // explicit because style-authored ids follow no naming convention of ours.
     this._overlayLayerIdsBySource = new Map();
+    // Asset URL -> the visibility the user chose in the layer control. It
+    // survives teardown: a basemap or style switch rebuilds every overlay
+    // layer, and each rebuild would otherwise show every asset again.
+    this._overlayVisibility = new Map();
+    // URLs of the assets the active style binds to. It also survives teardown,
+    // so a rebuild picks the same default asset before the style re-binds.
+    this._styledAssetKeys = new Set();
     // `${url}\n${fields}` → loadGeoJsonFromParquet result, for successful and
     // over-cap results (both deterministic per key); errors are never cached
     // so a transient failure can be retried. Lives for the lifetime of this
@@ -741,6 +748,7 @@ export default class StacMapLayer {
         this._overlayAssetMeta.push({
           title: asset.title || asset.getKey?.() || asset.key || `GeoParquet ${i + 1}`,
           sourceId,
+          key: url,
         });
         this._addOverlaySource(sourceId, { type: 'geojson', data: result.featureCollection });
         this._addDefaultVectorLayers(sourceId, [], { useSourceLayer: false });
@@ -779,6 +787,8 @@ export default class StacMapLayer {
       this._overlayAssetMeta.push({
         title: asset.title || asset.getKey?.() || asset.key || `Tiles ${i + 1}`,
         sourceId,
+        key: url,
+        tile: true,
       });
 
       try {
@@ -869,6 +879,54 @@ export default class StacMapLayer {
     const existing = this._overlayLayerIdsBySource.get(sourceId);
     if (existing) {existing.push(layerId);}
     else {this._overlayLayerIdsBySource.set(sourceId, [layerId]);}
+    // Set as the layer lands, so a hidden asset never draws for a frame.
+    if (!this._isOverlayVisible(sourceId)) {
+      this.map.setLayoutProperty(layerId, 'visibility', 'none');
+    }
+  }
+
+  // The user's choice wins. Without one, a tile asset shows only when it is
+  // the default tile asset, and every other overlay shows.
+  _isOverlayVisible(sourceId) {
+    const meta = this._overlayAssetMeta.find(m => m.sourceId === sourceId);
+    if (!meta) {return true;}
+    const chosen = this._overlayVisibility.get(meta.key);
+    if (chosen !== undefined) {return chosen;}
+    return !meta.tile || sourceId === this._defaultTileSourceId();
+  }
+
+  // Several tile assets are usually variants of one layer (one per year, say),
+  // and together they draw over each other. Show one: the first asset the
+  // active style binds to, else the first asset in the list.
+  _defaultTileSourceId() {
+    const tiles = this._overlayAssetMeta.filter(m => m.tile);
+    const styled = tiles.find(m => this._styledAssetKeys.has(m.key));
+    return (styled || tiles[0])?.sourceId;
+  }
+
+  _applyOverlayVisibility() {
+    for (const [sourceId, layerIds] of this._overlayLayerIdsBySource) {
+      const val = this._isOverlayVisible(sourceId) ? 'visible' : 'none';
+      for (const id of layerIds) {
+        if (this.map.getLayer(id)) {this.map.setLayoutProperty(id, 'visibility', val);}
+      }
+    }
+  }
+
+  // Record the choice by asset URL, not source id, so it holds through the
+  // rebuild that a basemap or style switch does. The first toggle also fixes
+  // the state of every other asset. Otherwise a later style switch moves the
+  // default to another asset, and the user sees a layer they did not choose.
+  setOverlayVisible(sourceId, visible) {
+    const meta = this._overlayAssetMeta.find(m => m.sourceId === sourceId);
+    if (!meta) {return;}
+    for (const other of this._overlayAssetMeta) {
+      if (!this._overlayVisibility.has(other.key)) {
+        this._overlayVisibility.set(other.key, this._isOverlayVisible(other.sourceId));
+      }
+    }
+    this._overlayVisibility.set(meta.key, visible);
+    this._applyOverlayVisibility();
   }
 
   _addDefaultVectorLayers(sourceId, layerNames, { useSourceLayer = true } = {}) {
@@ -1270,6 +1328,7 @@ export default class StacMapLayer {
           id: meta.sourceId,
           title: meta.title,
           type: 'maplibre',
+          asset: true,
           visible: vis !== 'none',
           layerIds,
         });
@@ -1668,6 +1727,10 @@ export default class StacMapLayer {
       }
     }
 
+    this._styledAssetKeys = new Set(Object.values(sourceMapping)
+      .map(id => this._overlayAssetMeta.find(m => m.sourceId === id)?.key)
+      .filter(Boolean));
+
     const styledSourceIds = new Set();
     for (const layer of glStyle.layers) {
       let layerSpec;
@@ -1720,6 +1783,7 @@ export default class StacMapLayer {
       }
     }
 
+    this._applyOverlayVisibility();
     this._activeGlStyle = glStyle;
     this._activeGlStyleBaseUrl = baseUrl;
   }

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import LayerControl from '../../src/components/maps/LayerControl.vue'
 
@@ -12,6 +12,7 @@ const factory = async (overlays, overflow = 0) => {
     getAssetOverlays: () => overlays,
     getCogOverflowCount: () => overflow,
     setCogVisible: () => {},
+    setOverlayVisible: vi.fn(),
   }
   const wrapper = mount(LayerControl, {
     props: { basemaps: [], activeBasemapIndex: 0, stacLayer },
@@ -80,5 +81,14 @@ describe('LayerControl overflow', () => {
   it('renders no overflow line when every asset is listed', async () => {
     const wrapper = await factory([cogOverlay([])], 0)
     expect(wrapper.find('.layer-overflow').exists()).toBe(false)
+  })
+})
+
+describe('LayerControl asset toggles', () => {
+  it('records an asset overlay toggle on the map layer', async () => {
+    const overlay = { id: 'stac-tile-1', title: 'Fields 2025', type: 'maplibre', asset: true, visible: false, layerIds: ['a'] }
+    const wrapper = await factory([overlay])
+    wrapper.vm.toggleOverlay(overlay, true)
+    expect(wrapper.props('stacLayer').setOverlayVisible).toHaveBeenCalledWith('stac-tile-1', true)
   })
 })

@@ -82,10 +82,16 @@ function createFakeMap() {
       return [...layers.keys()]
     },
     moveLayer() {},
-    getLayoutProperty() {
-      return undefined
+    getLayoutProperty(id, name) {
+      return layers.get(id)?.layout?.[name]
     },
-    setLayoutProperty() {},
+    setLayoutProperty(id, name, value) {
+      const layer = layers.get(id)
+      if (!layer) {
+        throw new Error(`The layer "${id}" does not exist in the map's style.`)
+      }
+      layer.layout = { ...layer.layout, [name]: value }
+    },
   }
 }
 
@@ -423,6 +429,89 @@ describe('StacMapLayer', () => {
       expect(layer._overlayLayerIds.length).toBe(before)
       for (const id of layer._overlayLayerIds) {
         expect(map.layers.has(id)).toBe(true)
+      }
+    })
+  })
+
+  describe('tile asset visibility', () => {
+    const pmtilesAsset = (year) => ({
+      href: `https://example.com/fields-${year}.pmtiles`,
+      type: 'application/vnd.pmtiles',
+      title: `Fields ${year}`,
+    })
+    const visibility = () => Object.fromEntries(
+      layer.getAssetOverlays().map(o => [o.title, o.visible])
+    )
+    const styleFor = (year) => ({
+      version: 8,
+      sources: { data: { type: 'vector', url: `pmtiles://https://example.com/fields-${year}.pmtiles` } },
+      layers: [{ id: 'fields-fill', type: 'fill', source: 'data', 'source-layer': 'fields' }],
+    })
+
+    beforeEach(() => {
+      pmtilesTestHooks.header = null
+      pmtilesTestHooks.metadata = async () => ({ vector_layers: [{ id: 'fields' }] })
+    })
+
+    it('shows only the first of several tile assets by default', async () => {
+      await layer.setAssets([pmtilesAsset(2024), pmtilesAsset(2025)])
+      expect(visibility()).toEqual({ 'Fields 2024': true, 'Fields 2025': false })
+    })
+
+    it('shows a single tile asset', async () => {
+      await layer.setAssets([pmtilesAsset(2024)])
+      expect(visibility()).toEqual({ 'Fields 2024': true })
+    })
+
+    it('shows the asset the active style binds to instead of the first', async () => {
+      await layer.setAssets([pmtilesAsset(2024), pmtilesAsset(2025)])
+      layer.applyGlStyle(styleFor(2025))
+      expect(visibility()).toEqual({ 'Fields 2024': false, 'Fields 2025': true })
+    })
+
+    it('keeps a user choice through a basemap switch', async () => {
+      await layer.setAssets([pmtilesAsset(2024), pmtilesAsset(2025)])
+      layer.setOverlayVisible('stac-tile-0', false)
+      layer.setOverlayVisible('stac-tile-1', true)
+
+      await layer.readdAfterStyleChange()
+
+      expect(visibility()).toEqual({ 'Fields 2024': false, 'Fields 2025': true })
+    })
+
+    it('keeps both assets on through basemap and data style switches', async () => {
+      await layer.setAssets([pmtilesAsset(2024), pmtilesAsset(2025)])
+      layer.setOverlayVisible('stac-tile-1', true)
+
+      await layer.readdAfterStyleChange()
+      layer.applyGlStyle(styleFor(2025))
+      layer.applyGlStyle(styleFor(2024))
+      await layer.readdAfterStyleChange()
+
+      expect(visibility()).toEqual({ 'Fields 2024': true, 'Fields 2025': true })
+    })
+
+    it('stops following the style once the user toggles any asset', async () => {
+      await layer.setAssets([pmtilesAsset(2024), pmtilesAsset(2025)])
+      layer.applyGlStyle(styleFor(2025))
+      // Turn 2024 on. 2025 is on only by default, but it must stay on too.
+      layer.setOverlayVisible('stac-tile-0', true)
+
+      layer.applyGlStyle(styleFor(2024))
+      await layer.readdAfterStyleChange()
+
+      expect(visibility()).toEqual({ 'Fields 2024': true, 'Fields 2025': true })
+    })
+
+    it('keeps a hidden asset hidden when a style binds to it', async () => {
+      await layer.setAssets([pmtilesAsset(2024), pmtilesAsset(2025)])
+      layer.setOverlayVisible('stac-tile-0', false)
+
+      layer.applyGlStyle(styleFor(2024))
+
+      expect(visibility()['Fields 2024']).toBe(false)
+      for (const id of layer._overlayLayerIdsBySource.get('stac-tile-0')) {
+        expect(map.getLayoutProperty(id, 'visibility')).toBe('none')
       }
     })
   })
