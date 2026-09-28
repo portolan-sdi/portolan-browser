@@ -2,6 +2,9 @@ import removeMd from 'remove-markdown';
 import { Link } from 'stac-js';
 import { hasText, isObject, size, URI } from 'stac-js/src/utils.js';
 import { pagination } from "stac-js/src/relationtypes.js";
+import { browserProtocols } from 'stac-js/src/http.js';
+
+export const svgMediaType = 'image/svg+xml';
 
 export const commonFileNames = ['catalog', 'collection', 'item'];
 
@@ -305,14 +308,54 @@ export default class Utils {
     }
   }
 
-  static getIcon(data) {
-    if (data?.isSTAC) {
-      const icons = data.getIcons();
-      if (icons.length > 0) {
-        return icons[0];
-      }
+  /**
+   * Checks whether a link or asset is an SVG image that a browser can load.
+   *
+   * stac-js leaves image/svg+xml out of its browserImageTypes, so its
+   * canBrowserDisplayImage refuses SVG. The Portolan profile allows SVG icons
+   * (PORTO-CORE-075). The browser renders icons only through <img>, and an SVG
+   * in <img> runs no scripts and loads no external resources.
+   *
+   * @param {Object} ref A stac-js Link or Asset.
+   * @param {boolean} allowUndefined Accept a missing type if the file extension is .svg.
+   * @returns {boolean}
+   */
+  static isBrowserSvg(ref, allowUndefined = true) {
+    if (!ref || typeof ref.href !== 'string') {
+      return false;
     }
-    return null;
+    let uri = typeof ref.getAbsoluteUrl === 'function' ? ref.getAbsoluteUrl(false) : null;
+    if (!uri) {
+      uri = URI(ref.href);
+    }
+    const protocol = uri.protocol().toLowerCase();
+    if (hasText(protocol) && !browserProtocols.includes(protocol)) {
+      return false;
+    }
+    if (hasText(ref.type)) {
+      return ref.type.split(';')[0].trim().toLowerCase() === svgMediaType;
+    }
+    return allowUndefined && typeof ref.type === 'undefined' && uri.suffix().toLowerCase() === 'svg';
+  }
+
+  /**
+   * Returns the icon links that a browser can display, SVG included.
+   *
+   * @param {Object} data A stac-js STAC object.
+   * @param {boolean} allowUndefined Accept icons without a media type.
+   * @returns {Array.<Link>}
+   */
+  static getIcons(data, allowUndefined = true) {
+    if (!data?.isSTAC) {
+      return [];
+    }
+    return data.getLinksWithRels(['icon'])
+      .filter(link => link.canBrowserDisplayImage(allowUndefined) || Utils.isBrowserSvg(link, allowUndefined));
+  }
+
+  static getIcon(data) {
+    const icons = Utils.getIcons(data);
+    return icons.length > 0 ? icons[0] : null;
   }
 
   static titleForHref(href, preferFileName = false) {

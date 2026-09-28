@@ -16,6 +16,7 @@ import { isObject, size, URI } from 'stac-js/src/utils.js';
 import { isStacMediaType } from 'stac-js/src/mediatypes.js';
 import { getDisplayTitle } from '../models/stac';
 import { STAC } from 'stac-js';
+import Utils from '../utils';
 
 export default defineComponent({
   name: "StacLink",
@@ -58,10 +59,7 @@ export default defineComponent({
     ...mapGetters(['toBrowserPath', 'getRequestUrl', 'isExternalUrl']),
     icon() {
       if (this.stac instanceof STAC) {
-        const icons = this.stac.getIcons();
-        if (icons.length > 0) {
-          return icons[0];
-        }
+        return Utils.getIcon(this.stac);
       }
       return null;
     },
