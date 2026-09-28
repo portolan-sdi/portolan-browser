@@ -203,6 +203,11 @@ export default {
 
         await this.createMap(this.$refs.map, this.stac, this.onfocusOnly);
         this._addExpandControl();
+        // A style switches ramps and layers by zoom, so the legend describes
+        // whichever of them the map draws now. Bound per map: showStacLayer
+        // removes the map before it builds another, which takes the handler
+        // with it, and beforeUnmount does the same.
+        this.map.on('zoomend', this.refreshLegend);
 
         if (this.stac) {
           await this.addStacLayer();
@@ -272,7 +277,7 @@ export default {
       }
     },
 
-    // Resolve the collection's styles and fetch every style document, so the
+    // Resolve the entity's styles and fetch every style document, so the
     // union of the attribute fields they read reaches the GeoParquet reader.
     // A style that fails to fetch or parse is dropped rather than blocking the
     // others.
@@ -282,15 +287,23 @@ export default {
       const layer = this.stacLayer;
       try {
         if (!this.stac || !layer) {return;}
-        // core.md scopes styles to collections: they describe how to draw that
-        // collection's own data. An Item map, or a search map rendering results
-        // from elsewhere, is not what these styles were authored for.
-        if (this.stac?.type !== 'Collection') {return;}
+        // A style describes how to draw the data it sits beside, so it is read
+        // from whichever entity owns that data. core.md names the collection,
+        // and that stays the common case. A partitioned collection is the
+        // other one: each partition ships its own visual derivative, and the
+        // breaks that draw it are computed from that partition's own values,
+        // so the style belongs to the item and cannot live one level up.
+        //
+        // Nothing else is styled from here. A Catalog holds no data of its
+        // own, and a search map draws results from elsewhere, which is not
+        // what either entity's styles were authored for.
+        const type = this.stac.type;
+        if (type !== 'Collection' && type !== 'Feature') {return;}
         let styles;
         try {
           styles = resolveStyles(this.stac);
         } catch (error) {
-          // Malformed style metadata must cost this collection its styles, not
+          // Malformed style metadata must cost this entity its styles, not
           // reject out of showStacLayer, which has no catch.
           console.warn('Failed to resolve styles:', error);
           return;
@@ -326,12 +339,12 @@ export default {
         }
         if (fields.size > MAX_STYLE_FIELDS) {
           console.warn(
-            `Collection styles reference ${fields.size} attribute columns; all are read from the GeoParquet asset for every feature`
+            `Styles reference ${fields.size} attribute columns; all are read from the GeoParquet asset for every feature`
           );
         }
         layer.setStyleFields([...fields]);
       } finally {
-        // However this returned — not a collection, no styles, a resolve
+        // However this returned — an unstyled entity, no styles, a resolve
         // error, every fetch failing, an unexpected throw — a parquet read is
         // waiting on the field set and must be released, or the data never
         // renders at all. Idempotent, so the success path is unaffected.
@@ -347,11 +360,27 @@ export default {
       try {
         this.stacLayer.applyGlStyle(styleEntry._cached, styleEntry.href);
         this.activeStyleIndex = index;
-        this.activeLegend = extractLegend(styleEntry._cached);
+        this.activeLegend = extractLegend(styleEntry._cached, this.currentZoom());
         this.styleApplied = true;
       } catch (err) {
         console.warn('Failed to apply style:', styleEntry.name, err);
       }
+    },
+
+    // 0 rather than nothing when the map is gone: extractLegend needs a number,
+    // and the lowest zoom band is what a map shows before anyone moves it.
+    currentZoom() {
+      const zoom = this.map?.getZoom?.();
+      return typeof zoom === 'number' ? zoom : 0;
+    },
+
+    // Re-read the active style for the zoom the map is now at. Only the legend
+    // changes — MapLibre evaluates the zoom expressions itself, so the paint on
+    // the map is already right and must not be re-bound here.
+    refreshLegend() {
+      const styleEntry = this.availableStyles[this.activeStyleIndex];
+      if (!styleEntry?._cached) {return;}
+      this.activeLegend = extractLegend(styleEntry._cached, this.currentZoom());
     },
 
     async onBasemapChanged() {

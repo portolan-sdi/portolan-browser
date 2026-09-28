@@ -308,46 +308,106 @@ export function extractStyleFields(glStyle) {
   return [...fields].sort();
 }
 
-export function extractLegend(glStyle) {
-  if (!glStyle?.layers) {return [];}
+// The paint property each layer type colours its features with. Only these
+// carry a legend: a line or symbol layer describes the same features again.
+const LEGEND_COLOR_PROPERTIES = { fill: 'fill-color', circle: 'circle-color' };
 
-  const fillLayer = glStyle.layers.find(l => l.type === 'fill');
-  if (!fillLayer) {return [];}
+// MapLibre's own defaults when a layer declares no zoom range.
+const MIN_ZOOM = 0;
+const MAX_ZOOM = 24;
 
-  const fillColor = fillLayer.paint?.['fill-color'];
-  if (!fillColor || typeof fillColor === 'string') {return [];}
-  if (!Array.isArray(fillColor)) {return [];}
+function layerDrawnAt(layer, zoom) {
+  const min = typeof layer.minzoom === 'number' ? layer.minzoom : MIN_ZOOM;
+  const max = typeof layer.maxzoom === 'number' ? layer.maxzoom : MAX_ZOOM;
+  // Half-open, as MapLibre treats it: a layer stops drawing AT its maxzoom.
+  return zoom >= min && zoom < max;
+}
 
-  const type = fillColor[0];
+// A ramp may be wrapped in a zoom step, which selects between whole ramps:
+//
+//   ["step", ["zoom"], <ramp below z3>, 3, <ramp from z3>]
+//
+// A tiled aggregate needs this, because its coarse cells hold larger counts
+// than its fine ones, so one set of breaks cannot describe both. The wrapper
+// is not a ramp, and reading it as one puts the inner arrays where the colours
+// belong. Return the branch that applies at `zoom` instead.
+//
+// Bounded rather than open recursion: the input is catalog JSON, and a style
+// that nests zoom steps without end must not take out the legend.
+function resolveZoomBranch(expression, zoom, depth = 0) {
+  if (depth > 4 || !Array.isArray(expression) || expression[0] !== 'step') {return expression;}
+  const input = expression[1];
+  if (!Array.isArray(input) || input[0] !== 'zoom' || input.length !== 1) {return expression;}
 
-  if (type === 'step') {
-    // ["step", ["get", field], defaultColor, stop1, color1, stop2, color2, ...]
+  let branch = expression[2];
+  for (let i = 3; i < expression.length - 1; i += 2) {
+    if (zoom >= expression[i]) {branch = expression[i + 1];}
+    else {break;}
+  }
+  return resolveZoomBranch(branch, zoom, depth + 1);
+}
+
+// Every swatch reaches the DOM as a CSS colour, so a legend is emitted only
+// when each of its colours is a string. An entry that is still an expression
+// means the shape was not understood, and a wrong legend is worse than none.
+function legendOf(items) {
+  return items.every(item => typeof item.color === 'string') ? items : [];
+}
+
+function legendFromColor(color) {
+  if (!Array.isArray(color)) {return [];}
+
+  if (color[0] === 'step') {
+    // ["step", <input>, defaultColor, stop1, color1, stop2, color2, ...]
     const items = [];
-    const defaultColor = fillColor[2];
-    const stops = fillColor.slice(3);
-    items.push({ color: defaultColor, label: `< ${stops[0]}` });
+    const stops = color.slice(3);
+    items.push({ color: color[2], label: `< ${stops[0]}` });
     for (let i = 0; i < stops.length; i += 2) {
       const value = stops[i];
-      const color = stops[i + 1];
       const nextValue = stops[i + 2];
       items.push({
-        color,
+        color: stops[i + 1],
         label: nextValue != null ? `${value}–${nextValue}` : `${value}+`,
       });
     }
-    return items;
+    return legendOf(items);
   }
 
-  if (type === 'match') {
-    // ["match", ["get", field], val1, color1, val2, color2, ..., fallback]
+  if (color[0] === 'match') {
+    // ["match", <input>, val1, color1, val2, color2, ..., fallback]
     const items = [];
-    const pairs = fillColor.slice(2, -1);
+    const pairs = color.slice(2, -1);
     for (let i = 0; i < pairs.length; i += 2) {
       items.push({ color: pairs[i + 1], label: String(pairs[i]) });
     }
-    return items;
+    return legendOf(items);
   }
 
+  return [];
+}
+
+/**
+ * Legend entries for the data the map draws at `zoom`, as {color, label}.
+ *
+ * A style draws one collection through several layers, each covering its own
+ * zoom range — an aggregate fill at low zoom, the features themselves as
+ * circles further in. The legend describes whichever of them the map is
+ * drawing now, so it takes the zoom and is recomputed when the zoom changes.
+ */
+export function extractLegend(glStyle, zoom = MIN_ZOOM) {
+  const layers = glStyle?.layers;
+  if (!Array.isArray(layers)) {return [];}
+
+  const candidates = layers.filter(layer => LEGEND_COLOR_PROPERTIES[layer?.type]);
+  // The layers drawn at this zoom come first. The rest still follow, so a
+  // style whose zoom ranges leave a gap gets a legend rather than nothing.
+  const ordered = candidates.filter(layer => layerDrawnAt(layer, zoom)).concat(candidates);
+
+  for (const layer of ordered) {
+    const paint = layer.paint?.[LEGEND_COLOR_PROPERTIES[layer.type]];
+    const items = legendFromColor(resolveZoomBranch(paint, zoom));
+    if (items.length > 0) {return items;}
+  }
   return [];
 }
 

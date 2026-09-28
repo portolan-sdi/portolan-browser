@@ -76,6 +76,86 @@ describe('portolanStyles', () => {
       expect(legend[2]).toEqual({ color: '#0000ff', label: 'industrial' })
     })
 
+    // A Portolan style commonly switches ramps by zoom, because a tiled
+    // aggregate holds larger counts in its coarse cells than in its fine ones:
+    //   ["step", ["zoom"], <ramp for low zoom>, 3, <ramp for high zoom>]
+    // The wrapper is not itself a ramp. Reading it as one puts the inner
+    // expression arrays where the colors belong.
+    describe('a ramp that switches on zoom', () => {
+      const zoomSwitched = () => ({
+        layers: [{
+          type: 'fill',
+          paint: {
+            'fill-color': [
+              'step', ['zoom'],
+              ['step', ['coalesce', ['get', 'count'], 0], '#low0', 11, '#low1', 46, '#low2'],
+              3,
+              ['step', ['coalesce', ['get', 'count'], 0], '#high0', 3, '#high1', 11, '#high2'],
+            ],
+          },
+        }],
+      })
+
+      it('reads the ramp that applies at the given zoom', () => {
+        const legend = extractLegend(zoomSwitched(), 5)
+        expect(legend).toEqual([
+          { color: '#high0', label: '< 3' },
+          { color: '#high1', label: '3–11' },
+          { color: '#high2', label: '11+' },
+        ])
+      })
+
+      it('reads the first ramp below the first zoom stop', () => {
+        const legend = extractLegend(zoomSwitched(), 1)
+        expect(legend).toEqual([
+          { color: '#low0', label: '< 11' },
+          { color: '#low1', label: '11–46' },
+          { color: '#low2', label: '46+' },
+        ])
+      })
+
+      it('defaults to the lowest zoom band when no zoom is given', () => {
+        expect(extractLegend(zoomSwitched())[0]).toEqual({ color: '#low0', label: '< 11' })
+      })
+
+      it('never emits a non-string color', () => {
+        // The guard that keeps a nested expression out of the DOM, whatever
+        // shape a style arrives in.
+        const nested = {
+          layers: [{
+            type: 'fill',
+            paint: { 'fill-color': ['step', ['get', 'n'], ['get', 'oops'], 5, '#abc'] },
+          }],
+        }
+        expect(extractLegend(nested)).toEqual([])
+      })
+    })
+
+    // Above the fill layer's maxzoom the map draws the circle layer, so that
+    // is the layer the legend has to describe.
+    describe('choosing the layer the map draws', () => {
+      const fillThenCircle = () => ({
+        layers: [
+          {
+            id: 'cells', type: 'fill', maxzoom: 9,
+            paint: { 'fill-color': ['step', ['get', 'count'], '#f0', 10, '#f1'] },
+          },
+          {
+            id: 'points', type: 'circle', minzoom: 9,
+            paint: { 'circle-color': ['step', ['get', 'frp'], '#c0', 50, '#c1'] },
+          },
+        ],
+      })
+
+      it('reads the fill layer below its maxzoom', () => {
+        expect(extractLegend(fillThenCircle(), 4)[0]).toEqual({ color: '#f0', label: '< 10' })
+      })
+
+      it('reads the circle layer above the fill layer maxzoom', () => {
+        expect(extractLegend(fillThenCircle(), 11)[0]).toEqual({ color: '#c0', label: '< 50' })
+      })
+    })
+
     it('handles numeric match values', () => {
       const style = {
         layers: [{

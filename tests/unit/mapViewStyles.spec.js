@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Collection from 'stac-js/src/collection.js'
+import Item from 'stac-js/src/item.js'
 
 // The whole feature's correctness is decided by the order in which MapView
 // calls expectStyleFields, setAssets, setStyleFields and applyStyleAtIndex.
@@ -88,6 +89,22 @@ const collection = (assets, extra = {}) => new Collection({
   assets,
   ...extra,
 }, COLLECTION_URL)
+
+// A partitioned collection publishes one visual derivative and one style per
+// partition, so the styles that draw a partition hang off its item.
+const ITEM_URL = 'https://example.com/boundaries/nl/year=2000/2000.json'
+
+const item = (assets, extra = {}) => new Item({
+  type: 'Feature',
+  stac_version: '1.1.0',
+  id: '2000',
+  geometry: { type: 'Polygon', coordinates: [[[-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]]] },
+  bbox: [-180, -90, 180, 90],
+  properties: { datetime: null },
+  links: [{ rel: 'self', href: ITEM_URL }],
+  assets,
+  ...extra,
+}, ITEM_URL)
 
 const styleAsset = (over = {}) => ({
   type: 'application/vnd.mapbox.style+json',
@@ -186,8 +203,17 @@ describe('MapView style orchestration', () => {
   describe('releasing the field gate', () => {
     // Each of these leaves setStyleFields uncalled. Without the release, the
     // parquet read waits forever and the map stays blank.
-    it('releases when the entity is an Item, not a Collection', async () => {
+    it('releases when the item declares no styles', async () => {
       const view = createView({ stac: { type: 'Feature' } })
+      await view.addStacLayer()
+      expect(view.stacLayer.released).toBe(true)
+      expect(view.stacLayer.styleFields).toBeNull()
+    })
+
+    it('releases when the entity is neither a Collection nor an Item', async () => {
+      // A Catalog, or a search map whose parent is a Catalog, has no styles of
+      // its own. The gate must still open or the parquet read waits forever.
+      const view = createView({ stac: { type: 'Catalog' } })
       await view.addStacLayer()
       expect(view.stacLayer.released).toBe(true)
       expect(view.stacLayer.styleFields).toBeNull()
@@ -240,6 +266,128 @@ describe('MapView style orchestration', () => {
       expect(first.released).toBe(true)
       expect(first.styleFields).toBeNull()
       expect(second.setStyleFields).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('styles declared on an item', () => {
+    // A partitioned collection tunes each partition's style to that
+    // partition's own data, so the style that draws year=2000 is an asset of
+    // the 2000 item, not of the collection above it.
+    it('discovers and applies the item\'s own style assets', async () => {
+      const view = createView({
+        stac: item({
+          pmtiles: { href: './fire-2000.pmtiles', type: 'application/vnd.pmtiles', roles: ['visual', 'tiles'] },
+          'style-default': styleAsset({ href: './styles/default.json', title: 'Density' }),
+        }),
+      })
+
+      await view.addStacLayer()
+
+      expect(view.availableStyles).toHaveLength(1)
+      expect(view.styleApplied).toBe(true)
+      expect(view.stacLayer.applied).toEqual(['https://example.com/boundaries/nl/year=2000/styles/default.json'])
+    })
+
+    it('resolves an item style href against the item, not the collection', async () => {
+      const seen = []
+      styleFetch.impl = async (href) => { seen.push(href); return styleDoc() }
+      const view = createView({
+        stac: item({ 'style-default': styleAsset({ href: './styles/default.json' }) }),
+      })
+
+      await view.addStacLayer()
+
+      expect(seen).toEqual(['https://example.com/boundaries/nl/year=2000/styles/default.json'])
+    })
+
+    it('feeds the item style\'s attribute columns to the parquet reader', async () => {
+      styleFetch.impl = async () => styleDoc('frp')
+      const view = createView({
+        stac: item({ 'style-default': styleAsset({ href: './styles/default.json' }) }),
+        assets: [{ href: 'https://example.com/detections.parquet' }],
+      })
+
+      await view.addStacLayer()
+
+      expect(view.stacLayer.styleFields).toEqual(['frp'])
+    })
+
+    it('honours the default role when an item ships several styles', async () => {
+      const view = createView({
+        stac: item({
+          'style-avg-frp': styleAsset({ href: './styles/avg-frp.json', title: 'Radiative power' }),
+          'style-default': styleAsset({ href: './styles/default.json', title: 'Density', roles: ['style', 'default'] }),
+        }),
+      })
+
+      await view.addStacLayer()
+
+      expect(view.availableStyles).toHaveLength(2)
+      expect(view.stacLayer.applied).toEqual(['https://example.com/boundaries/nl/year=2000/styles/default.json'])
+    })
+  })
+
+  describe('keeping the legend on the zoom the map is at', () => {
+    // The ramp a tiled aggregate draws with changes at zoom 3, so the legend
+    // has to change with it. MapLibre evaluates the paint itself.
+    const zoomRamp = {
+      version: 8,
+      layers: [{
+        id: 'cells',
+        type: 'fill',
+        source: 'data',
+        paint: {
+          'fill-color': [
+            'step', ['zoom'],
+            ['step', ['get', 'count'], '#low', 11, '#low-hi'],
+            3,
+            ['step', ['get', 'count'], '#high', 3, '#high-hi'],
+          ],
+        },
+      }],
+    }
+
+    const viewAtZoom = async (zoom) => {
+      styleFetch.impl = async () => zoomRamp
+      const view = createView({
+        stac: item({ 'style-default': styleAsset({ href: './styles/default.json' }) }),
+        map: { getZoom: () => zoom, on() {} },
+      })
+      await view.addStacLayer()
+      return view
+    }
+
+    it('reads the low-zoom ramp when the map sits below the switch', async () => {
+      const view = await viewAtZoom(1)
+      expect(view.activeLegend[0]).toEqual({ color: '#low', label: '< 11' })
+    })
+
+    it('reads the high-zoom ramp when the map sits above the switch', async () => {
+      const view = await viewAtZoom(7)
+      expect(view.activeLegend[0]).toEqual({ color: '#high', label: '< 3' })
+    })
+
+    it('re-reads the ramp when the map zooms', async () => {
+      let zoom = 1
+      styleFetch.impl = async () => zoomRamp
+      const view = createView({
+        stac: item({ 'style-default': styleAsset({ href: './styles/default.json' }) }),
+        map: { getZoom: () => zoom, on() {} },
+      })
+      await view.addStacLayer()
+      expect(view.activeLegend[0].color).toBe('#low')
+
+      zoom = 7
+      view.refreshLegend()
+
+      expect(view.activeLegend[0]).toEqual({ color: '#high', label: '< 3' })
+    })
+
+    it('leaves the legend alone when no style is active', async () => {
+      const view = createView({ stac: { type: 'Catalog' }, map: { getZoom: () => 4, on() {} } })
+      await view.addStacLayer()
+      view.refreshLegend()
+      expect(view.activeLegend).toEqual([])
     })
   })
 

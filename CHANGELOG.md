@@ -61,6 +61,17 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 - Without a declared `portolan:render_order`, one-band and classified rasters draw above
   the pictures on the item, so a label mask turned on is no longer hidden under a scene
   listed after it
+- Styles declared on an item now render. A partitioned collection publishes one
+  visual derivative and one style per partition, so those styles are assets of
+  the item. The map read styles from a collection only, so an item drew in the
+  default paint color.
+- The legend now reads a ramp that switches on zoom. A style selects between
+  whole ramps with `["step", ["zoom"], ...]`, because a tiled aggregate holds
+  larger counts in its coarse cells than in its fine ones. The legend read the
+  wrapper as a ramp, so it put expression arrays where the colors belong and
+  drew empty swatches. It now reads the ramp that applies at the map zoom, and
+  it follows the map when the zoom changes. It also describes a circle layer,
+  which is what a style draws above the fill layer maximum zoom.
 
 ## [0.1.0][] - 2026-08-31
 
