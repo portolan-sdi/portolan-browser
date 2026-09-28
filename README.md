@@ -31,8 +31,8 @@ STAC catalog opens here too.
 
 **The publisher's own cartography.** A Portolan collection registers MapLibre GL styles as assets with
 the `style` role. The browser discovers them, applies them to the collection's data, and offers a picker
-with a legend when a collection ships more than one. An item carries styles the same way, which is what a
-partitioned collection needs: each partition gets a style cut to its own values. Data looks the way whoever
+with a legend when a collection ships more than one. An item registers styles the same way. A partitioned
+collection needs that, because each partition has its own range of values. Data looks the way whoever
 published it meant it to look, rather than taking a default colour the client picked.
 
 **GeoParquet drawn directly on the map.** The browser reads GeoParquet in the browser with
