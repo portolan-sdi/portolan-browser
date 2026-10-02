@@ -168,7 +168,24 @@ function fakeDeckDeps() {
   class FakeDecoderPool {
     constructor(opts) { this.opts = opts }
   }
-  return async () => ({ MapboxOverlay: FakeOverlay, COGLayer: FakeCOGLayer, DecoderPool: FakeDecoderPool })
+  // _makeCogLayerProps opens the COG through utils/cogSource, which uses only
+  // `fromUrl` and `fromTiff` off this class. The double carries the URL so a
+  // test can still tell which asset a layer came from.
+  class FakeGeoTIFF {
+    constructor(url) {
+      this.url = url
+      this.tiff = { url }
+      this.dataSource = { fetch: () => Promise.resolve(new ArrayBuffer(0)) }
+    }
+    static async fromUrl(url) { return new FakeGeoTIFF(url) }
+    static async fromTiff(tiff) { return new FakeGeoTIFF(tiff.url) }
+  }
+  return async () => ({
+    MapboxOverlay: FakeOverlay,
+    COGLayer: FakeCOGLayer,
+    DecoderPool: FakeDecoderPool,
+    GeoTIFF: FakeGeoTIFF,
+  })
 }
 
 function createDeckCapableMap() {

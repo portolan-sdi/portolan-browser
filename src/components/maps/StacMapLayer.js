@@ -6,6 +6,7 @@ import {
   classificationClasses, discreteLegend, assetBands, synthesizeRgbRender, canInheritRender,
 } from '../../utils/renders.js';
 import { orderedRenderLayers } from '../../utils/renderOrder.js';
+import { openCog } from '../../utils/cogSource.js';
 // Import the @developmentseed/geotiff decode worker via Vite's `?worker` suffix
 // (not a side-effect `import`): the library declares `sideEffects: false`, so a
 // bare re-export gets tree-shaken to an empty worker in production builds. The
@@ -1162,12 +1163,12 @@ export default class StacMapLayer {
   // out as an overridable seam so unit tests can inject a test double and
   // exercise the reconciliation below without WebGL.
   async _loadDeckDeps() {
-    const [{ MapboxOverlay }, { COGLayer }, { DecoderPool }] = await Promise.all([
+    const [{ MapboxOverlay }, { COGLayer }, { DecoderPool, GeoTIFF }] = await Promise.all([
       import('@deck.gl/mapbox'),
       import('@developmentseed/deck.gl-geotiff'),
       import('@developmentseed/geotiff'),
     ]);
-    return { MapboxOverlay, COGLayer, DecoderPool };
+    return { MapboxOverlay, COGLayer, DecoderPool, GeoTIFF };
   }
 
   // Reconcile the deck.gl overlay with `_cogList`: one COGLayer per visible
@@ -1197,7 +1198,7 @@ export default class StacMapLayer {
     }
 
     try {
-      const { MapboxOverlay, COGLayer, DecoderPool } = await this._loadDeckDeps();
+      const { MapboxOverlay, COGLayer, DecoderPool, GeoTIFF } = await this._loadDeckDeps();
       if (epoch !== this._overlayEpoch) {return;}
 
       // Drop cached props no longer listed (e.g. evicted by the cap).
@@ -1212,14 +1213,31 @@ export default class StacMapLayer {
       // finalizes a layer it stops receiving, and refuses that instance if it
       // comes back ("finalized layer cannot be reused"), which is what a
       // hide-then-show of one layer did.
-      const layers = visible.map(d => {
-        let props = this._cogLayerCache.get(d.id);
-        if (!props) {
-          props = this._makeCogLayerProps(d, DecoderPool);
-          this._cogLayerCache.set(d.id, props);
+      //
+      // Building props reads the COG header (see _makeCogLayerProps), so the
+      // descriptors are opened in parallel. One COG that fails to open is
+      // dropped on its own and leaves the others on the map.
+      const built = await Promise.all(visible.map(async d => {
+        const cached = this._cogLayerCache.get(d.id);
+        if (cached) {return { id: d.id, props: cached };}
+        try {
+          return { id: d.id, props: await this._makeCogLayerProps(d, DecoderPool, GeoTIFF) };
+        } catch (err) {
+          console.warn(`Failed to open COG "${d.id}"`, err);
+          return null;
         }
-        return new COGLayer(props);
-      });
+      }));
+      if (epoch !== this._overlayEpoch) {return;}
+
+      const layers = [];
+      for (const entry of built) {
+        if (!entry) {continue;}
+        this._cogLayerCache.set(entry.id, entry.props);
+        layers.push(new COGLayer(entry.props));
+      }
+      // Every visible COG failed to open. Leave the overlay as it is: the next
+      // sync builds it again.
+      if (layers.length === 0) {return;}
 
       if (this._deckOverlay) {
         this._deckOverlay.setProps({ layers });
@@ -1232,12 +1250,16 @@ export default class StacMapLayer {
     }
   }
 
-  _makeCogLayerProps(descriptor, DecoderPool) {
+  async _makeCogLayerProps(descriptor, DecoderPool, GeoTIFF) {
     const { asset, render } = descriptor;
     const url = asset.getAbsoluteUrl?.() || asset.href;
     const props = {
       id: `stac-cog-${descriptor.id}`,
-      geotiff: url,
+      // Opened here rather than handed to COGLayer as a URL, so tile reads go
+      // through a source that merges a tile with its adjacent mask tile into
+      // one range request. A URL would have COGLayer open it with the raw HTTP
+      // source, which costs two requests per masked tile. See utils/cogSource.
+      geotiff: await openCog(GeoTIFF, url),
       // Off-main-thread codec decode via a first-party worker pool (see
       // getDecoderPool). The CPU colormap loop in makeRenderTileLoader still runs
       // on the main thread, so it stays bounded there (see renders.js).
