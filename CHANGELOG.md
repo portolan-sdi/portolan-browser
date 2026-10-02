@@ -39,6 +39,10 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ### Changed
 
+- A COG whose mask tiles sit beside its image tiles now paints in a fraction of the
+  requests. The map opens the COG itself and reads tile data through a source that
+  merges nearby reads into one HTTP range request. One screen of the Fields of the
+  World global beta raster cost 514 range requests and now costs 66, for the same bytes
 - The layer picker lists up to 16 raster assets, up from 8
 
 ### Fixed
