@@ -188,6 +188,60 @@ function fakeDeckDeps() {
   })
 }
 
+// The same backend double, but every COG header open stays in flight until the
+// test settles it. Opening a COG is a network read, so the map can change
+// under a sync that is waiting on one.
+function gatedDeckDeps() {
+  const pending = new Map()
+  const opens = []
+  const keyOf = url => url.split('/').pop().replace('.tif', '')
+  class FakeCOGLayer {
+    constructor(props) { this.props = props }
+  }
+  class FakeOverlay {
+    constructor(props) { this.props = props; this.setPropsCount = 0 }
+    setProps(props) { this.props = { ...this.props, ...props }; this.setPropsCount++ }
+  }
+  class FakeDecoderPool {
+    constructor(opts) { this.opts = opts }
+  }
+  class FakeGeoTIFF {
+    constructor(url) {
+      this.url = url
+      this.tiff = { url }
+      this.dataSource = { fetch: () => Promise.resolve(new ArrayBuffer(0)) }
+    }
+    static fromUrl(url) {
+      const key = keyOf(url)
+      opens.push(key)
+      return new Promise((resolve, reject) => {
+        pending.set(key, { resolve: () => resolve(new FakeGeoTIFF(url)), reject })
+      })
+    }
+    static async fromTiff(tiff) { return new FakeGeoTIFF(tiff.url) }
+  }
+  const load = async () => ({
+    MapboxOverlay: FakeOverlay,
+    COGLayer: FakeCOGLayer,
+    DecoderPool: FakeDecoderPool,
+    GeoTIFF: FakeGeoTIFF,
+  })
+  load.opens = opens
+  load.settle = (key, err) => {
+    const entry = pending.get(key)
+    pending.delete(key)
+    if (err) { entry.reject(err) } else { entry.resolve() }
+    return tick()
+  }
+  load.settleAll = async () => {
+    for (const key of [...pending.keys()]) { await load.settle(key) }
+  }
+  return load
+}
+
+// Drain the microtask queue, so an async run reaches its next await.
+const tick = () => new Promise(resolve => setTimeout(resolve, 0))
+
 function createDeckCapableMap() {
   const map = createFakeMap()
   map.controls = []
@@ -676,6 +730,93 @@ describe('StacMapLayer', () => {
       await dlayer.setCogVisible('a', false)
       expect(dmap.controls).toHaveLength(0)
       expect(dlayer._deckOverlay).toBeNull()
+    })
+
+    it('drops a COG the user turned off while its header was loading', async () => {
+      // Opening a COG is a network read. The picker shows the layer as off,
+      // so a run that paints it anyway leaves a raster the user cannot remove.
+      const deps = gatedDeckDeps()
+      dlayer._loadDeckDeps = deps
+      const assets = [cogAsset('a')]
+      dlayer.setStac(fakeStac(assets))
+      const pending = dlayer.setAssets([assets[0]])
+      await tick()
+      expect(deps.opens).toEqual(['a'])
+
+      await dlayer.setCogVisible('a', false)
+      await deps.settle('a')
+      await pending
+
+      expect(dmap.controls).toHaveLength(0)
+      expect(overlayLayerIds(dlayer)).toEqual([])
+    })
+
+    it('opens a COG once when a second sync starts during its header read', async () => {
+      // Two opens give deck a second `geotiff` prop object, which makes it
+      // throw away the layer's decoded tiles.
+      const deps = gatedDeckDeps()
+      dlayer._loadDeckDeps = deps
+      const assets = ['a', 'b'].map(k => cogAsset(k))
+      dlayer.setStac(fakeStac(assets))
+      const pending = dlayer.setAssets([assets[0]])
+      await tick()
+      expect(deps.opens).toEqual(['a'])
+
+      const toggled = dlayer.setCogVisible('b', true)
+      await tick()
+      await deps.settleAll()
+      await Promise.all([pending, toggled])
+
+      expect(deps.opens).toEqual(['a', 'b'])
+      expect(overlayLayerIds(dlayer).sort()).toEqual(['stac-cog-a', 'stac-cog-b'])
+    })
+
+    it('retries an identical asset set after a COG header fails to open', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const deps = gatedDeckDeps()
+      dlayer._loadDeckDeps = deps
+      const assets = [cogAsset('a')]
+      dlayer.setStac(fakeStac(assets))
+      const pending = dlayer.setAssets([assets[0]])
+      await tick()
+      await deps.settle('a', new Error('503'))
+      await pending
+      // A failed run must not record its signature, or the retry no-ops.
+      expect(dlayer._assetsSig).toBeNull()
+
+      const retry = dlayer.setAssets([assets[0]])
+      await tick()
+      expect(deps.opens).toEqual(['a', 'a'])
+      await deps.settle('a')
+      await retry
+
+      expect(overlayLayerIds(dlayer)).toEqual(['stac-cog-a'])
+      warn.mockRestore()
+    })
+
+    it('clears the overlay when every COG of a new item fails to open', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const deps = gatedDeckDeps()
+      dlayer._loadDeckDeps = deps
+      const first = [cogAsset('a')]
+      dlayer.setStac(fakeStac(first))
+      const painted = dlayer.setAssets([first[0]])
+      await tick()
+      await deps.settle('a')
+      await painted
+      expect(overlayLayerIds(dlayer)).toEqual(['stac-cog-a'])
+
+      // A different item, whose only COG fails. The previous item's raster is
+      // gone from the picker, so it must go from the map too.
+      const second = [cogAsset('c')]
+      dlayer.setStac(fakeStac(second))
+      const failed = dlayer.setAssets([second[0]])
+      await tick()
+      await deps.settle('c', new Error('503'))
+      await failed
+
+      expect(overlayLayerIds(dlayer)).toEqual([])
+      warn.mockRestore()
     })
 
     it('rebuilds COG layers after a style change re-adds the same assets', async () => {

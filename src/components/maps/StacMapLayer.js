@@ -254,7 +254,19 @@ export default class StacMapLayer {
     this._cogList = [];
     // COG assets the layer picker had to leave out (see COG_LAYER_CAP).
     this._cogOverflow = 0;
+    // COG id -> a promise of its COGLayer props. The promise, not the resolved
+    // props, so two overlapping syncs share one header open: the second finds
+    // the first's entry and awaits it instead of opening the COG again. An
+    // open that fails deletes its entry, so the next sync retries it.
     this._cogLayerCache = new Map();
+    // Bumped by every _syncCogLayers call. A run whose number is no longer the
+    // current one was superseded while it awaited, and stops. The overlay
+    // epoch does not cover this: setCogVisible toggles a layer without any
+    // teardown, so it never bumps the epoch.
+    this._cogSyncSeq = 0;
+    // True when the last sync failed to open at least one visible COG. setAssets
+    // reads it, so a failed run does not record its signature as a success.
+    this._cogSyncFailed = false;
     this._assetsSig = null;
     this._deckOverlay = null;
     this._overlayLayerIds = [];
@@ -507,11 +519,14 @@ export default class StacMapLayer {
 
     // Teardown cleared `_assetsSig`; only a still-current run that rendered
     // what it attempted re-records it. A failed load (e.g. a transient 503 on
-    // the parquet download) must not cache its signature as success, or an
-    // identical retry would no-op on the guard above forever. Partial success
-    // counts as loaded: a parquet failure doesn't withhold the signature when
-    // a COG overlay still made it onto the map.
-    if (parquetLoaded || this._cogList.some(d => d.visible)) {
+    // the parquet download, or on a COG header read) must not cache its
+    // signature as success, or an identical retry would no-op on the guard
+    // above forever. Where this run drew COGs, they settle it: a parquet
+    // failure alongside them doesn't withhold the signature. `visible` is only
+    // the picker's flag, so `_cogSyncFailed` is what says whether the layers
+    // were built.
+    const cogsAttempted = this._cogList.some(d => d.visible);
+    if (cogsAttempted ? !this._cogSyncFailed : parquetLoaded) {
       this._assetsSig = sig;
     }
 
@@ -1183,9 +1198,18 @@ export default class StacMapLayer {
   // the current epoch is the correct one by definition. setAssets-driven
   // paths must always pass their captured epoch explicitly.
   async _syncCogLayers(epoch = this._overlayEpoch) {
+    this._cogSyncFailed = false;
     // A deck overlay needs a map that can host a control. Tests exercise the
     // reconciliation by supplying such a map plus an injected `_loadDeckDeps`.
     if (!this.map || typeof this.map.addControl !== 'function') {return;}
+
+    // Opening a COG reads its header over the network, so a sync can be in
+    // flight for seconds. Anything that changes what should be on the map
+    // starts another sync, and this run must then stop: without this, a COG
+    // the user turned off while its header was loading still gets added, and
+    // the picker cannot remove it because it already reads as off.
+    const seq = ++this._cogSyncSeq;
+    const stale = () => epoch !== this._overlayEpoch || seq !== this._cogSyncSeq;
 
     const visible = this._cogList.filter(d => d.visible);
     if (visible.length === 0) {
@@ -1199,7 +1223,7 @@ export default class StacMapLayer {
 
     try {
       const { MapboxOverlay, COGLayer, DecoderPool, GeoTIFF } = await this._loadDeckDeps();
-      if (epoch !== this._overlayEpoch) {return;}
+      if (stale()) {return;}
 
       // Drop cached props no longer listed (e.g. evicted by the cap).
       const liveIds = new Set(this._cogList.map(d => d.id));
@@ -1217,27 +1241,39 @@ export default class StacMapLayer {
       // Building props reads the COG header (see _makeCogLayerProps), so the
       // descriptors are opened in parallel. One COG that fails to open is
       // dropped on its own and leaves the others on the map.
+      let failed = false;
       const built = await Promise.all(visible.map(async d => {
-        const cached = this._cogLayerCache.get(d.id);
-        if (cached) {return { id: d.id, props: cached };}
+        // The entry goes in before the await, so a sync that starts while this
+        // open is in flight joins it. Two opens of one COG would read the
+        // header twice and give deck a second `geotiff` object, which makes it
+        // discard the layer's decoded tiles.
+        let pending = this._cogLayerCache.get(d.id);
+        if (!pending) {
+          pending = this._makeCogLayerProps(d, DecoderPool, GeoTIFF);
+          this._cogLayerCache.set(d.id, pending);
+        }
         try {
-          return { id: d.id, props: await this._makeCogLayerProps(d, DecoderPool, GeoTIFF) };
+          return { id: d.id, props: await pending };
         } catch (err) {
           console.warn(`Failed to open COG "${d.id}"`, err);
+          // Drop the failed open so an identical retry opens it again. Only
+          // this attempt's own entry: a later sync may have replaced it.
+          if (this._cogLayerCache.get(d.id) === pending) {this._cogLayerCache.delete(d.id);}
+          failed = true;
           return null;
         }
       }));
-      if (epoch !== this._overlayEpoch) {return;}
+      if (stale()) {return;}
+      this._cogSyncFailed = failed;
 
-      const layers = [];
-      for (const entry of built) {
-        if (!entry) {continue;}
-        this._cogLayerCache.set(entry.id, entry.props);
-        layers.push(new COGLayer(entry.props));
+      const layers = built.filter(Boolean).map(entry => new COGLayer(entry.props));
+      // Every visible COG failed to open, so there is nothing to draw. Empty
+      // the overlay rather than leave an earlier sync's rasters on the map,
+      // which the picker would no longer list. The next sync rebuilds it.
+      if (layers.length === 0) {
+        this._deckOverlay?.setProps({ layers: [] });
+        return;
       }
-      // Every visible COG failed to open. Leave the overlay as it is: the next
-      // sync builds it again.
-      if (layers.length === 0) {return;}
 
       if (this._deckOverlay) {
         this._deckOverlay.setProps({ layers });
