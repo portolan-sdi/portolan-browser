@@ -36,13 +36,25 @@ export const VECTOR_NOTICE_ERROR = 'error';
 // problem is the declared CRS or the coordinates themselves.
 export const VECTOR_NOTICE_REPROJECTION = 'reprojection';
 
+// True when an href is a glob pattern, such as the `./country=*/*.parquet` asset
+// portolan-cli writes beside `partition:glob` on a partitioned collection. A glob
+// names many files, and HTTP cannot list them, so there is no single file to
+// fetch. `getAbsoluteUrl()` percent-encodes the `*`, hence the `%2A` check.
+export function isGlobHref(href) {
+  return /\*|%2a/i.test(href || '');
+}
+
 // Matches the sibling predicates in StacMapLayer (isCogAsset/isPmtilesAsset):
 // substring media-type match — so parameterized types like
 // `application/vnd.apache.parquet; charset=binary` are detected — plus an
 // `.parquet` href fallback for untyped assets. Shared by the map render path
-// and the table preview so both detect the same assets.
+// and the table preview so both detect the same assets. A glob href is not a
+// file either can load, so it is left out.
 export function isParquetAsset(asset) {
   const type = asset.type || '';
   const href = asset.getAbsoluteUrl?.() || asset.href || '';
+  if (isGlobHref(asset.href) || isGlobHref(href)) {
+    return false;
+  }
   return PARQUET_MEDIA_TYPES.some(mt => type.includes(mt)) || href.endsWith('.parquet');
 }
