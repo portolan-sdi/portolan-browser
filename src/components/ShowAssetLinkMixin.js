@@ -3,6 +3,7 @@ import { mapGetters, mapState } from 'vuex';
 import { stacBrowserSpecialHandling } from "../rels";
 import { orderedRenderLayers } from '../utils/renderOrder.js';
 import { resolveRenders } from '../utils/renders.js';
+import { isZarrAsset } from '../utils/zarrSource.js';
 
 const COG_MIME_TYPES = [
   'image/tiff',
@@ -127,7 +128,18 @@ export default {
         const type = asset.type || '';
         return COG_MIME_TYPES.some(mt => type.includes(mt));
       });
-      if (cogAssets.length === 0) {return;}
+      if (cogAssets.length === 0) {
+        // A Zarr store is the other raster the map draws directly, and it
+        // reaches the map the same way: nothing is rendered until an asset is
+        // selected. The map then lists one layer per variable of the store and
+        // shows the one the render targets, so the whole asset is selected
+        // rather than a choice being made here. See utils/zarrLayers.
+        const zarrAssets = assets.filter(isZarrAsset);
+        if (zarrAssets.length === 0) {return;}
+        this.selectedAssets = zarrAssets;
+        this.hasAutoSelected = true;
+        return;
+      }
 
       // A declared `portolan:render_order` answers the question this method
       // guesses at, for several layers at once. Guess only where nothing was

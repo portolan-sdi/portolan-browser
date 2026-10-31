@@ -218,6 +218,43 @@ export default defineConfig(async ({ mode }) => {
           brotliSize: true,
           open: true,
         }),
+      // Serve the local test catalogs under /test-catalogs during development,
+      // so a catalog that is deployed nowhere can still be opened in the app
+      // (see tests/fixtures/catalogs). Dev only: the catalogs are test
+      // fixtures and must not reach a production build.
+      {
+        name: "portolan-test-catalogs",
+        apply: "serve",
+        configureServer(server) {
+          const root = fileURLToPath(
+            new URL("./tests/fixtures/catalogs", import.meta.url)
+          );
+          server.middlewares.use("/test-catalogs", (req, res, next) => {
+            // The URL parser decodes the path and collapses every `..` in it,
+            // including one written as `%2e%2e`, so what it hands back cannot
+            // climb above the mount point. The prefix check below is a second
+            // line only, in case that ever stops being true.
+            const { pathname } = new URL(req.url, "http://localhost");
+            const requested = resolve(root, `.${pathname}`);
+            if (requested !== root && !requested.startsWith(`${root}/`)) {
+              res.statusCode = 403;
+              res.end("Forbidden");
+              return;
+            }
+            let body;
+            try {
+              body = readFileSync(requested);
+            } catch {
+              next();
+              return;
+            }
+            res.setHeader("Content-Type", "application/json");
+            // The app fetches these as it would any remote catalog.
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.end(body);
+          });
+        },
+      },
     ],
     resolve: {
       // Ensure a single instance of OpenLayers (and stac-js) is used even when

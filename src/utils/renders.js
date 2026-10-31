@@ -504,7 +504,7 @@ export function makeRenderTileLoader(render) {
  * that — so the pixel count is their product, and any leading axis is the band
  * axis whose planes follow one another in the buffer.
  */
-export function zarrSamples(chunk, { width, height }, bandAxis = null) {
+export function zarrSamples(chunk, bandAxis = null) {
   const data = chunk?.data;
   const shape = chunk?.shape;
   if (!data || !Array.isArray(shape) || shape.length < 2) {return null;}
@@ -517,9 +517,6 @@ export function zarrSamples(chunk, { width, height }, bandAxis = null) {
     }
     return null;
   }
-  // An edge chunk is narrower or shorter than the tile the layer asked for, so
-  // the ImageData is built at the chunk's own size and the layer places it.
-  if ((width && w > width) || (height && h > height)) {return null;}
   // A leading axis is the band axis, and the distance between its planes is
   // taken from the result's own stride rather than assumed: zarrita reports
   // one, and for a C-ordered result it is the pixel count, which is what the
@@ -529,6 +526,47 @@ export function zarrSamples(chunk, { width, height }, bandAxis = null) {
   const banded = leading.length > 0 && leading[axis] > 1;
   const planeStride = banded ? (chunk.stride?.[axis] ?? npix) : 0;
   return { data, w, h, npix, planeStride };
+}
+
+/**
+ * Add a step to a tile's spatial slices so the samples it returns stay inside
+ * the per-tile budget.
+ *
+ * A Zarr chunk is whatever size its author chose, and a chunk far larger than
+ * a screen is a real choice: the FTW global composites are chunked 4096 by
+ * 4096, which is 16.7 million samples and a 67 MB image for one tile. The
+ * colormap loop runs on the main thread, so a handful of those on screen
+ * freezes the tab.
+ *
+ * Reading every nth sample instead costs nothing extra over the wire — the
+ * chunk is fetched and decompressed whole either way — and bounds the work
+ * that happens per tile after it arrives. The tile covers the same ground at
+ * a lower resolution, which is the right trade at a zoom where one chunk
+ * already spans more than the window.
+ *
+ * @param sliceSpec The slice spec the layer built, one entry per dimension.
+ * @param zarr The zarrita module, for building the replacement slices.
+ * @param budget The most samples one tile may return.
+ * @returns The spec to read with, unchanged when it is already within budget.
+ */
+export function decimateSliceSpec(sliceSpec, zarr, budget = MAX_TILE_PIXELS) {
+  if (!Array.isArray(sliceSpec) || sliceSpec.length < 2) {return sliceSpec;}
+  const spatial = sliceSpec.slice(-2);
+  const lengths = spatial.map(sel => {
+    if (!sel || typeof sel !== 'object') {return null;}
+    const { start, stop, step } = sel;
+    if (typeof start !== 'number' || typeof stop !== 'number') {return null;}
+    return Math.max(0, Math.ceil((stop - start) / (step || 1)));
+  });
+  if (lengths.some(len => len === null)) {return sliceSpec;}
+  const pixels = lengths[0] * lengths[1];
+  if (!(pixels > budget)) {return sliceSpec;}
+  // One step for both axes keeps the tile's aspect ratio, so the image still
+  // covers the tile's bounds without stretching.
+  const step = Math.ceil(Math.sqrt(pixels / budget));
+  const decimated = spatial.map((sel) =>
+    zarr.slice(sel.start, sel.stop, (sel.step || 1) * step));
+  return [...sliceSpec.slice(0, -2), ...decimated];
 }
 
 // --- Classification-derived renders -----------------------------------------
@@ -666,9 +704,13 @@ export function makeZarrRenderTileLoader(render, { zarr, bandAxis = null } = {})
   const band = rgb ? null : ((render.bidx && render.bidx[0]) || 1) - 1;
 
   const getTileData = async (arr, opts) => {
-    const chunk = await zarr.get(arr, opts.sliceSpec, { signal: opts.signal });
+    // A chunk larger than the per-tile budget is read every nth sample, so a
+    // store chunked far coarser than a screen still draws. See
+    // decimateSliceSpec.
+    const sliceSpec = decimateSliceSpec(opts.sliceSpec, zarr);
+    const chunk = await zarr.get(arr, sliceSpec, { signal: opts.signal });
     if (opts.signal?.aborted) {return null;}
-    const samples = zarrSamples(chunk, opts, bandAxis);
+    const samples = zarrSamples(chunk, bandAxis);
     if (!samples) {return null;}
     if (rgb) {
       if (!samples.planeStride) {

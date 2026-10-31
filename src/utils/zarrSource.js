@@ -105,21 +105,45 @@ export function isHttpZarrHref(url) {
  * because reading one inner chunk of a shard costs an index read and a chunk
  * read.
  *
+ * Which of the two readers a store needs is decided by trying one and falling
+ * back to the other, because the metadata does not reliably say. An Icechunk
+ * repository is a transaction log whose chunks are Zarr chunks, so catalogs
+ * describe one either way: dynamical.org types its repositories
+ * `application/x-icechunk`, while the GOES catalog on source.coop types its
+ * own `application/vnd.zarr; version=3` and names the repository in the href.
+ * Reading a repository as a plain store finds no `zarr.json` at the root and
+ * fails at once, so the fallback costs one failed request in the case where
+ * the declaration misleads, and nothing in the case where it does not.
+ *
  * @param url The store root.
- * @param options.icechunk Open as an Icechunk repository.
+ * @param options.icechunk Try the Icechunk reader first.
  * @param options.deps Injected module loaders, for tests.
  * @returns The opened root `zarr.Group` or `zarr.Array`.
  */
 export async function openZarrRoot(url, { icechunk = false, deps = null } = {}) {
-  if (icechunk) {
+  const openIcechunk = async () => {
     const { IcechunkStore } = deps?.icechunk ?? await import('icechunk-js');
-    const store = await IcechunkStore.open(url);
+    return zarr.open(await IcechunkStore.open(url));
+  };
+  const openPlain = async () => {
+    const store = await zarr.withMaybeConsolidatedMetadata(
+      zarr.withRangeCoalescing(new zarr.FetchStore(url)),
+    );
     return zarr.open(store);
+  };
+
+  const [first, second] = icechunk ? [openIcechunk, openPlain] : [openPlain, openIcechunk];
+  try {
+    return await first();
+  } catch (err) {
+    try {
+      return await second();
+    } catch {
+      // Report the failure of the reader the metadata asked for, which is the
+      // one whose error describes what the catalog said the store was.
+      throw err;
+    }
   }
-  const store = await zarr.withMaybeConsolidatedMetadata(
-    zarr.withRangeCoalescing(new zarr.FetchStore(url)),
-  );
-  return zarr.open(store);
 }
 
 // --- GeoZarr metadata from CF coordinates ------------------------------------
@@ -232,6 +256,113 @@ export async function geoZarrAttrsFromCoordinates(root, array, { crs = null } = 
   return attrs;
 }
 
+// --- Coordinate reference systems --------------------------------------------
+
+/**
+ * Whether the browser can build a transform from a GeoZarr CRS.
+ *
+ * `ZarrLayer` reprojects every chunk with proj4, so a CRS proj4 cannot
+ * understand stops the layer inside its own metadata parse. Checked here, the
+ * same failure becomes one message naming the projection.
+ *
+ * An EPSG code is resolved by the layer over the network, so it is taken on
+ * trust. A WKT2 or PROJJSON definition is parsed now, because that is where
+ * the gap is: `wkt-parser` maps the common WKT2 projection methods onto
+ * proj4's names, and a method it does not know yields a definition proj4
+ * rejects. The case in hand is a geostationary satellite grid, whose WKT2
+ * method reads `Geostationary Satellite (Sweep X)` while proj4 knows the
+ * projection as `Geostationary Satellite View`, and whose satellite height
+ * `wkt-parser` does not carry across either.
+ *
+ * @param crs The `crs` of parsed GeoZarr metadata.
+ * @returns The projection name when it cannot be used, or null when it can.
+ */
+export async function unusableCrs(crs) {
+  if (!crs || crs.code) {return null;}
+  const definition = crs.wkt2 ?? crs.projjson;
+  if (!definition) {return 'none';}
+  try {
+    const [{ default: proj4 }, { default: wktParser }] = await Promise.all([
+      import('proj4'),
+      import('wkt-parser'),
+    ]);
+    const parsed = wktParser(definition);
+    // Building the transform is the test: proj4 throws when the definition
+    // names no projection it implements, or lacks a parameter the projection
+    // needs.
+    proj4(parsed, 'EPSG:4326').forward([0, 0]);
+    return null;
+  } catch {
+    const name = typeof definition === 'string'
+      ? definition.match(/METHOD\["([^"]+)"/)?.[1]
+      : definition?.conversion?.method?.name;
+    return name || 'the declared projection';
+  }
+}
+
+// --- Codecs ------------------------------------------------------------------
+//
+// A chunk is compressed with a chain of codecs the store names, and zarrita
+// decodes a chunk only when it has every one of them. A store written for a
+// Python reader may name a codec that exists only there.
+//
+// The case this exists for is virtual Zarr over GRIB. dynamical.org publishes
+// an Icechunk repository whose chunks point into NOAA's GRIB files and are
+// decoded by a `gribberish` codec, which has no JavaScript implementation. The
+// store opens, the metadata parses, and every tile read then fails with
+// "Unknown codec: gribberish". Checked up front, that becomes one message
+// about the store instead of a map of failed tiles.
+//
+// Codecs are not on zarrita's public `Array`, so the array's own metadata
+// document is read back through the store. It costs one small request, which
+// the store has usually cached from opening the array.
+
+// Every codec name in an array's metadata, including the ones nested inside a
+// sharding codec's configuration.
+async function codecNames(array) {
+  const path = array.path === '/' ? '' : array.path;
+  const raw = await array.store.get(`${path}/zarr.json`);
+  if (!raw) {return [];}
+  const meta = JSON.parse(new TextDecoder().decode(raw));
+  const names = [];
+  const walk = (codecs) => {
+    if (!Array.isArray(codecs)) {return;}
+    for (const codec of codecs) {
+      if (typeof codec?.name !== 'string') {continue;}
+      names.push(codec.name);
+      // `sharding_indexed` holds the codecs of the inner chunks.
+      walk(codec.configuration?.codecs);
+      walk(codec.configuration?.index_codecs);
+    }
+  };
+  walk(meta.codecs);
+  return names;
+}
+
+// Codecs zarrita implements in its chunk pipeline rather than in the codec
+// registry, so a registry lookup alone would report them missing. Sharding is
+// the one that matters: both source.coop stores shard, and a false report
+// would refuse the stores this feature exists to draw.
+const BUILT_IN_CODECS = new Set(['sharding_indexed']);
+
+/**
+ * The codec names an array uses that zarrita cannot decode.
+ *
+ * @param array The opened array.
+ * @returns The unsupported codec names, empty when every one is available.
+ */
+export async function unsupportedCodecs(array) {
+  let names;
+  try {
+    names = await codecNames(array);
+  } catch {
+    // The metadata could not be read back. Let the tile reads decide rather
+    // than refusing a store that may be fine.
+    return [];
+  }
+  return names.filter(name => !zarr.registry.has(name) && !BUILT_IN_CODECS.has(name));
+}
+
 // --- Level paths -------------------------------------------------------------
 
 // Child array names of a group. A store with consolidated metadata lists them
@@ -250,9 +381,14 @@ function childArrayNames(group) {
 // The data array inside a level group. A level group holds the data array and
 // the coordinate arrays that label it, so the coordinate arrays are discarded
 // by name: they are named after the dimensions, and the data array is not.
-function soleArrayName(levelGroup) {
+//
+// `preferred` is the variable the caller wants, which settles a level group
+// holding more than one. In a level-first pyramid the variable names the array
+// inside each level rather than a group of its own, so `rgba` picks `0/rgba`.
+function soleArrayName(levelGroup, preferred = null) {
   const names = childArrayNames(levelGroup);
   if (names.length === 0) {return null;}
+  if (preferred && names.includes(preferred)) {return preferred;}
   if (names.length === 1) {return names[0];}
   const dimLike = new Set([...Y_DIM_NAMES, ...X_DIM_NAMES, 'band', 'bands', 'time', 'spatial_ref']);
   const data = names.filter(name => !dimLike.has(name.toLowerCase()));
@@ -275,9 +411,11 @@ function soleArrayName(levelGroup) {
  *
  * @param group The group the level paths are relative to.
  * @param levels The parsed `meta.levels`, finest first.
+ * @param variable The variable to pick inside a level group, when the level
+ *   holds more than one array.
  * @returns The level paths to use, in the same order.
  */
-export async function resolveLevelPaths(group, levels) {
+export async function resolveLevelPaths(group, levels, variable = null) {
   const paths = levels.map(level => level.path);
   if (paths.length === 0) {return paths;}
   const first = paths[0];
@@ -288,7 +426,7 @@ export async function resolveLevelPaths(group, levels) {
     /* not an array: fall through and look for one inside it */
   }
   const levelGroup = await zarr.open(group.resolve(first === '.' ? '' : `/${first}`), { kind: 'group' });
-  const name = soleArrayName(levelGroup);
+  const name = soleArrayName(levelGroup, variable);
   if (!name) {
     throw new Error(`Zarr level "${first}" is a group with no single data array to render`);
   }

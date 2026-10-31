@@ -1,0 +1,39 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.1.0",
+  "id": "zarr-test-catalog",
+  "title": "Zarr rendering test catalog",
+  "description": "Local Portolan catalog for the Zarr map rendering work. Each collection points at a public Zarr or Icechunk store and covers one outcome the browser has to produce: a store that draws, a store held back to a zoom level, a store refused for its chunk shape, and a store refused for its codec. Run `node tests/fixtures/catalogs/zarr/build.mjs` to rebuild the derived collections. The dev server serves this catalog at /test-catalogs/zarr/catalog.json. See docs/zarr.md.",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json",
+      "title": "Zarr rendering test catalog"
+    },
+    {
+      "rel": "child",
+      "href": "https://data.source.coop/mmidzik/goes-fdc/goes-18-fdcc/collection.json",
+      "type": "application/json",
+      "title": "GOES-18 fire characterisation, CONUS — draws"
+    },
+    {
+      "rel": "child",
+      "href": "https://data.source.coop/ftw/global-data/features/zarr/collection.json",
+      "type": "application/json",
+      "title": "Fields of The World global composites — draws from zoom 11"
+    },
+    {
+      "rel": "child",
+      "href": "./dynamical-gfs-analysis/collection.json",
+      "type": "application/json",
+      "title": "NOAA GFS analysis — refused, chunked for time series"
+    },
+    {
+      "rel": "child",
+      "href": "./dynamical-gfs-analysis-virtual/collection.json",
+      "type": "application/json",
+      "title": "NOAA GFS analysis, virtual — refused, GRIB codec"
+    }
+  ]
+}

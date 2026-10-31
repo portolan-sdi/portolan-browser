@@ -1,9 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeZarrRenderTileLoader, zarrSamples } from '../../src/utils/renders.js'
+import {
+  decimateSliceSpec, makeZarrRenderTileLoader, zarrSamples,
+} from '../../src/utils/renders.js'
 
 // A zarrita stand-in whose `get` answers with a prepared chunk.
 function fakeZarr(chunk) {
-  return { get: vi.fn().mockResolvedValue(chunk) }
+  return {
+    get: vi.fn().mockResolvedValue(chunk),
+    slice: (start, stop, step) => ({ start, stop, step }),
+  }
 }
 
 // Read the RGBA of pixel `i` out of a loader result.
@@ -15,22 +20,22 @@ function pixel(result, i) {
 describe('zarrSamples', () => {
   it('takes the pixel count from the trailing two axes', () => {
     const chunk = { data: new Float32Array(6), shape: [2, 3] }
-    expect(zarrSamples(chunk, {})).toMatchObject({ w: 3, h: 2, npix: 6, planeStride: 0 })
+    expect(zarrSamples(chunk)).toMatchObject({ w: 3, h: 2, npix: 6, planeStride: 0 })
   })
 
   it('reports a plane stride for a multi-band result', () => {
     const chunk = { data: new Uint8Array(3 * 4), shape: [3, 2, 2] }
-    expect(zarrSamples(chunk, {})).toMatchObject({ w: 2, h: 2, npix: 4, planeStride: 4 })
+    expect(zarrSamples(chunk)).toMatchObject({ w: 2, h: 2, npix: 4, planeStride: 4 })
   })
 
   it('reports no plane stride for a band axis of length one', () => {
     const chunk = { data: new Uint8Array(4), shape: [1, 2, 2] }
-    expect(zarrSamples(chunk, {}).planeStride).toBe(0)
+    expect(zarrSamples(chunk).planeStride).toBe(0)
   })
 
   it('rejects a chunk past the colormap budget', () => {
     const chunk = { data: new Float32Array(0), shape: [4096, 4096] }
-    expect(zarrSamples(chunk, {})).toBeNull()
+    expect(zarrSamples(chunk)).toBeNull()
   })
 
   it('rejects a degenerate chunk', () => {
@@ -39,14 +44,9 @@ describe('zarrSamples', () => {
     expect(zarrSamples(null, {})).toBeNull()
   })
 
-  it('rejects a chunk wider than the tile the layer asked for', () => {
-    const chunk = { data: new Float32Array(100), shape: [10, 10] }
-    expect(zarrSamples(chunk, { width: 4, height: 10 })).toBeNull()
-  })
-
-  it('accepts an edge chunk narrower than the tile', () => {
+  it('accepts an edge chunk, which is narrower or shorter than a full one', () => {
     const chunk = { data: new Float32Array(20), shape: [5, 4] }
-    expect(zarrSamples(chunk, { width: 10, height: 10 })).toMatchObject({ w: 4, h: 5 })
+    expect(zarrSamples(chunk)).toMatchObject({ w: 4, h: 5 })
   })
 })
 
@@ -172,5 +172,47 @@ describe('makeZarrRenderTileLoader, true colour', () => {
     const result = await getTileData({}, { sliceSpec: [null, null, null], width: 2, height: 1 })
     expect(pixel(result, 0)).toEqual([0, 0, 0, 0])
     expect(pixel(result, 1)).toEqual([5, 10, 20, 255])
+  })
+})
+
+describe('decimateSliceSpec', () => {
+  const zarr = { slice: (start, stop, step) => ({ start, stop, step }) }
+  const sl = (start, stop, step = 1) => ({ start, stop, step })
+
+  it('leaves a tile inside the budget alone', () => {
+    const spec = [0, sl(0, 512), sl(0, 512)]
+    expect(decimateSliceSpec(spec, zarr)).toBe(spec)
+  })
+
+  it('steps over a chunk far larger than the budget', () => {
+    // The FTW global store: 4096 by 4096 is 16.7M samples against a 4.19M
+    // budget, so every second sample is read and the tile returns 2048 square.
+    const spec = [0, sl(0, 4096), sl(0, 4096)]
+    const out = decimateSliceSpec(spec, zarr)
+    expect(out[1]).toMatchObject({ start: 0, stop: 4096, step: 2 })
+    expect(out[2]).toMatchObject({ start: 0, stop: 4096, step: 2 })
+    const pixels = Math.ceil(4096 / 2) ** 2
+    expect(pixels).toBeLessThanOrEqual(2048 * 2048)
+  })
+
+  it('keeps the non-spatial entries untouched', () => {
+    const spec = [3, null, sl(0, 8192), sl(0, 8192)]
+    const out = decimateSliceSpec(spec, zarr)
+    expect(out[0]).toBe(3)
+    expect(out[1]).toBeNull()
+    expect(out[2].step).toBeGreaterThan(1)
+  })
+
+  it('multiplies a step the layer already asked for', () => {
+    const spec = [sl(0, 8192, 2), sl(0, 8192, 2)]
+    // 4096 by 4096 effective samples, so it needs one more halving.
+    const out = decimateSliceSpec(spec, zarr)
+    expect(out[0].step).toBe(4)
+  })
+
+  it('leaves a spec it cannot measure alone', () => {
+    const spec = [0, null, null]
+    expect(decimateSliceSpec(spec, zarr)).toBe(spec)
+    expect(decimateSliceSpec([sl(0, 10)], zarr)).toEqual([sl(0, 10)])
   })
 })

@@ -42,7 +42,8 @@ import StacMapLayer from './maps/StacMapLayer.js';
 import { resolveStyles, loadStyleJson, extractLegend, extractStyleFields } from '../utils/portolanStyles.js';
 import { VECTOR_NOTICE_REPROJECTION, VECTOR_NOTICE_TOO_BIG, VECTOR_NOTICE_TOO_LARGE } from '../utils/parquetShared.js';
 import {
-  ZARR_NOTICE_CHUNK_SHAPE, ZARR_NOTICE_NO_GEO, ZARR_NOTICE_ZOOM_IN,
+  ZARR_NOTICE_CHUNK_SHAPE, ZARR_NOTICE_CODEC, ZARR_NOTICE_CRS, ZARR_NOTICE_NO_GEO,
+  ZARR_NOTICE_ZOOM_IN,
 } from '../utils/zarrLayers.js';
 import { createLonLatTransform } from '../utils/crs.js';
 import proj4 from 'proj4';
@@ -155,6 +156,18 @@ export default {
         return this.$t('mapping.zarr.chunkShape', {
           title: notice.title || '',
           factor: notice.amplification,
+        });
+      }
+      if (notice.reason === ZARR_NOTICE_CODEC) {
+        return this.$t('mapping.zarr.codec', {
+          title: notice.title || '',
+          codecs: notice.codecs,
+        });
+      }
+      if (notice.reason === ZARR_NOTICE_CRS) {
+        return this.$t('mapping.zarr.crs', {
+          title: notice.title || '',
+          projection: notice.projection,
         });
       }
       if (notice.reason === ZARR_NOTICE_NO_GEO) {

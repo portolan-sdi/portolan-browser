@@ -101,6 +101,7 @@
     "vue-multiselect": "^3.3.1",
     "vue-router": "^5.0.1",
     "vuex": "^4.1.0",
+    "wkt-parser": "^1.6.0",
     "yargs": "^18.0.0",
     "zarrita": "^0.7.5"
   },

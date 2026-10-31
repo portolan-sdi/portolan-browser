@@ -21,13 +21,16 @@
 // metadata and refuses the store when it is too wasteful to draw.
 
 import {
-  geoZarrAttrsFromCoordinates, isIcechunkAsset, openZarrRoot, resolveLevelPaths, zarrZoomGuard,
+  geoZarrAttrsFromCoordinates, isIcechunkAsset, openZarrRoot, resolveLevelPaths,
+  unsupportedCodecs, unusableCrs, zarrZoomGuard,
 } from './zarrSource.js';
 import { assetBands, makeZarrRenderTileLoader } from './renders.js';
 
 /** Notice reasons the map surfaces for a Zarr asset it will not draw. */
 export const ZARR_NOTICE_CHUNK_SHAPE = 'zarr-chunk-shape';
 export const ZARR_NOTICE_NO_GEO = 'zarr-no-geo';
+export const ZARR_NOTICE_CODEC = 'zarr-codec';
+export const ZARR_NOTICE_CRS = 'zarr-crs';
 export const ZARR_NOTICE_ERROR = 'zarr-error';
 export const ZARR_NOTICE_ZOOM_IN = 'zarr-zoom-in';
 
@@ -112,6 +115,7 @@ export function zarrVariables(asset, stac) {
         unit: v.unit,
         nodata: v.nodata,
         dataType: v.data_type,
+        statistics: v.statistics,
       }));
   }
   const bands = assetBands(asset);
@@ -124,6 +128,7 @@ export function zarrVariables(asset, stac) {
         unit: b.unit,
         nodata: b.nodata,
         dataType: b.data_type,
+        statistics: b.statistics,
       }));
   }
   return [];
@@ -214,29 +219,78 @@ export function zarrDescriptors(asset, stac, render) {
   }));
 }
 
-// The node a variable lives at. A variable is a group when it has a pyramid
-// and an array when it does not, and `ZarrLayer` accepts either.
+function isBandDim(name) {
+  const lower = String(name).toLowerCase();
+  return lower === 'band' || lower === 'bands';
+}
+
+// The node a variable lives at.
+//
+// A store names its variables in one of two layouts, and both are in use:
+//
+//   variable-first   /Power              one node per variable, pyramid inside
+//   level-first      /0/rgba, /1/rgba    one node per level, variables inside
+//
+// GOES and the CF-style stores are variable-first, and source.coop's
+// italy-aerial store is level-first. Returning the root for the second layout
+// is what makes it work: the levels are then resolved from the root, and the
+// variable name picks the array inside each one (see resolveLevelPaths).
 async function openVariableNode(zarr, root, name) {
+  const node = root.resolve(`/${name}`);
   try {
-    return await zarr.open(root.resolve(`/${name}`), { kind: 'group' });
+    return await zarr.open(node, { kind: 'group' });
   } catch {
-    return zarr.open(root.resolve(`/${name}`), { kind: 'array' });
+    /* not a group of its own */
   }
+  try {
+    return await zarr.open(node, { kind: 'array' });
+  } catch {
+    /* nor an array: the store is level-first, so the root holds the levels */
+  }
+  return root;
 }
 
 // The array whose chunking and dimension names describe the data: the finest
 // level of a pyramid, or the node itself when it is already an array.
 // `resolveLevelPaths` does the work of finding the array inside a level that
 // is a group, so this only has to ask it for the finest level.
-async function firstArray(zarr, group, meta) {
+async function firstArray(zarr, group, meta, variable = null) {
   if ('shape' in group) {return group;}
   try {
-    const paths = await resolveLevelPaths(group, meta?.levels ?? [{ path: '.' }]);
+    const paths = await resolveLevelPaths(group, meta?.levels ?? [{ path: '.' }], variable);
     const path = paths[0];
     return await zarr.open(group.resolve(path === '.' ? '' : `/${path}`), { kind: 'array' });
   } catch {
     return null;
   }
+}
+
+/**
+ * A true-colour render for a store that declares none, when the array is a
+ * picture rather than a measurement.
+ *
+ * Three or more 8-bit bands on one axis is what an RGB or RGBA orthophoto
+ * looks like, and 8-bit samples are already display values, so the stretch is
+ * the full byte range. Without this the single-band path would colour the red
+ * channel through a ramp and draw an aerial photograph in viridis.
+ *
+ * The no-data values come from the asset's bands, so a pixel outside coverage
+ * draws transparent rather than black. The compositor drops a pixel only where
+ * every colour channel is empty, which is exactly what an uncovered pixel of a
+ * priority-merged mosaic holds.
+ *
+ * @returns The render, or null when the array is not a picture.
+ */
+export function synthesizeZarrRgbRender(array, asset) {
+  const dims = (array?.dimensionNames || []).filter(Boolean);
+  const axis = dims.findIndex(isBandDim);
+  if (axis === -1 || axis >= dims.length - 2) {return null;}
+  if (!(array.shape[axis] >= 3)) {return null;}
+  if (array.dtype !== 'uint8') {return null;}
+  const nodata = [...new Set(
+    assetBands(asset).slice(0, 3).map(b => b?.nodata).filter(v => v != null),
+  )];
+  return { bidx: [1, 2, 3], rescale: [[0, 255]], nodata };
 }
 
 // Rewrite the level paths of a GeoZarr attributes object. Only the multiscale
@@ -263,9 +317,30 @@ function stacCrs(asset) {
   return null;
 }
 
-function isBandDim(name) {
-  const lower = String(name).toLowerCase();
-  return lower === 'band' || lower === 'bands';
+/**
+ * A ramp stretched to a variable's declared statistics, for a variable with no
+ * render of its own.
+ */
+function renderFromStatistics(variable) {
+  const min = variable?.statistics?.minimum;
+  const max = variable?.statistics?.maximum;
+  if (typeof min !== 'number' || typeof max !== 'number' || !(max > min)) {return null;}
+  const nodata = variable.nodata != null ? [variable.nodata] : [];
+  return { colormap_name: 'viridis', rescale: [[min, max]], nodata };
+}
+
+// Nothing says how to colour this variable and nothing says what range it
+// spans. It still draws, because a saturated image is more use than a blank
+// map, but the reason is said out loud: the fix belongs in the collection.
+function reportMissingRender(descriptor, array) {
+  if (array?.dtype !== 'uint8') {
+    console.warn(
+      `The Zarr variable "${descriptor.variable?.name ?? descriptor.title}" has no render `
+      + 'and no band statistics, so the colour ramp spans 0 to 1 and the image may saturate. '
+      + 'Declare a `renders` entry on the collection, or statistics on the variable.'
+    );
+  }
+  return {};
 }
 
 /**
@@ -309,7 +384,7 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
     /* no spatial conventions: fall through to the coordinate arrays */
   }
 
-  const probe = await firstArray(zarr, group, declared);
+  const probe = await firstArray(zarr, group, declared, variable?.name);
   if (!probe) {
     throw new ZarrUnsuitableError(ZARR_NOTICE_NO_GEO, 'The Zarr store has no array to render');
   }
@@ -347,8 +422,26 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
     }
   }
 
-  // Both guards below read only metadata, so an unsuitable store is refused
+  // Every guard below reads metadata only, so an unsuitable store is refused
   // before a single chunk is fetched.
+  const missing = await unsupportedCodecs(probe);
+  if (missing.length > 0) {
+    throw new ZarrUnsuitableError(
+      ZARR_NOTICE_CODEC,
+      `The Zarr store uses codecs this browser cannot decode: ${missing.join(', ')}`,
+      { codecs: missing.join(', ') },
+    );
+  }
+
+  const projection = await unusableCrs(meta.crs);
+  if (projection) {
+    throw new ZarrUnsuitableError(
+      ZARR_NOTICE_CRS,
+      `The browser cannot build a transform for the projection "${projection}"`,
+      { projection },
+    );
+  }
+
   const amplification = chunkAmplification(probe.chunks, used);
   if (amplification > MAX_CHUNK_AMPLIFICATION) {
     throw new ZarrUnsuitableError(
@@ -366,14 +459,29 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
 
   // A pyramid's levels may be groups holding the array, so the paths parsed
   // from the metadata are corrected before the layer opens them.
-  const levelPaths = await resolveLevelPaths(group, meta.levels);
+  const levelPaths = await resolveLevelPaths(group, meta.levels, variable?.name);
   const correctedMetadata = levelPaths.some((path, i) => path !== meta.levels[i].path)
     ? withLevelPaths(metadata ?? group.attrs, levelPaths)
     : metadata;
 
+  // Which node the layer gets, and the attributes it reads them with.
+  //
+  // A single-level store whose data sits in a child array is the case the
+  // level paths cannot express: there is no `multiscales` layout to correct,
+  // so the layer would resolve the level as `.` and try to open the group
+  // itself as an array. `ZarrLayer` takes a pre-opened array for exactly this,
+  // and then never resolves a path — but it reads the GeoZarr attributes off
+  // whatever node it is given, and the spatial conventions live on the parent
+  // group, so they are passed explicitly. The FTW global store is this shape.
+  const singleLevelChild = meta.levels.length === 1 && !('shape' in group) && probe !== group;
+  const node = singleLevelChild ? probe : group;
+  const metadataOverride = singleLevelChild
+    ? (metadata ?? group.attrs)
+    : correctedMetadata;
+
   const props = {
     id: `stac-zarr-${descriptor.id}`,
-    node: group,
+    node,
     selection,
     opacity: 0.9,
     refinementStrategy: 'best-available',
@@ -383,9 +491,25 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
     // chunk of its coarsest level. See zarrMinZoom.
     minZoom,
   };
-  if (correctedMetadata) {props.metadata = correctedMetadata;}
+  if (metadataOverride) {props.metadata = metadataOverride;}
 
-  const { getTileData, renderTile } = makeZarrRenderTileLoader(render || {}, { zarr });
+  // What to colour the variable with, when the collection declares nothing.
+  //
+  // An orthophoto needs no render: its bands are already display values, so a
+  // picture is recognised and composited as true colour. A measurement does
+  // need one, because a ramp has to know the range it spans. Declared
+  // statistics supply that range, which is the same source the COG path
+  // stretches an un-rendered asset from (see synthesizeRgbRender).
+  //
+  // A measurement with neither a render nor statistics is drawn against the
+  // default 0 to 1 range, which for anything else saturates to one flat
+  // colour. That is a gap in the collection's metadata, so it is reported
+  // rather than guessed at.
+  const effective = render
+    ?? synthesizeZarrRgbRender(probe, asset)
+    ?? renderFromStatistics(variable)
+    ?? reportMissingRender(descriptor, probe);
+  const { getTileData, renderTile } = makeZarrRenderTileLoader(effective, { zarr });
   props.getTileData = getTileData;
   props.renderTile = renderTile;
 
