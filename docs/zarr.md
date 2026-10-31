@@ -164,6 +164,13 @@ Rebuild the derived collections from the publishers' own metadata with:
 node tests/fixtures/catalogs/zarr/build.mjs
 ```
 
+Any other Portolan catalog can be linked into the same directory and is then
+served the same way:
+
+```sh
+ln -s /path/to/italy-aerial-catalog/catalog tests/fixtures/catalogs/italy
+```
+
 `tests/manual/zarr-render-check.mjs` drives a real browser over the catalog and
 reports, for each collection, what the layer control listed, what the map said,
 and whether the canvas drew anything. It reads the live stores, so it is slow

@@ -26,6 +26,9 @@ const CASES = [
     title: 'Italy AGEA orthophoto (12-level pyramid, RGBA)',
     path: '/test-catalogs/italy/agea-orthophoto/collection.json',
     expect: 'draws true colour over Italy at every zoom',
+    // This catalog is not in the repository. Link one in to run the case:
+    //   ln -s /path/to/italy-aerial-catalog/catalog tests/fixtures/catalogs/italy
+    optional: true,
   },
   {
     name: 'goes',
@@ -61,6 +64,18 @@ const CASES = [
 
 const only = process.argv[2];
 const cases = only ? CASES.filter(c => c.name === only) : CASES;
+
+// Skip an optional case whose catalog is not linked in, rather than reporting
+// it as a failure of the browser.
+async function isServed(target) {
+  try {
+    const resp = await fetch(target);
+    const body = await resp.text();
+    return resp.ok && body.trimStart().startsWith('{');
+  } catch {
+    return false;
+  }
+}
 
 // Whether the deck.gl canvas holds anything but one flat colour. A map that
 // loaded no raster is a single colour; one that drew a raster is not.
@@ -98,6 +113,12 @@ for (const testCase of cases) {
       if (/zarr|icechunk|codec|deck/i.test(text)) {consoleErrors.push(text);}
     }
   });
+
+  if (testCase.optional && !await isServed(`${BASE}${testCase.path}`)) {
+    console.log(`\n=== ${testCase.name}: skipped, ${testCase.path} is not served`);
+    await context.close();
+    continue;
+  }
 
   const target = testCase.url
     ? `${BASE}/#/external/${testCase.url.replace(/^https?:\/\//, '')}`
