@@ -484,8 +484,25 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
     node,
     selection,
     opacity: 0.9,
+    // Keep the coarser tiles on the map until the finer level decodes.
     refinementStrategy: 'best-available',
-    maxRequests: 4,
+    // The cap on tile requests in flight.
+    //
+    // deck.gl aborts a tile request when the viewport no longer selects that
+    // tile. It does this as soon as the number of requests in flight is more
+    // than this cap. One viewport of a 1024-pixel chunked store selects 4 to
+    // 6 chunks, so a cap of 4 sits below one viewport. Each frame of a zoom
+    // then aborts the chunks of the frame before it. No level completes, so
+    // 'best-available' finds no loaded ancestor to stand in. The map drops
+    // straight to the basemap, with no coarse image in between.
+    //
+    // 16 holds two viewports of a large window. A fast zoom from zoom 9 to
+    // zoom 16 over the italy-aerial mosaic gives 81 blank frames at a cap of
+    // 4, and 0 at a cap of 16.
+    //
+    // The COG path keeps its lower cap. A COG tile is 256 to 512 pixels and
+    // reads from one open file, so its levels complete inside the cap.
+    maxRequests: 16,
     maxCacheByteSize: 64 * 1024 * 1024,
     // Below this zoom the layer draws nothing rather than asking for every
     // chunk of its coarsest level. See zarrMinZoom.
