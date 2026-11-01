@@ -389,6 +389,13 @@ export default defineComponent({
     .maplibregl-ctrl-top-right {
       top: 150px;
     }
+
+    // The notice sits at the top left of the map, which the site header
+    // covers in the hero layout. Push it down by the same offset, or the
+    // reason a layer does not draw never reaches the screen.
+    .map-textcontrol {
+      top: 160px;
+    }
   }
 
   .meta {
