@@ -363,6 +363,60 @@ export async function unsupportedCodecs(array) {
   return names.filter(name => !zarr.registry.has(name) && !BUILT_IN_CODECS.has(name));
 }
 
+// --- Multiscale spellings ----------------------------------------------------
+
+// Publishers write a pyramid two ways, and a reader meets both.
+//
+// The `zarr-conventions/multiscales` v1 convention makes `multiscales` an
+// object with a `layout` array. Each entry names its level in `asset`. The
+// GeoZarr v1 mini spec adopts this form, and the italy-aerial store declares
+// it by schema URL in `zarr_conventions`.
+//
+// Earlier GeoZarr drafts make `multiscales` an array, after OME-NGFF. Each
+// entry carries a `datasets` array, and each dataset names its level in
+// `path`. The FTW global prediction store writes this form.
+//
+// `@developmentseed/geozarr` reads the object form only, and its schema
+// rejects the array as the wrong type. So the array form is rewritten to the
+// object form before the parser sees it. The two carry the same facts per
+// level: a path, an affine transform, and a shape.
+
+/** Whether the attributes declare a pyramid, in either spelling. */
+export function declaresMultiscales(attrs) {
+  const multiscales = attrs?.multiscales;
+  if (!multiscales) {return false;}
+  if (Array.isArray(multiscales)) {
+    return multiscales.some(entry => Array.isArray(entry?.datasets) && entry.datasets.length > 0);
+  }
+  return Array.isArray(multiscales.layout) && multiscales.layout.length > 0;
+}
+
+/**
+ * The attributes with any array-form `multiscales` rewritten to the object
+ * form the convention defines.
+ *
+ * Returns the attributes unchanged when they need no rewrite, so a caller can
+ * compare by identity.
+ */
+export function withMultiscalesLayout(attrs) {
+  const multiscales = attrs?.multiscales;
+  if (!Array.isArray(multiscales)) {return attrs;}
+  const source = multiscales.find(entry => Array.isArray(entry?.datasets) && entry.datasets.length > 0);
+  if (!source) {return attrs;}
+  const layout = source.datasets
+    .filter(dataset => typeof dataset?.path === 'string')
+    .map(dataset => {
+      const level = { asset: dataset.path };
+      if (dataset['spatial:transform']) {level['spatial:transform'] = dataset['spatial:transform'];}
+      if (dataset['spatial:shape']) {level['spatial:shape'] = dataset['spatial:shape'];}
+      return level;
+    });
+  if (layout.length === 0) {return attrs;}
+  const rewritten = { layout };
+  if (source.resampling_method) {rewritten.resampling_method = source.resampling_method;}
+  return { ...attrs, multiscales: rewritten };
+}
+
 // --- Level paths -------------------------------------------------------------
 
 // Child array names of a group. A store with consolidated metadata lists them

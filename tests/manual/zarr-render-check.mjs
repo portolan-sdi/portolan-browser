@@ -50,6 +50,12 @@ const CASES = [
     expect: 'lists the variable and reports a zoom-in notice at the world view',
   },
   {
+    name: 'ftw-predictions',
+    title: 'FTW global prediction probabilities (14-level pyramid)',
+    url: 'https://data.source.coop/ftw/global-data/predictions/zarr/collection.json',
+    expect: 'draws at a world view; the coarsest level is one chunk',
+  },
+  {
     name: 'ftw-rendered',
     title: 'FTW global composites, with a render declared',
     path: '/zarr/ftw-global-rendered/collection.json',

@@ -86,6 +86,25 @@ levels and its coarsest is two chunks across, so it draws at a world view.
 Write the GeoZarr `multiscales` convention, with each level half the previous
 one, down to a level that fits in a chunk or two.
 
+The browser reads two spellings of `multiscales`, because publishers write
+both:
+
+| Spelling | Shape | Levels under | Named by |
+| -------- | ----- | ------------ | -------- |
+| [zarr-conventions/multiscales v1](https://github.com/zarr-conventions/multiscales) | object | `layout` | `asset` |
+| earlier GeoZarr drafts | array | `datasets` | `path` |
+
+The object form is the current convention, and the GeoZarr v1 mini spec adopts
+it. The italy-aerial store writes it and names the schema in
+`zarr_conventions`. The array form comes from the earlier drafts, after
+OME-NGFF. The FTW global prediction store writes it. The browser rewrites the
+array form to the object form before it reads the levels.
+
+Declare the convention in `zarr_conventions`. A store that declares a pyramid
+the browser cannot read reports that on the map. It does not fall back to the
+coordinate arrays, because that would describe a 14-level store as a store
+with no overviews.
+
 ### Keep chunks near a screen tile in size
 
 Chunk edges of 256 to 1024 pixels suit display. Each chunk is one request, one

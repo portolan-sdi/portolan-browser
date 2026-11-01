@@ -4,8 +4,10 @@ import {
   geoZarrAttrsFromCoordinates,
   isIcechunkAsset,
   isZarrAsset,
+  declaresMultiscales,
   resolveLevelPaths,
   spatialDimNames,
+  withMultiscalesLayout,
   zarrMinZoom,
   zarrZoomGuard,
 } from '../../src/utils/zarrSource.js'
@@ -234,5 +236,87 @@ describe('zarrZoomGuard', () => {
   it('survives metadata with no levels', () => {
     expect(zarrZoomGuard({ levels: [] }, [], null)).toEqual({ minZoom: 0, hasOverviews: false })
     expect(zarrZoomGuard(null, [], null)).toEqual({ minZoom: 0, hasOverviews: false })
+  })
+})
+
+describe('withMultiscalesLayout', () => {
+  // The array form, as the FTW global prediction store writes it. Each entry
+  // names the level group in `path`.
+  const ftw = {
+    'proj:code': 'EPSG:4326',
+    'spatial:dimensions': ['y', 'x'],
+    'spatial:registration': 'pixel',
+    'spatial:transform': [0.0000898311982, 0, -180, 0, -0.0000898311982, 83.748345],
+    'spatial:shape': [1566049, 4007517],
+    multiscales: [{
+      tile_matrix_set: 'WGS84Quad',
+      resampling_method: 'average',
+      datasets: [
+        {
+          path: '.',
+          factor: 1,
+          crs: 'EPSG:4326',
+          'spatial:transform': [0.0000898311982, 0, -180, 0, -0.0000898311982, 83.748345],
+          'spatial:shape': [1566049, 4007517],
+        },
+        {
+          path: '2x',
+          factor: 2,
+          crs: 'EPSG:4326',
+          'spatial:transform': [0.0001796623964, 0, -180, 0, -0.0001796623964, 83.748345],
+          'spatial:shape': [783025, 2003759],
+        },
+      ],
+    }],
+  }
+
+  it('turns the array form into the layout the convention defines', () => {
+    const attrs = withMultiscalesLayout(ftw)
+    expect(attrs.multiscales.layout).toHaveLength(2)
+    expect(attrs.multiscales.layout[0].asset).toBe('.')
+    expect(attrs.multiscales.layout[1].asset).toBe('2x')
+    expect(attrs.multiscales.layout[1]['spatial:shape']).toEqual([783025, 2003759])
+    expect(attrs.multiscales.resampling_method).toBe('average')
+  })
+
+  it('keeps every other attribute as it was', () => {
+    const attrs = withMultiscalesLayout(ftw)
+    expect(attrs['proj:code']).toBe('EPSG:4326')
+    expect(attrs['spatial:shape']).toEqual([1566049, 4007517])
+  })
+
+  it('parses into one level per dataset', async () => {
+    const { parseGeoZarrMetadata } = await import('@developmentseed/geozarr')
+    const meta = parseGeoZarrMetadata(withMultiscalesLayout(ftw))
+    expect(meta.levels).toHaveLength(2)
+    expect(meta.levels.map(l => l.path)).toEqual(['.', '2x'])
+  })
+
+  it('leaves the object form alone', () => {
+    const declared = { multiscales: { layout: [{ asset: '0' }, { asset: '1' }] } }
+    expect(withMultiscalesLayout(declared)).toBe(declared)
+  })
+
+  it('leaves attributes with no multiscales alone', () => {
+    const plain = { 'proj:code': 'EPSG:3857' }
+    expect(withMultiscalesLayout(plain)).toBe(plain)
+    expect(withMultiscalesLayout(null)).toBe(null)
+  })
+
+  it('ignores an array form that names no datasets', () => {
+    const empty = { multiscales: [{ tile_matrix_set: 'WGS84Quad' }] }
+    expect(withMultiscalesLayout(empty)).toBe(empty)
+  })
+})
+
+describe('declaresMultiscales', () => {
+  it('is true for either spelling', () => {
+    expect(declaresMultiscales({ multiscales: { layout: [{ asset: '0' }] } })).toBe(true)
+    expect(declaresMultiscales({ multiscales: [{ datasets: [{ path: '.' }] }] })).toBe(true)
+  })
+
+  it('is false when the store declares none', () => {
+    expect(declaresMultiscales({ 'proj:code': 'EPSG:4326' })).toBe(false)
+    expect(declaresMultiscales(null)).toBe(false)
   })
 })

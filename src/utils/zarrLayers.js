@@ -21,8 +21,8 @@
 // metadata and refuses the store when it is too wasteful to draw.
 
 import {
-  geoZarrAttrsFromCoordinates, isIcechunkAsset, openZarrRoot, resolveLevelPaths,
-  unsupportedCodecs, unusableCrs, zarrZoomGuard,
+  declaresMultiscales, geoZarrAttrsFromCoordinates, isIcechunkAsset, openZarrRoot,
+  resolveLevelPaths, unsupportedCodecs, unusableCrs, withMultiscalesLayout, zarrZoomGuard,
 } from './zarrSource.js';
 import { assetBands, makeZarrRenderTileLoader, withAssetEmptiness } from './renders.js';
 
@@ -78,9 +78,15 @@ export const MAX_CHUNK_AMPLIFICATION = 8;
 // Dimension names a variable may carry that are not measurements. A store
 // lists its coordinate arrays beside its data arrays, and they are named after
 // the dimensions they label.
+// Names that label a grid rather than measure something on it. A variable
+// with one of these names is an axis, so it is not offered as a layer.
+//
+// `variables` is not in this list. It looks like a container, but the FTW
+// global prediction store names its one data array exactly that, and
+// `cube:variables` marks it `"type": "data"`. The declared type decides.
 const COORDINATE_NAMES = new Set([
   'x', 'y', 'lat', 'latitude', 'lon', 'long', 'longitude',
-  'time', 'band', 'bands', 'spatial_ref', 'crs', 'variables',
+  'time', 'band', 'bands', 'spatial_ref', 'crs',
 ]);
 
 /**
@@ -235,6 +241,13 @@ function isBandDim(name) {
 // italy-aerial store is level-first. Returning the root for the second layout
 // is what makes it work: the levels are then resolved from the root, and the
 // variable name picks the array inside each one (see resolveLevelPaths).
+//
+// A level-first store puts its finest level at the root, so the variable also
+// resolves to an array directly under the root. That array is one level, and
+// the root is the pyramid. So a root that declares a pyramid wins over a
+// child array of the same name. The FTW global prediction store is this
+// shape: `/variables` is the full-resolution level, and `/2x/variables` and
+// its twelve coarser siblings are the rest.
 async function openVariableNode(zarr, root, name) {
   const node = root.resolve(`/${name}`);
   try {
@@ -242,6 +255,7 @@ async function openVariableNode(zarr, root, name) {
   } catch {
     /* not a group of its own */
   }
+  if (declaresMultiscales(withMultiscalesLayout(root.attrs))) {return root;}
   try {
     return await zarr.open(node, { kind: 'array' });
   } catch {
@@ -377,11 +391,26 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
   // A store that follows the spatial conventions describes itself. One that
   // does not is described from its coordinate arrays — see
   // geoZarrAttrsFromCoordinates — which is what a CF-style store needs.
+  //
+  // The attributes are normalised first, because a pyramid has two spellings
+  // in the wild. See withMultiscalesLayout.
+  const attrs = withMultiscalesLayout(group.attrs);
   let declared = null;
+  let declaredError = null;
   try {
-    declared = parseGeoZarrMetadata(group.attrs);
-  } catch {
-    /* no spatial conventions: fall through to the coordinate arrays */
+    declared = parseGeoZarrMetadata(attrs);
+  } catch (error) {
+    declaredError = error;
+  }
+
+  // A store that declares a pyramid the parser cannot read must say so. The
+  // coordinate arrays describe one level, so falling back to them silently
+  // would report a store with 14 levels as a store with no overviews.
+  if (!declared && declaresMultiscales(attrs)) {
+    throw new ZarrUnsuitableError(
+      ZARR_NOTICE_NO_GEO,
+      `The Zarr store declares a multiscale pyramid the browser cannot read: ${declaredError?.message ?? 'unknown reason'}`,
+    );
   }
 
   const probe = await firstArray(zarr, group, declared, variable?.name);
@@ -461,7 +490,7 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
   // from the metadata are corrected before the layer opens them.
   const levelPaths = await resolveLevelPaths(group, meta.levels, variable?.name);
   const correctedMetadata = levelPaths.some((path, i) => path !== meta.levels[i].path)
-    ? withLevelPaths(metadata ?? group.attrs, levelPaths)
+    ? withLevelPaths(metadata ?? attrs, levelPaths)
     : metadata;
 
   // Which node the layer gets, and the attributes it reads them with.
@@ -476,7 +505,7 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
   const singleLevelChild = meta.levels.length === 1 && !('shape' in group) && probe !== group;
   const node = singleLevelChild ? probe : group;
   const metadataOverride = singleLevelChild
-    ? (metadata ?? group.attrs)
+    ? (metadata ?? attrs)
     : correctedMetadata;
 
   const props = {
