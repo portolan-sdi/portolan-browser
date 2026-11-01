@@ -277,12 +277,27 @@ export function canInheritRender(asset) {
   return assetBands(asset).length === 1;
 }
 
-/** The zero-based band indexes of an RGB render, or null when it is not one. */
+/**
+ * The zero-based band indexes of an RGB render, or null when it is not one.
+ *
+ * `bidx` names the bands outright. It is optional in the render extension,
+ * though, and a render that omits it says the same thing through `rescale`:
+ * the extension gives one [min, max] pair per band composited, so three pairs
+ * describe a three-band composite of the first three bands. A render that
+ * also names a colormap is a ramp, because a colormap is a function of one
+ * band, and `colormap_name` wins everywhere else in this file.
+ */
 function rgbBands(render) {
   const bidx = render?.bidx;
-  if (!Array.isArray(bidx) || bidx.length !== 3) {return null;}
-  if (!bidx.every(b => Number.isInteger(b) && b >= 1)) {return null;}
-  return bidx.map(b => b - 1);
+  if (Array.isArray(bidx)) {
+    if (bidx.length !== 3) {return null;}
+    if (!bidx.every(b => Number.isInteger(b) && b >= 1)) {return null;}
+    return bidx.map(b => b - 1);
+  }
+  if (render?.colormap_name || render?.colormap) {return null;}
+  const rescale = render?.rescale;
+  if (!Array.isArray(rescale) || rescale.length !== 3) {return null;}
+  return [0, 1, 2];
 }
 
 /** One [min, max] pair from a render's `rescale`, or the default. */

@@ -491,6 +491,24 @@ describe('RGB renders', () => {
     expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
   })
 
+  // `bidx` is optional in the render extension. A render that gives one
+  // rescale pair per band states how many bands it composites, so three pairs
+  // name a true-colour composite as plainly as `bidx` does. The italy-aerial
+  // catalog declares exactly this, and it drew as a viridis ramp of the red
+  // band before the rescale length was read.
+  it('composites three bands for three rescale pairs without bidx', async () => {
+    const render = { rescale: [[0, 100], [0, 100], [0, 100]] }
+    const res = await call(render, rgbTile([100, 50, 0, 900]))
+    expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
+  })
+
+  it('keeps the colormap path when a colormap names three rescale pairs', async () => {
+    const render = { colormap_name: 'viridis', rescale: [[0, 100], [0, 100], [0, 100]] }
+    const res = await call(render, rgbTile([100, 50, 0, 900]))
+    // A viridis ramp of band 1, not a composite of bands 1-3.
+    expect(pixel(res, 0)).not.toEqual([255, 128, 0, 255])
+  })
+
   it('reads the bands bidx names, in the order it names them', async () => {
     // Band 4 (NIR) first makes a false-colour composite, which is a legitimate
     // thing for a publisher to ask for.
