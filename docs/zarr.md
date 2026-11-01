@@ -2,13 +2,13 @@
 
 Portolan Browser draws a Zarr store directly in the browser. It reads the
 chunks from object storage, reprojects them to Web Mercator on the GPU, and
-colours them with the same `renders` entries that colour a COG. No tile server
-takes part.
+colours them with the same `renders` entries that colour a COG. The browser
+reads the store directly, without a tile server.
 
 This page describes what the browser does with a Zarr asset, and what a store
 must look like for the browser to draw it well.
 
-## What the browser reads
+## Libraries
 
 | Part | Library |
 | ---- | ------- |
@@ -29,27 +29,27 @@ catalogs label Icechunk repositories both ways.
 
 ## One layer per variable
 
-A COG asset is one picture, so it is one map layer. A Zarr store holds a named
-variable per measurement, so it becomes one map layer per variable. The layer
-control lists them and the user switches between them. A store opens only when
+A COG asset is one picture, so it is one map layer. Every variable in a Zarr
+store measures something different, so each one becomes a map layer of its
+own. The layer control lists them and the user switches between them. A store opens only when
 one of its layers is switched on, so listing twenty-five variables of a weather
 archive costs no requests.
 
 The browser finds the variables in `cube:variables` from the datacube
 extension, and falls back to the asset's `bands`. Prefer `cube:variables`:
-it names each variable's dimensions, and it is unambiguous. `bands` is read
+it states the dimensions of each variable, and it is unambiguous. `bands` is read
 as one variable per band, which is right for a store whose bands are separate
 measurements and wrong for an RGB image whose bands are colour channels.
 
 The variable shown first is the one the asset's render was written for, matched
-by its `nodata` value. A render names the assets it applies to and cannot name
-a variable inside one, so this is an inference. Declare one render per variable
+by its `nodata` value. A render specifies the assets it applies to, and it
+cannot reference a variable inside one, so this is an inference. Declare one render per variable
 to make it exact.
 
 ## Requirements for a Zarr store in a Portolan catalog
 
-These are the properties that decide whether a store draws, and whether it
-draws quickly at every zoom. The first three are hard requirements. The browser
+The browser checks these properties before it draws a store. They also govern
+how quickly it draws at every zoom. The first three are hard requirements. The browser
 refuses a store that fails them and says why, rather than hanging or drawing
 something wrong.
 
@@ -72,7 +72,7 @@ A store chunked for time-series analysis is not wrong. It is chunked for a
 different reader. Publish a second, display-chunked copy, or publish COGs
 beside it.
 
-### Ship overviews
+### Publish overviews
 
 A Zarr array with no overviews has one level at full resolution. deck.gl asks a
 tiled layer for every tile that meets the viewport, so a world view of the FTW
@@ -101,9 +101,9 @@ OME-NGFF. The FTW global prediction store writes it. The browser rewrites the
 array form to the object form before it reads the levels.
 
 Declare the convention in `zarr_conventions`. A store that declares a pyramid
-the browser cannot read reports that on the map. It does not fall back to the
-coordinate arrays, because that would describe a 14-level store as a store
-with no overviews.
+the browser cannot read reports that on the map. The browser then stops,
+instead of a fall back to the coordinate arrays. That fall back would describe
+a 14-level store as a store with no overviews.
 
 ### Keep chunks near a screen tile in size
 
@@ -111,9 +111,9 @@ Chunk edges of 256 to 1024 pixels suit display. Each chunk is one request, one
 decompression, and one colormap pass on the main thread.
 
 A 4096 by 4096 chunk is 16.7 million samples and a 67 MB image for one tile.
-The browser reads every nth sample of a chunk that large so the work per tile
-stays bounded, which keeps the map responsive but throws away resolution it
-paid to download. Smaller chunks avoid the trade.
+The browser reads every nth sample of a chunk that large, which caps the work
+per tile. This keeps the map responsive, but it throws away resolution it paid
+to download. Smaller chunks avoid the trade.
 
 Very small chunks cost the other way: a level of 250-pixel chunks needs 60
 requests to cover a grid the 4096-pixel chunking covers in one.
@@ -145,11 +145,10 @@ already display values, so the browser composites them as true colour.
 
 A render states colour, not coverage. The asset's `bands` state coverage, and
 the browser reads them next to any render. This is what keeps the sea
-transparent in an orthophoto rather than black. Two things mark a pixel as
-empty:
+transparent in an orthophoto rather than black. These mark a pixel as empty:
 
 - A band named `alpha`. The browser writes its 8-bit value straight to the
-  alpha channel, so a partial value at a mosaic seam survives.
+  alpha channel. A partial value at a mosaic seam keeps its exact opacity.
 - The `nodata` value of the colour bands, for a store with no alpha band. The
   browser drops a pixel only where every colour band reads as no-data.
 
@@ -176,7 +175,7 @@ This decides whether a virtual Zarr store can be drawn. The GOES store's
 chunks are byte ranges inside NOAA's netCDF files, compressed with zlib, and
 they read fine. dynamical.org's virtual repositories reference GRIB messages
 decoded by a `gribberish` codec that exists only in Python and Rust, so the
-browser cannot read a single chunk of them.
+browser cannot read one chunk of them.
 
 ### Serve the store with CORS
 
