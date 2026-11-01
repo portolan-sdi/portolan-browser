@@ -87,7 +87,7 @@
     "maplibre-gl": "^5.1.0",
     "oidc-client-ts": "^3.0.1",
     "pmtiles": "^4.0.0",
-    "proj4": "^2.16.1",
+    "proj4": "^2.22.0",
     "remove-markdown": "^0.6.2",
     "shiki": "^3.22.0",
     "stac-js": "^0.5.8",

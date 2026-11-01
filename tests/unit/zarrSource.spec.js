@@ -7,6 +7,7 @@ import {
   declaresMultiscales,
   resolveLevelPaths,
   spatialDimNames,
+  unusableCrs,
   withMultiscalesLayout,
   zarrMinZoom,
   zarrZoomGuard,
@@ -318,5 +319,31 @@ describe('declaresMultiscales', () => {
   it('is false when the store declares none', () => {
     expect(declaresMultiscales({ 'proj:code': 'EPSG:4326' })).toBe(false)
     expect(declaresMultiscales(null)).toBe(false)
+  })
+})
+
+describe('unusableCrs', () => {
+  // The GOES-18 store's own definition, cut to the conversion. GDAL writes
+  // the method name as "Geostationary Satellite (Sweep X)".
+  const geostationary = 'PROJCRS["undefined",BASEGEOGCRS["undefined",DATUM["undefined",ELLIPSOID["undefined",6378137,298.257222096042,LENGTHUNIT["metre",1]]],PRIMEM["Greenwich",0,ANGLEUNIT["degree",0.0174532925199433]]],CONVERSION["unknown",METHOD["Geostationary Satellite (Sweep X)"],PARAMETER["Satellite height",35786023,LENGTHUNIT["metre",1]],PARAMETER["Latitude of natural origin",0,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["Longitude of natural origin",-137,ANGLEUNIT["degree",0.0174532925199433]],PARAMETER["False easting",0,LENGTHUNIT["metre",1]],PARAMETER["False northing",0,LENGTHUNIT["metre",1]]],CS[Cartesian,2],AXIS["(E)",east,ORDER[1],LENGTHUNIT["metre",1]],AXIS["(N)",north,ORDER[2],LENGTHUNIT["metre",1]]]'
+
+  it('takes an EPSG code on trust', async () => {
+    expect(await unusableCrs({ code: 'EPSG:4326' })).toBe(null)
+  })
+
+  it('accepts a geostationary grid', async () => {
+    expect(await unusableCrs({ wkt2: geostationary })).toBe(null)
+  })
+
+  it('names the projection it cannot build', async () => {
+    const unknown = geostationary.replace(
+      'Geostationary Satellite (Sweep X)',
+      'Hyperbolic Pseudo Mercator',
+    )
+    expect(await unusableCrs({ wkt2: unknown })).toBe('Hyperbolic Pseudo Mercator')
+  })
+
+  it('reports a store with no CRS at all', async () => {
+    expect(await unusableCrs({})).toBe('none')
   })
 })

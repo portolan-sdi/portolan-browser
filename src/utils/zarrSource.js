@@ -22,6 +22,8 @@
 
 import * as zarr from 'zarrita';
 
+import { registerGeostationary } from './projGeostationary.js';
+
 /** Media types that identify a Zarr store. */
 export const ZARR_MEDIA_TYPES = [
   'application/vnd.zarr',
@@ -269,10 +271,11 @@ export async function geoZarrAttrsFromCoordinates(root, array, { crs = null } = 
  * trust. A WKT2 or PROJJSON definition is parsed now, because that is where
  * the gap is: `wkt-parser` maps the common WKT2 projection methods onto
  * proj4's names, and a method it does not know yields a definition proj4
- * rejects. The case in hand is a geostationary satellite grid, whose WKT2
- * method reads `Geostationary Satellite (Sweep X)` while proj4 knows the
- * projection as `Geostationary Satellite View`, and whose satellite height
- * `wkt-parser` does not carry across either.
+ * rejects.
+ *
+ * A geostationary satellite grid was that case. `registerGeostationary` now
+ * closes it, so the guard runs after the registration and passes such a
+ * grid. See `utils/projGeostationary.js`.
  *
  * @param crs The `crs` of parsed GeoZarr metadata.
  * @returns The projection name when it cannot be used, or null when it can.
@@ -286,6 +289,7 @@ export async function unusableCrs(crs) {
       import('proj4'),
       import('wkt-parser'),
     ]);
+    registerGeostationary(proj4);
     const parsed = wktParser(definition);
     // Building the transform is the test: proj4 throws when the definition
     // names no projection it implements, or lacks a parameter the projection

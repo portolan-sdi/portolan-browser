@@ -160,11 +160,15 @@ also punches out a black roof.
 The browser reprojects with proj4. An EPSG code always works. A WKT2
 definition works for the common projections.
 
-A geostationary satellite grid does not work today. `wkt-parser` does not map
-the WKT2 method `Geostationary Satellite (Sweep X)` onto proj4's
-`Geostationary Satellite View`, and does not carry the satellite height
-across, so the GOES store in this catalog cannot be drawn. Declare `proj:code`
-where the grid has an EPSG code.
+A geostationary satellite grid needs help from the browser. `wkt-parser` does
+not map the WKT2 method `Geostationary Satellite (Sweep X)` onto proj4's
+`Geostationary Satellite View`. It also drops the satellite height, which the
+projection needs. `src/utils/projGeostationary.js` registers an alias of
+proj4's own `geos` projection that closes both gaps. The repair belongs in
+`wkt-parser`, which maps the other WKT2 parameter names already.
+
+Declare `proj:code` where the grid has an EPSG code. EPSG defines no code for
+the GOES-R ABI fixed grid, so that store declares WKT2 alone.
 
 ### Check the codecs have JavaScript implementations
 

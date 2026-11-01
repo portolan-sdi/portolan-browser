@@ -8,6 +8,7 @@ import {
 } from '../../utils/renders.js';
 import { orderedRenderLayers } from '../../utils/renderOrder.js';
 import { isHttpZarrHref, isZarrAsset } from '../../utils/zarrSource.js';
+import { registerGeostationary } from '../../utils/projGeostationary.js';
 import { makeZarrLayerProps, zarrDescriptors, ZARR_NOTICE_ZOOM_IN } from '../../utils/zarrLayers.js';
 import { openCog } from '../../utils/cogSource.js';
 // Import the @developmentseed/geotiff decode worker via Vite's `?worker` suffix
@@ -1200,11 +1201,17 @@ export default class StacMapLayer {
   // out as an overridable seam so unit tests can inject a test double and
   // exercise the reconciliation below without WebGL.
   async _loadDeckDeps() {
-    const [{ MapboxOverlay }, { COGLayer }, { DecoderPool, GeoTIFF }] = await Promise.all([
-      import('@deck.gl/mapbox'),
-      import('@developmentseed/deck.gl-geotiff'),
-      import('@developmentseed/geotiff'),
-    ]);
+    const [{ MapboxOverlay }, { COGLayer }, { DecoderPool, GeoTIFF }, { default: proj4 }] =
+      await Promise.all([
+        import('@deck.gl/mapbox'),
+        import('@developmentseed/deck.gl-geotiff'),
+        import('@developmentseed/geotiff'),
+        import('proj4'),
+      ]);
+    // A layer builds its own proj4 transform from the asset's CRS. The alias
+    // has to exist before that, or a geostationary grid fails inside the
+    // layer. vite.config.js dedupes proj4, so this is the layer's instance.
+    registerGeostationary(proj4);
     return { MapboxOverlay, COGLayer, DecoderPool, GeoTIFF };
   }
 
@@ -1213,10 +1220,14 @@ export default class StacMapLayer {
   // so an item with no Zarr asset never downloads them. Split out as an
   // overridable seam, like _loadDeckDeps.
   async _loadZarrDeps() {
-    const [{ ZarrLayer }, zarr] = await Promise.all([
+    const [{ ZarrLayer }, zarr, { default: proj4 }] = await Promise.all([
       import('@developmentseed/deck.gl-zarr'),
       import('zarrita'),
+      import('proj4'),
     ]);
+    // See the note in _loadDeckDeps. ZarrLayer reprojects every chunk, so it
+    // needs the geostationary alias before it reads the store's CRS.
+    registerGeostationary(proj4);
     return { ZarrLayer, zarr };
   }
 

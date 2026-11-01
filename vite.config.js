@@ -225,7 +225,12 @@ export default defineConfig(async ({ mode }) => {
       // ol-stac is symlinked (npm link) during development. Otherwise ol-stac
       // resolves its own copy of `ol`, and adding its LayerGroup to the app's
       // Map breaks OpenLayers' internal map wiring (the layer never gets a map).
-      dedupe: ["ol", "stac-js"],
+      //
+      // proj4 holds its registry of projections on the module instance. The
+      // Zarr and COG layers build their own transforms, so a second instance
+      // would not hold the geostationary alias that registerGeostationary
+      // adds. See src/utils/projGeostationary.js.
+      dedupe: ["ol", "stac-js", "proj4"],
       alias: {
         "@": fileURLToPath(new URL("./src", import.meta.url)),
         "@stac-browser-external-config": externalConfigPath,
