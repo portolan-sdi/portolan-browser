@@ -122,6 +122,9 @@
     "storeAs": "Сохранить код как:",
     "installDependencies": "Установить зависимости:"
   },
+  "favorites": {
+    "exportFormats": {}
+  },
   "featureExperimental": "Эта функция экспериментальная и может давать неожиданные результаты!",
   "features": {
     "empty": "Объекты отсутствуют.",
@@ -191,6 +194,7 @@
       "westLon": "Западная долгота"
     },
     "close": "Закрыть",
+    "displayLimit": {},
     "fit": "Вписать в границы охвата",
     "layers": {
       "base": "Базовые слои",
@@ -237,6 +241,8 @@
   "poweredBy": "Работает на {link}",
   "programming": {
     "csharp": "C#",
+    "curl": "cURL",
+    "go": "Go",
     "java": "Java",
     "javascript": "JavaScript",
     "python": "Python",

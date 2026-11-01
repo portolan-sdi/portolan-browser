@@ -1,7 +1,7 @@
 <template>
-  <b-card no-body class="item-card" :class="classes" v-visible.400="load">
+  <b-card no-body class="item-card" :class="classes" v-visible.400="load" :img-placement="isList ? 'end' : undefined">
     <div class="card-img-wrapper">
-      <b-card-img v-if="hasImage" class="thumbnail" v-bind="thumbnail" lazy />
+      <AuthImage v-if="hasImage" class="thumbnail" v-bind="thumbnail" lazy />
     </div>
     <b-card-body>
       <b-card-title>
@@ -15,6 +15,11 @@
       <Keywords v-if="showKeywordsInItemCards && keywords.length > 0" :keywords="keywords" variant="primary" />
       <b-card-text><small class="datetime" v-html="displayTime" /></b-card-text>
     </b-card-body>
+    <b-card-footer>
+      <slot name="footer" :data="data" :source="item">
+        <StacActions v-if="data" :data="data" variant="outline-primary" compact size="sm" />
+      </slot>
+    </b-card-footer>
   </b-card>
 </template>
 
@@ -25,17 +30,21 @@ import { mapState, mapGetters } from 'vuex';
 import FileFormatsMixin from './FileFormatsMixin';
 import CardMixin from './CardMixin';
 import StacLink from './StacLink.vue';
+import StacActions from './StacActions.vue';
 import { STAC } from 'stac-js';
 import { formatTemporalExtent, formatTimestamp } from '@radiantearth/stac-fields/formatters';
-import { BCard, BCardBody, BCardText, BCardTitle, BCardImg } from 'bootstrap-vue-next';
+import { BCard, BCardBody, BCardFooter, BCardText, BCardTitle } from 'bootstrap-vue-next';
+import AuthImage from './AuthImage.vue';
 
 export default defineComponent({
   name: 'Item',
   components: {
+    AuthImage,
     StacLink,
+    StacActions,
     BCard,
-    BCardImg,
     BCardBody,
+    BCardFooter,
     BCardText,
     BCardTitle,
     Keywords: defineAsyncComponent(() => import('./Keywords.vue'))

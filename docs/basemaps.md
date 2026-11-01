@@ -92,6 +92,9 @@ layerCreated: async (layer, source, map, options) => {
 - OpenLayers source: - (use `VectorTileStyle` for the `is` property, but it's not an OpenLayer source)
 - OpenLayers layer: `Group`
 
+> Portolan Browser uses a MapLibre map, which renders Mapbox/MapLibre style files natively.
+> The `ol-mapbox-style` package is not a dependency of Portolan Browser.
+
 For vector tiles, you need the package `ol-mapbox-style`, which is an optional dependency
 but will be installed by default unless explicitly omitted by you.
 
@@ -108,6 +111,14 @@ Example to use OpenFreeMap as basemap:
   projection: 'EPSG:3857'
 }
 ```
+
+By default, STAC Browser attaches the credentials configured through `authConfig` to all requests
+made by ol-mapbox-style (style, sources, sprites, glyphs, tiles) for URLs that are part of the
+catalog. If you define your own [`transformRequest`](https://openlayers.org/ol-mapbox-style/interfaces/_internal_.Options.html#transformrequest)
+in the basemap options, it takes over instead and must handle credentials itself.
+
+> The paragraph above describes upstream STAC Browser. Portolan Browser uses a MapLibre map and
+> does not attach the `authConfig` credentials to basemap or tile requests.
 
 #### WMS
 

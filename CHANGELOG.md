@@ -41,6 +41,8 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ### Changed
 
+- Synced with upstream STAC Browser 5.1.0 and its later fixes. SVG icons, thumbnails and previews
+  now show, through `stac-js` 0.5.8
 - A COG whose mask tiles sit beside its image tiles now paints in a fraction of the
   requests. The map opens the COG itself and reads tile data through a source that
   merges nearby reads into one HTTP range request. One screen of the Fields of the
@@ -137,6 +139,99 @@ than fork work.
 
 Everything below is the changelog of [STAC Browser](https://github.com/radiantearth/stac-browser), the
 project this fork is based on. These version numbers are upstream's, not Portolan Browser's.
+
+## Upstream Unreleased
+
+### Added
+
+- New config option `displayPreviewsForChildren` controls preview images on maps showing multiple Items
+- SVG icons, thumbnails and previews (`image/svg+xml`) are shown, SVG files are offered for download instead of being opened
+- Item Search: Support for the conformance class that requires the `collections` parameter (`item-search#require-collections`)
+
+### Fixed
+
+- Icons, logos and card thumbnails that fail to load are hidden
+- A page that is still loading no longer replaces the page that was navigated to in the meantime
+- "Search" on external content opens the search of the catalog instead of an error page
+- The catalog keeps its capabilities (e.g. search, sorting, filters) after visiting external content
+- Maps showing multiple Items now send the configured authentication (headers and query parameters) and apply the source/layer customizations and `maxDisplayPixels` for each Item
+- The `crossOriginMedia` option now applies to images on maps
+- The fallback description in the structured data (JSON-LD) shows the catalog title instead of "undefined"
+- Scientific publications without a DOI show "n/a" instead of escaped HTML, and DOI links use HTTPS
+- Typo in the label for processing instructions/code links
+- Catalogs, collections and items of a configured catalog in folders that share their name with a page of STAC Browser
+  (e.g. `validation/` or `external/`) open correctly, their paths start with `/browse/`
+
+## [5.1.0] - 2026-09-07
+
+### Added
+
+- A "Back" button on pages with external content returns to the page in the catalog from which the external content was reached
+- The source popover indicates when the shown data is not part of the configured catalog
+- Widget `ExternalWarning`: Shows an information on the page of a catalog, collection or item that is not part of the configured catalog
+
+### Changed
+
+- Show favorite button in the search cards by default
+- Maps don't trap page scrolling: scroll-wheel zoom and one-finger panning require a click/tap on the map first, indicated by a hint and a highlight
+
+### Fixed
+
+- The Docker entrypoint and Vite config now support both forms of the JSON Schema `type` keyword (a string or an array of strings), fixing a `jq` error when setting `SB_footerLinks` via environment variables
+- Tile URL templates keep their variables intact instead of percent-encoding them
+- `apiCatalogPriority: "childs"` doesn't hide collection items in the sidebar anymore
+- The conformance classes of the configured catalog are no longer applied to external content,
+  e.g. sorting and filtering are no longer offered for (and sent to) external APIs that may not support them
+- The map renders very small footprints instead of staying empty
+- Maps can be panned and zoomed with the keyboard after focusing them
+
+## [5.1.0-rc.1] - 2026-08-15
+
+### Added
+
+- Search filters are now preserved for collection and item searches
+- Opening a collection from the collection search results carries the search criteria over into its item filters
+- An indicator on the item filter toggle shows when the filters were changed but not applied yet
+- Added basic support for the STAC API extensions Transactions (for Items) and Collection Transactions, including validation
+  - Adds three new config options: `transactions`, `transactionsRequireLogin` and `transactionsRequirePreflight`
+  - Support for external management UIs via `create-form` and `edit-form` links ([RFC 6861](https://www.rfc-editor.org/rfc/rfc6861.html)) in the "Manage" menu
+- Completed authentication support for all supported methods, loading the data with the respective credentials:
+  - Thumbnails, icons and logos
+  - Map data
+  - External viewer actions are hidden when the data requires header-based credentials that external services can't receive
+- AVIF support for thumbnails
+- Improved metadata rendering for Zarr, Archive, Vector and more extensions
+- STAC Actions: A new pluggable interface (`StacActionPlugin`) to add action buttons for catalogs, collections and items, configurable via `stacActions.config.js`. Ships with an optional (disabled by default) `StacMap` action to open items in [stac-map](https://developmentseed.org/stac-map/).
+- Favorites: Catalogs, collections and items can be marked as favorites and revisited on a new Favorites page ([#630](https://github.com/radiantearth/stac-browser/issues/630))
+  - Favorites are stored locally in the browser and can be exported and imported as JSON, CSV, or STAC Catalog
+  - Adds a new config option `showFavorites` to disable the functionality
+- Items can be shown in a list view in addition to the card view, with the same view toggle buttons as for catalogs and collections
+- Search Example Code is now also available for curl and Go
+- The map can display more Zarr datasets
+- New config option `getStacLayerOptions` to customize the options of the individual map layers created for STAC assets and links, e.g. to style GeoTIFF/GeoZarr layers
+
+### Changed
+
+- The `cardViewMode` config option now applies to item lists as well
+- Protection against map visualizations that load so much data that they could slow down or freeze the browser:
+  - Datasets without sufficiently small overviews are not shown on the map automatically
+  - Selecting such an asset through "Show on map" asks for confirmation before displaying it
+  - Adds a new config option `maxDisplayPixels` to adjust the limit, which can also be set through the root catalog
+
+### Removed
+
+- `multihashes` dependency not required anymore for checksum migration
+- `pl`, `sentinel`, and `xarray` extensions
+
+### Fixed
+
+- The Search page restores the previous results when returning to it
+- Temporal extents were incomplete in non-English languages
+- Don't show inline sort and filter options in Collection Search
+- Preserve sort in Collection Search
+- Show error message when search is not actually available although conformance classes are listed
+- The `IN` operator for temporal filters shows a list of datepicker inputs instead of a free-text input
+- Timestamps in `IN` filters are serialized as CQL2 temporal literals instead of plain strings
 
 ## [5.0.0] - 2026-07-31
 
@@ -372,6 +467,8 @@ For releases prior to v4.0.0, please refer to the
 
 [Unreleased]: https://github.com/portolan-sdi/portolan-browser/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/portolan-sdi/portolan-browser/releases/tag/v0.1.0
+[5.1.0]: https://github.com/radiantearth/stac-browser/compare/v5.1.0-rc.1...v5.1.0
+[5.1.0-rc.1]: https://github.com/radiantearth/stac-browser/compare/v5.0.0...v5.1.0-rc.1
 [5.0.0]: https://github.com/radiantearth/stac-browser/compare/v5.0.0-rc.2...v5.0.0
 [5.0.0-rc.2]: https://github.com/radiantearth/stac-browser/compare/v5.0.0-rc.1...v5.0.0-rc.2
 [5.0.0-rc.1]: https://github.com/radiantearth/stac-browser/compare/v5.0.0-beta.1...v5.0.0-rc.1

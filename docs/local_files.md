@@ -8,7 +8,7 @@ Web browser security settings prevent web pages from accessing local files using
 
 ## Using STAC Browser from source
 
-If you are accessing STAC Browser by running the `npm start` command, you can run a local webserver using the [`http-server`](https://www.npmjs.com/package/http-server) package.
+If you are accessing STAC Browser by running the `npm start` command, you can run a local webserver using the [`http-server`](https://github.com/http-party/http-server) package.
 
 Install and run `http-server` via the following command from the directory that contains the STAC files:
 

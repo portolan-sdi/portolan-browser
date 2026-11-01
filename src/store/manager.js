@@ -54,12 +54,12 @@ export default function getStore(config) {
       },
       supportsCollectionTransactions(state, getters, rootState, rootGetters) {
         return rootGetters.supportsConformance(
-          TRANSACTION_COLLECTION_CONFORMANCE
+          TRANSACTION_COLLECTION_CONFORMANCE, rootState.data
         );
       },
       supportsItemTransactions(state, getters, rootState, rootGetters) {
         return rootGetters.supportsConformance(
-          TRANSACTION_ITEM_CONFORMANCE
+          TRANSACTION_ITEM_CONFORMANCE, rootState.data
         );
       },
       browserPaths(state, getters, rootState, rootGetters) {
@@ -181,7 +181,7 @@ export default function getStore(config) {
           !cx.rootState.transactionsRequirePreflight ||
           // Don't preflight against servers that don't advertise any transaction
           // support - it would just produce pointless OPTIONS requests.
-          (!cx.getters.supportsItemTransactions && !cx.getters.supportsCollectionTransactions) ||
+          (!cx.rootGetters.supportsConformance(TRANSACTION_ITEM_CONFORMANCE, url) && !cx.rootGetters.supportsConformance(TRANSACTION_COLLECTION_CONFORMANCE, url)) ||
           // Skip if the permissions have been retrieved or are being retrieved already
           typeof cx.state.permissions[url] !== 'undefined') {
           return;

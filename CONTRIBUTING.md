@@ -14,23 +14,23 @@ STAC Browser is following the [STAC code of conduct](https://github.com/radiante
 ## Development
 
 STAC Browser builds on top of [VueJS 3](https://vuejs.org/) and [Vite](https://vite.dev),
-so you need a recent version of [NodeJS and npm](https://nodejs.org/en/) installed.
+so you need a recent version of [NodeJS](https://nodejs.org/en/) and [pnpm](https://pnpm.io/) installed.
 
 You can run the following commands (see also "[Quick Start](README.md#quick-start)" in the README):
 
 - Getting Started
-  - `npm run install`: Install the dependencies, this is required once at the beginning.
-  - `npm start`: Start the development server
+  - `pnpm install`: Install the dependencies, this is required once at the beginning.
+  - `pnpm start`: Start the development server
 - Linting
-  - `npm run lint`: Lint the source code files
-  - `npm run docs:lint`: Lint the documentation files
+  - `pnpm run lint`: Lint the source code files
+  - `pnpm run docs:lint`: Lint the documentation files
 - Build step
-  - `npm run build`: Compile the source code into deployable files for the web. The resulting files can be found in the folder `dist` and you can then deploy STAC Browser on a web host. There are two other variants:
-  - `npm run build:report`: Same as above, but also generates a bundle size report (see `dist/report.html`), which should not be deployed.
-  - `npm run build:minimal`: Same as above, but tries to generate a minimal version without bundle size report and without source maps.
+  - `pnpm run build`: Compile the source code into deployable files for the web. The resulting files can be found in the folder `dist` and you can then deploy STAC Browser on a web host. There are two other variants:
+  - `pnpm run build:report`: Same as above, but also generates a bundle size report (see `dist/report.html`), which should not be deployed.
+  - `pnpm run build:minimal`: Same as above, but tries to generate a minimal version without bundle size report and without source maps.
 - Update files
-  - `npm run i18n:fields`: Generates an updated version of the locales from the stac-fields package.
-  - `npm run docs:hooks`: Update the list of hooks in the documentation
+  - `pnpm run i18n:fields`: Generates an updated version of the locales from the stac-fields package.
+  - `pnpm run docs:hooks`: Update the list of hooks in the documentation
 - Tests: For [test commands](#tests), please see below.
 
 The [release process is documented separately](docs/release.md).
@@ -45,13 +45,13 @@ Tests are located in the `tests/e2e` directory and follow the naming convention 
 
 ## Running Tests
 
-Before running the tests, you have to install a Playwright browser (`npx playwright install`) and Docker.
+Before running the tests, you have to install a Playwright browser (`pnpm exec playwright install`) and Docker.
 
-- `npm test`: Run all tests
-- `npm run test:e2e:ui`: Run UI tests in UI mode (interactive)
-- `npm run test:e2e:headed`: Run UI tests in headed mode (see browser)
-- `npm run test:e2e:debug`: Debug UI tests
-- `npm run test:e2e:report`: View UI test report
+- `pnpm test`: Run all tests
+- `pnpm run test:e2e:ui`: Run UI tests in UI mode (interactive)
+- `pnpm run test:e2e:headed`: Run UI tests in headed mode (see browser)
+- `pnpm run test:e2e:debug`: Debug UI tests
+- `pnpm run test:e2e:report`: View UI test report
 
 **Additional resources:**
 

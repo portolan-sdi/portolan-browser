@@ -2,6 +2,7 @@ import removeMd from 'remove-markdown';
 import { Link } from 'stac-js';
 import { hasText, isObject, size, URI } from 'stac-js/src/utils.js';
 import { pagination } from "stac-js/src/relationtypes.js";
+import { externalBrowserPathRE } from './router/index.js';
 
 export const commonFileNames = ['catalog', 'collection', 'item'];
 
@@ -30,6 +31,10 @@ export default class Utils {
     return fullStr.substr(0, frontChars) + 
            separator + 
            fullStr.substr(fullStr.length - backChars);
+  }
+
+  static isExternalBrowserPath(path) {
+    return hasText(path) && externalBrowserPathRE.test(path);
   }
 
   static getLinkWithRel(links, rel) {
@@ -99,6 +104,26 @@ export default class Utils {
     } catch {
       return url;
     }
+  }
+
+  /**
+   * Restores URL template placeholders such as `{z}/{x}/{y}` that got
+   * percent-encoded, e.g. through URL normalization.
+   * Only placeholders that occur in the original URL are restored.
+   *
+   * @param {string} url - The rewritten URL
+   * @param {string} originalUrl - The original URL containing the placeholders
+   * @returns {string} The rewritten URL with the placeholders restored
+   */
+  static restoreUrlTemplateParams(url, originalUrl) {
+    if (typeof url !== 'string' || typeof originalUrl !== 'string') {
+      return url;
+    }
+    const placeholders = originalUrl.match(/\{[\w-]+\}/g) || [];
+    for (const placeholder of new Set(placeholders)) {
+      url = url.replace(new RegExp(`%7B${placeholder.slice(1, -1)}%7D`, 'gi'), placeholder);
+    }
+    return url;
   }
 
   static summarizeMd(text, maxLength = null) {

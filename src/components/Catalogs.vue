@@ -3,10 +3,10 @@
     <header>
       <h2 class="title me-2">{{ displayTitle }}</h2>
       <b-badge v-if="!hideCount && catalogCount !== null" pill variant="secondary" class="me-4">{{ catalogCount }}</b-badge>
-      <ViewButtons v-if="!hideControls" class="me-2" v-model="view" />
-      <SortButtons v-if="!hideControls && isComplete && catalogs.length > 1" v-model="sort.direction" />
+      <ViewButtons v-if="!enforceView" class="me-2" v-model="view" />
+      <SortButtons v-if="allowSorting" v-model="sort.direction" />
     </header>
-    <section v-if="!hideControls && ((isComplete && catalogs.length > 1) || canSearchFreeText)" class="catalog-filter mb-2">
+    <section v-if="showControls && ((isComplete && catalogs.length > 1) || canSearchFreeText)" class="catalog-filter mb-2">
       <template v-if="canSearchFreeText">
         <multiselect
           multiple taggable @tag="addSearchTerm"
@@ -40,8 +40,8 @@
       <Loading v-if="loading && !loadingMore" fill top />
       <div :class="view === 'list' ? 'card-list' : 'card-grid'">
         <Catalog v-for="catalog in catalogView" :catalog="catalog" :viewMode="view" :key="catalog.href">
-          <template #footer="{data}">
-            <slot name="catalogFooter" :data="data" />
+          <template v-if="$slots.footer" #footer="slot">
+            <slot name="footer" v-bind="slot" />
           </template>
         </Catalog>
       </div>
@@ -63,6 +63,7 @@ import Loading from './Loading.vue';
 import { STAC } from 'stac-js';
 import ViewButtons from './ViewButtons.vue';
 import Utils from '../utils';
+import ViewMixin from './ViewMixin';
 import { sortStac } from '../models/stac';
 import { TYPES } from './ApiCapabilitiesMixin.js';
 import { hasText, URI } from 'stac-js/src/utils.js';
@@ -78,6 +79,7 @@ export default defineComponent({
     SortButtons: defineAsyncComponent(() => import('./SortButtons.vue')),
     ViewButtons
   },
+  mixins: [ViewMixin],
   props: {
     catalogs: {
       type: Array,
@@ -87,24 +89,11 @@ export default defineComponent({
       type: Boolean,
       required: false
     },
-    enforceCards: {
-      type: Boolean,
-      default: false
-    },
-    enforceView: {
-      type: String,
-      default: null,
-      validator: value => value === null || ['list', 'cards'].includes(value)
-    },
-    hideControls: {
+    showControls: {
       type: Boolean,
       default: false
     },
     hideCount: {
-      type: Boolean,
-      default: false
-    },
-    preserveOrder: {
       type: Boolean,
       default: false
     },
@@ -152,7 +141,7 @@ export default defineComponent({
     };
   },
   computed: {
-    ...mapState(['defaultCollectionSort', 'uiLanguage']),
+    ...mapState(['data', 'defaultCollectionSort', 'uiLanguage']),
     ...mapGetters(['searchBrowserLink', 'supportsConformance']),
     ...mapGetters(['getStac']),
     advancedSearchLink() {
@@ -166,7 +155,7 @@ export default defineComponent({
       return URI(this.searchBrowserLink).query(query).toString();
     },
     canSearchFreeText() {
-      return this.apiSearch && this.supportsConformance(TYPES.Collections.FreeText);
+      return this.apiSearch && this.supportsConformance(TYPES.Collections.FreeText, this.data);
     },
     catalogCount() {
       if (this.catalogs.length !== this.catalogView.length) {
@@ -184,18 +173,17 @@ export default defineComponent({
       if (this.title !== null) {
         return this.title;
       }
-      else if (this.collectionsOnly) {
-        return this.$t('stacCollection', this.catalogs.length );
-      }
-      else {
-        return this.$t('stacCatalog', this.catalogs.length );
-      }
+      let key = (this.collectionsOnly || this.allCatalogs.every(catalog => catalog.isCollection)) ? 'stacCollection' : 'stacCatalog';
+      return this.$t(key, this.allCatalogs.length );
     },
     isComplete() {
       if (this.hasMore || this.showPagination) {
         return false;
       }
       return this.allCatalogs.every(obj => obj.isSTAC);
+    },
+    allowSorting() {
+      return this.showControls && this.isComplete && this.catalogs.length > 1;
     },
     filterPlaceholder() {
       return this.isComplete ? this.$t('catalogs.filterByTitleAndMore') : this.$t('catalogs.filterByTitle');
@@ -243,8 +231,7 @@ export default defineComponent({
           return true;
         });
       }
-      // Sort
-      if (!this.preserveOrder && !this.hasMore && !this.apiFilters.sortby && this.sort.direction !== 0) {
+      if (this.allowSorting && !this.apiFilters.sortby && this.sort.direction !== 0) {
         catalogs = sortStac(catalogs, this.sort, this.uiLanguage);
       }
       return catalogs;
@@ -264,23 +251,6 @@ export default defineComponent({
         }
       }
       return keywords.sort();
-    },
-    view: {
-      get() {
-        if (this.enforceView) {
-          return this.enforceView;
-        }
-        if (this.enforceCards) {
-          return 'cards';
-        }
-        return this.$store.state.cardViewMode;
-      },
-      async set(cardViewMode) {
-        if (this.enforceView || this.enforceCards) {
-          return;
-        }
-        await this.$store.dispatch('config', { cardViewMode });
-      }
     }
   },
   watch: {
@@ -336,8 +306,10 @@ export default defineComponent({
 
   > .additional-filter-link {
     flex-grow: 0;
-    align-self: center;
     white-space: nowrap;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 }
 </style>

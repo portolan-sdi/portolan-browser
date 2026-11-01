@@ -1,6 +1,6 @@
 <template>
   <div class="map-container" :class="{ expanded: isExpanded }">
-    <div ref="map" class="map" :id="mapId">
+    <div ref="map" class="map" :id="mapId" tabindex="0" role="region" :aria-label="$t('map')">
       <LayerControl :map="map" :basemaps="basemaps" :activeBasemapIndex="activeBasemapIndex" :stacLayer="stacLayer" @switch-basemap="switchBasemap" />
       <TerrainControl :is3D="is3D" @toggle="toggle3D" />
       <StylePicker
@@ -20,8 +20,8 @@
       :boundary-padding="10"
     >
       <section class="popover-children">
-        <Items v-if="selection.type === 'items'" :stac="stac" :items="selection.children" />
-        <Catalogs v-else-if="selection.type === 'collections'" collectionsOnly enforceCards hideControls :stac="stac" :catalogs="selection.children" />
+        <Items v-if="selection.type === 'items'" :stac="stac" :items="selection.children" showControls enforceView="cards" />
+        <Catalogs v-else-if="selection.type === 'collections'" collectionsOnly enforceView="cards" :stac="stac" :catalogs="selection.children" />
         <Features v-else :features="selection.children" />
       </section>
       <div class="text-center">

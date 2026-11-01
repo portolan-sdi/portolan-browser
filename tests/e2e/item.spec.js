@@ -5,10 +5,9 @@
  * Verifies metadata rendering, geometry display, asset listing, and breadcrumb navigation.
  */
 import { test, expect } from './fixtures.js';
-import { waitForBrowserReady } from './helpers.js';
+import { mockImage, waitForBrowserReady } from './helpers.js';
 import StaticCatalog from '../fixtures/instances/static.js';
 import API from '../fixtures/instances/api.js';
-import { http, HttpResponse } from 'msw';
 
 test.describe('Item view - Metadata', () => {
   function createCatalog() {
@@ -219,8 +218,6 @@ test.describe('Item view - Assets', () => {
 });
 
 test.describe('Item view - Alternate thumbnails', () => {
-  // A minimal 1x1 PNG, served for the HTTPS alternate of an S3-only thumbnail.
-  const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
   const THUMB_URL = 'https://stac.example/thumbnail-https.png';
 
   function createCatalog() {
@@ -256,12 +253,7 @@ test.describe('Item view - Alternate thumbnails', () => {
     await catalog.createServer(worker);
     // Serve an actual image for the HTTPS alternate (added after createServer,
     // which resets handlers).
-    await worker.use(
-      http.get(THUMB_URL, () => {
-        const bytes = Uint8Array.from(atob(PNG_BASE64), c => c.charCodeAt(0));
-        return new HttpResponse(bytes, { headers: { 'Content-Type': 'image/png' } });
-      })
-    );
+    await mockImage(worker, THUMB_URL);
 
     await page.goto(item.getBrowserPath());
     await waitForBrowserReady(page);
@@ -280,6 +272,38 @@ test.describe('Item view - Alternate thumbnails', () => {
     await expect
       .poll(() => img.evaluate(el => el.complete && el.naturalWidth > 0))
       .toBe(true);
+  });
+});
+
+test.describe('Item view - Asset actions', () => {
+  test('SVG assets are offered for download instead of being opened', async ({ page, worker }) => {
+    const catalog = new StaticCatalog({ url: 'https://stac.example/catalog.json' });
+    const item = catalog.addItem({ url: 'https://stac.example/item.json' });
+    item.data.assets = {
+      legend: { href: 'https://stac.example/legend.svg', type: 'image/svg+xml', roles: ['metadata'], title: 'Legend' },
+      chart: { href: 'https://stac.example/chart.png', type: 'image/png', roles: ['metadata'], title: 'Chart' }
+    };
+    await catalog.createServer(worker);
+
+    await page.goto(item.getBrowserPath());
+    await waitForBrowserReady(page);
+
+    const expandAsset = async (title) => {
+      const asset = page.locator('.asset', { hasText: title });
+      await asset.getByRole('button', { name: title }).click();
+      return asset;
+    };
+
+    // SVG files opened in the browser can run scripts
+    const legend = await expandAsset('Legend');
+    const download = legend.getByRole('button', { name: /download/i });
+    await expect(download).toBeVisible();
+    await expect(download).toHaveAttribute('download');
+    await expect(legend.getByRole('button', { name: /^open$/i })).toHaveCount(0);
+
+    // Other images that browsers can show are still opened
+    const chart = await expandAsset('Chart');
+    await expect(chart.getByRole('button', { name: /^open$/i })).toBeVisible();
   });
 });
 

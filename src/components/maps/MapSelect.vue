@@ -1,6 +1,6 @@
 <template>
   <div class="map-container">
-    <div ref="map" class="map">
+    <div ref="map" class="map" tabindex="0" role="region" :aria-label="$t('map')">
       <TextControl :text="help" />
       <UserLocationControl :map="map" :maxZoom="maxZoom" />
       <LayerControl :map="map" :basemaps="basemaps" :activeBasemapIndex="activeBasemapIndex" @switch-basemap="switchBasemap" />
@@ -204,7 +204,10 @@ export default {
     addMask(stac) {
       if (!stac || typeof stac.toGeoJSON !== 'function') {return;}
 
-      const geojson = stac.toGeoJSON();
+      // greatCircle: false keeps an antimeridian-crossing extent as one
+      // polygon; the default great-circle output splits it, and @turf/mask
+      // would then dim the dataset's own area (upstream fix from a72276a).
+      const geojson = stac.toGeoJSON({ greatCircle: false });
       if (!geojson) {return;}
 
       const world = toGeoJSON([-180, -90, 180, 90]);

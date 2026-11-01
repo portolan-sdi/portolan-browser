@@ -1,6 +1,6 @@
 <template>
   <div class="header-title">
-    <img v-if="logo" :src="logo.getAbsoluteUrl()" :alt="logo.title" :title="logo.title" class="logo">
+    <AuthImage v-if="logo" :src="logo.getAbsoluteUrl()" :alt="logo.title" :title="logo.title" class="logo" />
     <span role="banner" :title="shortTitle">{{ shortTitle }}</span>
   </div>
 </template>
@@ -9,9 +9,13 @@
 import { mapState, mapGetters } from "vuex";
 import Utils from "../utils";
 import { getDisplayTitle } from "../models/stac";
+import AuthImage from "./AuthImage.vue";
 
 export default {
   name: "HeaderTitle",
+  components: {
+    AuthImage
+  },
   computed: {
     ...mapState(['catalogImage', 'catalogTitle', 'catalogTitleAfterImage', 'description', 'loading', 'url', 'uiLanguage']),
     ...mapGetters(['description', 'root', 'rootLink', 'title']),
@@ -21,8 +25,12 @@ export default {
         // A root-relative catalogImage (Portolan ships "/portolan-logo.svg")
         // resolves to nothing until the deployment's base path is prepended,
         // which matters on GitHub Pages where the site is not served from "/".
+        // The URL must be origin-absolute: AuthImage resolves a path-only src
+        // against the loaded catalog's URL, which 404s the logo on every
+        // cross-origin catalog.
         if (!link.getAbsoluteUrl()) {
-          const url = import.meta.env.BASE_URL + this.catalogImage.replace(/^\//, '');
+          const path = import.meta.env.BASE_URL + this.catalogImage.replace(/^\//, '');
+          const url = new URL(path, window.location.origin).href;
           return { getAbsoluteUrl: () => url, title: this.catalogTitle || this.rootLink?.title };
         }
         return link;

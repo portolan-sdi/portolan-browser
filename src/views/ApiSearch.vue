@@ -29,6 +29,7 @@
       <b-col class="right">
         <Loading v-if="loading" fill top />
         <ErrorAlert v-else-if="error" :description="error" :id="errorId" />
+        <b-alert v-else-if="data === null && isMissingCollections" variant="secondary" show>{{ $t('search.collectionsRequired') }}</b-alert>
         <b-alert v-else-if="data === null" variant="secondary" show>{{ $t('search.modifyCriteria') }}</b-alert>
         <b-alert v-else-if="results.length === 0 && noFurtherItems" variant="secondary" show>{{ $t('search.noFurtherItemsFound') }}</b-alert>
         <b-alert v-else-if="results.length === 0" variant="warning" show>{{ $t('search.noItemsFound') }}</b-alert>
@@ -43,7 +44,7 @@
             :count="totalCount" :apiFilters="collectionFilters"
             @click="armCarryOver"
           >
-            <template #catalogFooter="slot">
+            <template #footer="slot">
               <b-button-group v-if="itemSearch || canFilterItems(slot.data)" vertical size="sm">
                 <b-button v-if="itemSearch" variant="outline-primary" :pressed="selectedCollections[slot.data.id]" @click="selectForItemSearch(slot.data)">
                   <b-icon-check-square v-if="selectedCollections[slot.data.id]" />
@@ -51,12 +52,13 @@
                   <span class="ms-2">{{ $t('search.selectForItemSearch') }}</span>
                 </b-button>
                 <StacLink :button="{variant: 'outline-primary', disabled: !canFilterItems(slot.data)}" :data="slot.data" :title="$t('search.filterCollection')" :state="{itemFilterOpen: 1}" />
+                <StacActions :data="slot.data" variant="outline-primary" compact size="sm" />
               </b-button-group>
             </template>
           </Catalogs>
           <Items
             v-else
-            :stac="parent" :items="results" :api="true" :allowFilter="false"
+            :stac="parent" :items="results" :api="true"
             :pagination="pagination" :loading="loading" @paginate="loadResults"
             :count="totalCount" :apiFilters="itemFilters"
           />
@@ -77,6 +79,7 @@
 import Utils from '../utils';
 import { isObject, size } from 'stac-js/src/utils.js';
 import SearchFilter from '../components/SearchFilter.vue';
+import { TYPES } from '../components/ApiCapabilitiesMixin';
 import Loading from '../components/Loading.vue';
 import ErrorAlert from '../components/ErrorAlert.vue';
 import { getDisplayTitle, createSTAC } from '../models/stac';
@@ -97,6 +100,7 @@ export default defineComponent({
     SearchFilter,
     Items: defineAsyncComponent(() => import('../components/Items.vue')),
     MapView: defineAsyncComponent(() => import('../components/MapView.vue')),
+    StacActions: defineAsyncComponent(() => import('../components/StacActions.vue')),
     StacLink: defineAsyncComponent(() => import('../components/StacLink.vue'))
   },
   props: {
@@ -125,7 +129,7 @@ export default defineComponent({
   },
   computed: {
     ...mapState(['catalogUrl', 'catalogTitle', 'searchResultsPerPage', 'stateQueryParameters']),
-    ...mapGetters(['canSearchItems', 'canSearchCollections', 'getStac', 'root', 'collectionLink', 'parentLink', 'fromBrowserPath']),
+    ...mapGetters(['canSearchItems', 'canSearchCollections', 'getStac', 'root', 'collectionLink', 'parentLink', 'fromBrowserPath', 'supportsConformance']),
     selectedCollectionCount() {
       return size(this.selectedCollections);
     },
@@ -136,16 +140,16 @@ export default defineComponent({
       return null;
     },
     supportsSearch() {
-      return this.canSearchCollections || this.canSearchItems;
+      return this.collectionSearch || this.itemSearch;
     },
     searchLink() {
       return this.isCollectionSearch ? this.collectionSearch : this.itemSearch;
     },
     collectionSearch() {
-      return this.canSearchCollections && this.parent && this.parent.getApiCollectionsLink();
+      return this.parent && this.canSearchCollections(this.parent) && this.parent.getApiCollectionsLink();
     },
     itemSearch() {
-      return this.canSearchItems && this.parent && this.parent.getSearchLink();
+      return this.parent && this.canSearchItems(this.parent) && this.parent.getSearchLink();
     },
     results() {
       return this.data?.getAll() || [];
@@ -158,6 +162,11 @@ export default defineComponent({
     },
     isCollectionSearch() {
       return this.collectionSearch && this.activeSearch === 'search-collections-tab';
+    },
+    isMissingCollections() {
+      return !this.isCollectionSearch
+        && this.supportsConformance(TYPES.Global.RequireCollections, this.parent)
+        && size(this.$store.state.search.itemFilters.collections) === 0;
     },
     pageDescription() {
       let title = getDisplayTitle([this.collectionLink, this.parentLink, this.root], this.catalogTitle);
@@ -343,10 +352,11 @@ export default defineComponent({
       else {
         this.itemFilters = filters;
       }
-      if (reset) {
+      if (reset || this.isMissingCollections) {
         this.data = null;
       }
       else if (this.searchLink) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
         await this.loadResults(this.searchLink);
       }
     },

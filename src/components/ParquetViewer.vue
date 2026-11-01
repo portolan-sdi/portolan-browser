@@ -4,7 +4,7 @@
       <span class="parquet-header-left">
         <BIconChevronDown v-if="open" />
         <BIconChevronRight v-else />
-        <span class="parquet-title">{{ $t('parquet.dataPreview', 'Data Preview') }}</span>
+        <span class="parquet-title">{{ $t('parquet.dataPreview') }}</span>
         <b-badge variant="primary" class="parquet-file-badge">{{ selectedAssetTitle }}</b-badge>
       </span>
       <span class="parquet-header-right">
@@ -30,7 +30,7 @@
       </div>
       <div v-else-if="error" class="parquet-error alert alert-warning m-2">
         <p class="mb-1">{{ error }}</p>
-        <button class="btn btn-sm btn-outline-primary" @click="loadData">{{ $t('parquet.retry', 'Retry') }}</button>
+        <button class="btn btn-sm btn-outline-primary" @click="loadData">{{ $t('parquet.retry') }}</button>
       </div>
       <ParquetTable
         v-else-if="tableData"
@@ -104,9 +104,14 @@ export default {
     rowInfo() {
       if (!this.tableData) {return null;}
       if (this.tableData.loadedRows < this.tableData.totalRows) {
-        return `${this.tableData.loadedRows.toLocaleString()} / ${this.tableData.totalRows.toLocaleString()} rows`;
+        return this.$t('parquet.loadedRowCount', {
+          loaded: this.tableData.loadedRows.toLocaleString(this.$i18n.locale),
+          total: this.tableData.totalRows.toLocaleString(this.$i18n.locale)
+        }, this.tableData.totalRows);
       }
-      return `${this.tableData.totalRows.toLocaleString()} rows`;
+      return this.$t('parquet.rowCount', {
+        count: this.tableData.totalRows.toLocaleString(this.$i18n.locale)
+      }, this.tableData.totalRows);
     }
   },
   watch: {
@@ -129,7 +134,7 @@ export default {
 
       try {
         const url = this.selectedAsset.getAbsoluteUrl();
-        this.loadingMessage = 'Loading metadata...';
+        this.loadingMessage = this.$t('parquet.loadingMetadata');
         const meta = await loadParquetMetadata(url);
         this.parquetFile = meta.file;
         this.parquetMetadata = meta.metadata;
@@ -140,7 +145,10 @@ export default {
           crsDefinition: meta.crsDefinition,
         };
 
-        this.loadingMessage = `Loading rows (${Math.min(meta.totalRows, MAX_ROWS).toLocaleString()})...`;
+        const count = Math.min(meta.totalRows, MAX_ROWS);
+        this.loadingMessage = this.$t('parquet.loadingRows', {
+          count: count.toLocaleString(this.$i18n.locale)
+        }, count);
         const data = await loadParquetRows(
           meta.file, meta.metadata, meta.columnNames, meta.geometryColumn
         );
@@ -148,9 +156,9 @@ export default {
       } catch (err) {
         console.error('ParquetViewer: failed to load', err);
         if (err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
-          this.error = 'Unable to preview: cross-origin access not allowed or network error.';
+          this.error = this.$t('parquet.networkError');
         } else {
-          this.error = `Failed to load parquet data: ${err.message}`;
+          this.error = this.$t('parquet.loadFailed', { message: err.message });
         }
       } finally {
         this.loading = false;

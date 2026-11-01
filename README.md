@@ -44,7 +44,7 @@ stop a large file from locking up the tab, and the browser says so when it decli
 Reading the attributes no longer means downloading the file and opening something else.
 
 **Cloud-Optimized GeoTIFF rendered client-side.** COG assets decode through
-[deck.gl-geotiff](https://github.com/developmentseed/deck.gl-geotiff) in a Web Worker, which keeps decompression
+[deck.gl-geotiff](https://github.com/developmentseed/deck.gl-raster) in a Web Worker, which keeps decompression
 off the main thread. A categorical raster takes its colours from the `color_hint` values of its own
 [classification classes](https://github.com/stac-extensions/classification), and the layer control lists those
 classes as a legend. Where a collection uses the STAC [render extension](https://github.com/stac-extensions/render),

@@ -8,7 +8,7 @@
 - [Customizing links](#customizing-links)
   - [Example](#example-2)
 
-The metadata that STAC Browser renders is rendered primarily through the library [`stac-fields`](https://www.npmjs.com/package/@radiantearth/stac-fields).
+The metadata that STAC Browser renders is rendered primarily through the library [`stac-fields`](https://github.com/stac-utils/stac-fields).
 It contains a lot of rules for rendering [many existing STAC extensions](https://github.com/stac-utils/stac-fields/blob/main/fields.json) in a human-friendly way.
 
 ## Adding custom fields

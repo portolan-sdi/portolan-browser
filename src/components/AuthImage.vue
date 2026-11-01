@@ -1,0 +1,243 @@
+<template>
+  <img
+    v-if="showImage" :src="displaySrc" :alt="alt" :title="title"
+    :crossorigin="crossorigin" :class="placement ? `card-img-${placement}` : null"
+    :loading="lazy ? 'lazy' : null" :width="width" :height="height"
+    @load="$emit('load', $event)" @error="onError"
+  >
+</template>
+
+<script>
+import { mapState, mapGetters } from 'vuex';
+import { markRaw } from 'vue';
+import { size } from 'stac-js/src/utils.js';
+import { acquire, needsAuthenticatedFetch, release } from '../models/authMedia';
+
+/**
+ * An image that is loaded with the configured credentials.
+ *
+ * Query-parameter credentials are added to the image URL. Header-based
+ * credentials can't be sent by `<img>` elements, so the image is loaded
+ * through an authenticated request and shown via an object URL instead.
+ * Both only apply to URLs that are part of the catalog, external images
+ * never receive credentials.
+ *
+ * Failed authenticated requests fall back to loading the image directly
+ * (without the headers) and never open the login dialog. Images that fail
+ * to load are reported through the `error` event and hidden, unless
+ * `showBroken` is set. They are shown again once their URL changes, e.g.
+ * after login.
+ */
+export default {
+  name: 'AuthImage',
+  props: {
+    // The (absolute) URL of the image, without any credentials
+    src: {
+      type: String,
+      required: true
+    },
+    alt: {
+      type: String,
+      default: null
+    },
+    title: {
+      type: String,
+      default: null
+    },
+    crossorigin: {
+      type: String,
+      default: null
+    },
+    // Same as the `placement` prop of b-card-img
+    placement: {
+      type: String,
+      default: null
+    },
+    lazy: {
+      type: Boolean,
+      default: false
+    },
+    width: {
+      type: [Number, String],
+      default: null
+    },
+    height: {
+      type: [Number, String],
+      default: null
+    },
+    // Keeps images that fail to load visible
+    showBroken: {
+      type: Boolean,
+      default: false
+    }
+  },
+  emits: ['load', 'error', 'resolved'],
+  data() {
+    return {
+      blobUrl: null,
+      // The URL currently held in the authMedia cache
+      acquiredUrl: null,
+      failed: false,
+      // The URL that the image element failed to load. Also covers header
+      // credentials: new ones lead to a new object URL (or data URL for new content).
+      brokenSrc: null,
+      disposed: false,
+      // Whether a lazy image is close enough to the viewport to be loaded
+      nearViewport: false,
+      observer: null
+    };
+  },
+  computed: {
+    ...mapState(['requestHeaders', 'privateQueryParameters', 'globalRequestQueryParameters']),
+    ...mapGetters(['getRequestUrl']),
+    // The image URL incl. any query-parameter credentials
+    requestUrl() {
+      // With no query credentials configured there is nothing to add, and
+      // `src` is documented as absolute, so the URI parsing getRequestUrl
+      // does per image is skipped. A browse page renders hundreds of card
+      // thumbnails through this computed.
+      if (size(this.privateQueryParameters) === 0 && size(this.globalRequestQueryParameters) === 0) {
+        return this.src;
+      }
+      return this.getRequestUrl(this.src);
+    },
+    useAuthenticatedFetch() {
+      return !this.failed && needsAuthenticatedFetch(this.$store, this.src);
+    },
+    displaySrc() {
+      if (this.useAuthenticatedFetch) {
+        return this.blobUrl; // null (= not rendered) while loading
+      }
+      return this.requestUrl;
+    },
+    showImage() {
+      return Boolean(this.displaySrc) && (this.showBroken || this.displaySrc !== this.brokenSrc);
+    }
+  },
+  watch: {
+    // Lets parents use the URL the image is shown from, e.g. for download links
+    displaySrc: {
+      immediate: true,
+      handler(url) {
+        this.$emit('resolved', url);
+      }
+    },
+    src() {
+      this.failed = false;
+      this.brokenSrc = null;
+      // Whether a fetch needs authentication depends on the URL, so a new
+      // src can need the lazy observer when the old one did not.
+      this.armObserver();
+      this.resolve();
+    },
+    requestHeaders: {
+      deep: true,
+      handler() {
+        // Re-resolve after login/logout. A login can introduce the need for
+        // authenticated fetches, so the lazy observer may have to be armed now.
+        this.failed = false;
+        this.armObserver();
+        this.resolve();
+      }
+    }
+  },
+  created() {
+    this.resolve();
+  },
+  mounted() {
+    this.armObserver();
+  },
+  beforeUnmount() {
+    this.disconnectObserver();
+    this.disposed = true;
+    this.releaseAcquired();
+  },
+  methods: {
+    onError(event) {
+      this.brokenSrc = this.displaySrc;
+      this.$emit('error', event);
+    },
+    disconnectObserver() {
+      if (this.observer) {
+        this.observer.disconnect();
+        this.observer = null;
+      }
+    },
+    // Defer authenticated requests until the image comes close to the
+    // viewport, native lazy loading can't cover them. The observer exists
+    // only for that: a plain <img> is covered by `loading="lazy"`, so without
+    // header credentials nothing is armed — otherwise every card thumbnail
+    // would pay for an ancestor walk (a layout flush during mount) and an
+    // observer that defers nothing.
+    armObserver() {
+      if (!this.lazy || this.nearViewport || this.observer || !this.$el) {
+        return;
+      }
+      if (!needsAuthenticatedFetch(this.$store, this.src)) {
+        return;
+      }
+      // Observe the closest ancestor that retains layout: until the image is
+      // loaded the root is a placeholder node and ancestors may be hidden
+      // (e.g. `:empty` wrappers).
+      let target = this.$el instanceof Element ? this.$el : this.$el.parentElement;
+      while (target && target.offsetParent === null && target !== document.body) {
+        target = target.parentElement;
+      }
+      if (!window.IntersectionObserver || !target) {
+        this.nearViewport = true;
+        this.resolve();
+        return;
+      }
+      this.observer = markRaw(new IntersectionObserver(entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          this.disconnectObserver();
+          this.nearViewport = true;
+          this.resolve();
+        }
+      }, { rootMargin: '200px' }));
+      this.observer.observe(target);
+    },
+    async resolve() {
+      if (!this.useAuthenticatedFetch) {
+        this.releaseAcquired();
+        this.blobUrl = null;
+        return;
+      }
+      if (this.lazy && !this.nearViewport) {
+        // Deferred until the image comes close to the viewport (see mounted)
+        return;
+      }
+      const url = this.src;
+      try {
+        const blobUrl = await acquire(this.$store, url);
+        if (this.disposed || url !== this.src || !this.useAuthenticatedFetch) {
+          // Unmounted, src changed or logged out while loading:
+          // give back the reference so that the cache drains on logout
+          release(this.$store, url);
+          return;
+        }
+        this.releaseAcquired();
+        this.acquiredUrl = url;
+        this.blobUrl = blobUrl;
+      } catch {
+        if (this.disposed || url !== this.src || !this.useAuthenticatedFetch) {
+          return;
+        }
+        // Release a previously shown image (e.g. when the src changed)
+        this.releaseAcquired();
+        // Fall back to loading the image directly, which either works
+        // (e.g. a public image in a partially protected catalog) or
+        // reports the failure through the error event of the element.
+        this.failed = true;
+        this.blobUrl = null;
+      }
+    },
+    releaseAcquired() {
+      if (this.acquiredUrl) {
+        release(this.$store, this.acquiredUrl);
+        this.acquiredUrl = null;
+      }
+    }
+  }
+};
+</script>

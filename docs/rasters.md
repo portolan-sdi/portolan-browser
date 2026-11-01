@@ -1,7 +1,7 @@
 # Raster rendering <!-- omit in toc -->
 
 Portolan Browser decodes Cloud-Optimized GeoTIFF assets in the browser through
-[deck.gl-geotiff](https://github.com/developmentseed/deck.gl-geotiff). No tile server sits between the
+[deck.gl-geotiff](https://github.com/developmentseed/deck.gl-raster). No tile server sits between the
 file and the map, so the colour of every pixel is decided from the STAC metadata alone. This page
 records where that colour comes from.
 

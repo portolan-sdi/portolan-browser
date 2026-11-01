@@ -28,6 +28,16 @@ import {
   VECTOR_NOTICE_TOO_BIG,
   VECTOR_NOTICE_TOO_LARGE,
 } from '../../utils/parquetShared.js';
+// The asset predicates live in utils/mapAssets.js so HrefActions can share
+// them (its "Show on map" button must track what this layer renders) without
+// importing this module and the map bundle behind it.
+import {
+  assetHref,
+  isCogAsset,
+  isPmtilesAsset,
+  isXyzVectorAsset,
+  isTileJsonAsset,
+} from '../../utils/mapAssets.js';
 
 const sharedCache = new SharedPromiseCache(300);
 
@@ -62,23 +72,6 @@ const CHILDREN_FILL_LAYER = 'stac-children-fill';
 const CHILDREN_LINE_LAYER = 'stac-children-line';
 const CHILDREN_POINT_LAYER = 'stac-children-point';
 
-const COG_MIME_TYPES = [
-  'image/tiff',
-  'image/tiff; application=geotiff',
-  'image/tiff; application=geotiff; profile=cloud-optimized',
-  'image/vnd.stac.geotiff',
-  'application/x-geotiff',
-];
-
-const PMTILES_MIME_TYPES = [
-  'application/vnd.pmtiles',
-];
-
-const MVT_MIME_TYPES = [
-  'application/vnd.mapbox-vector-tile',
-  'application/x-protobuf',
-];
-
 // Style source types that can never stand in for a collection's data source.
 // A raster backdrop or a DEM the publisher shipped in the style document is
 // its own thing; only a vector source (or a URL-bearing geojson one) is a
@@ -90,10 +83,6 @@ const SELF_CONTAINED_SOURCE_TYPES = ['raster', 'raster-dem', 'image', 'video'];
 // exists so the field dimension of the cache key cannot accumulate a copy per
 // style the user tries.
 const PARQUET_CACHE_MAX = 3;
-
-function assetHref(asset) {
-  return asset.getAbsoluteUrl?.() || asset.href || '';
-}
 
 // GeoParquet asset hrefs come straight from untrusted STAC metadata and are
 // downloaded whole, so only http(s) is allowed — a `data:` URL would inline
@@ -146,11 +135,6 @@ export function isGlobalBbox(bbox) {
   return lonSpan >= 300;
 }
 
-function isCogAsset(asset) {
-  const type = asset.type || '';
-  return COG_MIME_TYPES.some(mt => type.includes(mt));
-}
-
 function cogKey(asset) {
   return asset.getKey?.() ?? asset.key;
 }
@@ -182,26 +166,6 @@ function normalizePmtilesUrl(url, base) {
     /* leave as-is if it can't be resolved */
   }
   return u;
-}
-
-function isPmtilesAsset(asset) {
-  const type = asset.type || '';
-  const href = assetHref(asset);
-  return PMTILES_MIME_TYPES.some(mt => type.includes(mt)) || href.endsWith('.pmtiles');
-}
-
-function isXyzVectorAsset(asset) {
-  const type = asset.type || '';
-  const href = assetHref(asset);
-  if (!href.includes('{z}') || !href.includes('{x}') || !href.includes('{y}')) {return false;}
-  return MVT_MIME_TYPES.some(mt => type.includes(mt));
-}
-
-function isTileJsonAsset(asset) {
-  const type = asset.type || '';
-  const roles = Array.isArray(asset.roles) ? asset.roles : [];
-  if (!type.startsWith('application/json')) {return false;}
-  return roles.includes('tiles');
 }
 
 // Feature count declared in STAC metadata (asset first, then its collection/

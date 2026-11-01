@@ -1,23 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
 import ParquetTable, { PAGE_SIZE } from '../../src/components/ParquetTable.vue'
-
-// vue-i18n's $t(key, default) / $t(key, params, default) forms: the last
-// string argument is the default message the component ships inline. The
-// pagination keys carry no inline default because they already ship
-// translated in src/locales, so mirror the English ones here.
-const TRANSLATED = {
-  'pagination.first': '« First',
-  'pagination.previous': '‹ Previous',
-  'pagination.next': 'Next ›',
-  'pagination.last': 'Last »',
-}
-const $t = (key, a, b) => {
-  if (TRANSLATED[key]) {return TRANSLATED[key];}
-  if (typeof b === 'string') {return b;}
-  if (typeof a === 'string') {return a;}
-  return key
-}
+import en from '../../src/locales/en/texts.json'
 
 // Address the controls by what they say, not by where they sit, so adding
 // First/Last does not silently repoint the tests at a different button.
@@ -34,7 +19,7 @@ const factory = (rowCount, { columns = ['id', 'name'], ...props } = {}) => {
       loadedRows: rowCount,
       ...props,
     },
-    global: { mocks: { $t } },
+    global: { plugins: [createI18n({ legacy: true, locale: 'en', messages: { en } })] },
   })
 }
 

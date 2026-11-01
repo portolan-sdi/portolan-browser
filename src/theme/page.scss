@@ -15,9 +15,9 @@ svg {
 }
 
 .btn svg {
-  // Fix an issue where in some cases icons were slightly too large and were only partially shown in buttons
-  height: round(down, 1.2em, 1px);
-  width: round(down, 1.2em, 1px);
+  // Fix an issue where in some cases icons were slightly cut off and were only partially shown in buttons
+  height: round(up, 1.2em, 1px);
+  width: round(up, 1.2em, 1px);
 }
 
 .list-group-item.active {
@@ -67,11 +67,14 @@ svg {
       // On small screens, slide the site row out of view when scrolling down
       // so that only the page row stays sticky. Scrolling up brings it back.
       // The .hide-site-header class and --sb-site-height are managed in StacBrowser.vue.
+      // We move the header by animating `top` rather than a `transform`: a transform
+      // on a `position: sticky` element breaks the sticky pin under compositor-driven
+      // scrolling (Firefox on Android, iOS Safari), letting the whole header scroll away.
       @include media-breakpoint-down(md) {
-        transition: box-shadow 0.2s ease-in-out, transform 0.3s ease-in-out;
+        transition: box-shadow 0.2s ease-in-out, top 0.3s ease-in-out;
 
         &.hide-site-header {
-          transform: translateY(calc(-1 * var(--sb-site-height, 0px)));
+          top: calc(var(--sb-header-margin) - var(--sb-site-height, 0px));
         }
       }
     }
@@ -108,7 +111,7 @@ svg {
 
       @include media-breakpoint-up(lg) {
         .actions {
-          min-width: 300px;
+          min-width: 350px;
         }
       }
 
@@ -562,7 +565,14 @@ svg {
 
     .catalog-card,
     .item-card {
-      grid-row: span 7;
+      grid-row: span 6;
+
+      // Workaround for a WebKit subgrid bug that clips the last row (the footer);
+      // pinning an empty item to it forces Safari to size it. Remove once fixed.
+      &::after {
+        content: "";
+        grid-row: 6;
+      }
 
       .card-body {
         display: grid;
@@ -630,6 +640,11 @@ svg {
       .btn-group-vertical {
         width: 100%;
       }
+      // Stretch the compact action group across the footer so a single action
+      // fills the width like the other buttons instead of a separate small group
+      .stac-actions {
+        display: flex;
+      }
     }
     .card-footer:empty {
       display: none;
@@ -662,7 +677,8 @@ svg {
     gap: 1rem;
     padding: 0.5rem 0;
 
-    .catalog-card {
+    .catalog-card,
+    .item-card {
       box-sizing: border-box;
       display: flex;
       overflow: hidden;
@@ -723,6 +739,10 @@ svg {
     border-color: #{$input-focus-border-color};
     outline: 0;
     box-shadow: var(--bs-box-shadow-inset), 0 0 0 0.25rem rgba(var(--bs-primary-rgb), 0.25);
+  }
+
+  .multiselect.is-invalid .multiselect__tags {
+    border-color: var(--bs-form-invalid-border-color);
   }
 
   .multiselect__select:before {

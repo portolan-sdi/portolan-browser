@@ -20,6 +20,7 @@
       "generic": "Descargar",
       "withSource": "Descargar desde {source}"
     },
+    "formatHelp": "Más información sobre la conversión de formatos",
     "inItems": "Recurso en elementos | Recursos en elementos",
     "role": {
       "data": "Datos",
@@ -55,6 +56,7 @@
     "user": "Usuario"
   },
   "browse": "Explorar",
+  "builtOn": "basado en",
   "cancel": "Cancelar",
   "catalog": {
     "license": "Licencia",
@@ -110,6 +112,7 @@
     "loadApiItemsFailed": "Los elementos de la API no se pudieron cargar.",
     "loadFilteredItems": "Perdón, la carga de una lista de elementos filtrada falló.",
     "loadItems": "Perdón, falló la carga de la lista de elementos STAC.",
+    "missingPermissions": "Las credenciales especificadas para esta solicitud no tienen los permisos requeridos.",
     "networkError": "Este problema puede ocurrir cuando los servidores no permiten acceso externo desde navegadores web (por ejemplo, cuando no hay encabezados CORS). @:errors.contactProvider",
     "noExternalAccess": "¡El acceso a catálogos externos no está permitido!",
     "notFound": "El recurso solicitado no existe. @:errors.contactProvider",
@@ -121,6 +124,27 @@
     "title": "Código de Ejemplo",
     "storeAs": "Guardar código como:",
     "installDependencies": "Instala las dependencias:"
+  },
+  "externalInfo": "Este {type} es proporcionado por una fuente de datos externa.",
+  "favorites": {
+    "add": "Añadir a favoritos",
+    "empty": "Todavía no se ha añadido ningún favorito. Para añadir favoritos, use el botón de 'Favorito' en la página de un catálogo, colección, o artículo.",
+    "export": "Exportar",
+    "exportDescription": "Exportar los favoritos a un archivo, por ejemplo, para importarlos en otro navegador.",
+    "exportFormats": {
+      "csv": "CSV",
+      "excel": "Excel",
+      "json": "JSON",
+      "stac": "Catálogo STAC"
+    },
+    "import": "Importar",
+    "importDescription": "Importar favoritos desde un archivo previamente exportado.",
+    "importInvalid": "El archivo seleccionado no contiene favoritos.",
+    "imported": "Se importaron {count} nuevos favoritos.",
+    "label": "Favorito",
+    "localOnly": "Los favoritos se almacenan sólo localmente en este navegador web. No se sincronizan entre dispositivos o navegadores.",
+    "remove": "Eliminar de favoritos",
+    "title": "Favoritos"
   },
   "featureExperimental": "¡Esta funcionalidad es experimental y puede producir resultados inesperados!",
   "features": {
@@ -136,7 +160,8 @@
   },
   "goBack": {
     "description": "Volver al {type}",
-    "label": "Volver"
+    "label": "Volver",
+    "refererDescription": "Volver a la última página visitada en el catálogo"
   },
   "goToCollection": {
     "description": "Ir a la colección asociada",
@@ -150,6 +175,15 @@
   },
   "in": "en {catalog}",
   "index": {
+    "portolanRegistry": "Registro de Portolan",
+    "registryCollections": "{count} colección | {count} colecciones",
+    "registryCountsPartial": "{counts} hasta ahora",
+    "registryFeatures": "{count} entidad | {count} entidades",
+    "registryLoading": "Cargando el registro de Portolan…",
+    "registryUnavailable": "No se pudo cargar el registro de Portolan. Puede introducir la URL de un catálogo arriba.",
+    "selectFromRegistry": "... o seleccione un catálogo del {registry}:",
+    "searchRegistry": "Buscar en el registro por nombre o URL",
+    "searchRegistryNoMatch": "Ningún catálogo registrado coincide con \"{query}\".",
     "api": "API",
     "catalog": "Catálogo Estático",
     "load": "Cargar",
@@ -161,13 +195,30 @@
   },
   "items": {
     "filter": "Filtros",
+    "filterChangesNotApplied": "Los filtros fueron cambiados, pero los cambios aún no se han aplicado.",
     "hideFilter": "Ocultar Filtros",
     "noTime": "No se indicó un tiempo",
     "noneAvailableForCollection": "No hay elementos disponibles para esta colección.",
     "showFilter": "Mostrar Filtros"
   },
   "loading": "Cargando...",
-  "manage": {},
+  "manage": {
+    "addCollection": "Añadir colección",
+    "addItem": "Añadir elemento",
+    "confirmDeleteTitle": "Confirmar borrado",
+    "confirmDeleteMessage": "¿Estás seguro de que quieres borrar este recurso STAC?",
+    "create": "Crear",
+    "delete": "Borrar",
+    "discardDraft": "Descartar cambios restaurados",
+    "draftRestored": "Los cambios no guardados de una sesión anterior fueron restaurados.",
+    "edit": "Editar",
+    "leavePage": "Salir de la página",
+    "save": "Guardar",
+    "noUndo": "Esta acción no se puede deshacer.",
+    "unsavedChangesLeave": "Tiene cambios sin guardar. ¿Seguro que quiere salir de esta página?",
+    "unsavedChangesTitle": "Cambios sin guardar",
+    "validate": "Validar"
+  },
   "map": "Mapa",
   "mapping": {
     "attribution": {
@@ -191,10 +242,17 @@
       "westLon": "Longitud Oeste"
     },
     "close": "Cerrar",
+    "displayLimit": {
+      "message": "Este conjunto de datos es muy grande y mostrarlo puede ralentizar o bloquear el navegador.",
+      "showAnyway": "Ver de todas maneras",
+      "title": "Conjunto de datos grande"
+    },
     "fit": "Encajar en la extensión",
+    "focusHint": "Haz clic o toca el mapa para acercar y desplazar",
     "layers": {
       "base": "Capas base",
       "footprint": "Huella",
+      "overflow": "{count} capas más no mostradas",
       "title": "Capas",
       "unnamed": "Sin nombre #{id}"
     },
@@ -203,6 +261,16 @@
     },
     "nobasemap": "No hay mapas base disponibles.",
     "nodata": "No hay información espacial en los metadatos.",
+    "styles": {
+      "legend": "Leyenda",
+      "select": "Seleccionar estilo del mapa"
+    },
+    "vectorFallback": {
+      "loadError": "No se pudieron cargar los datos GeoParquet para mostrarlos.",
+      "reprojectionFailed": "No se pudo colocar ninguna entidad en el mapa. El archivo declara {crs}, pero sus coordenadas están fuera de ese sistema; el CRS declarado puede no corresponder a los datos.",
+      "tooBig": "El archivo GeoParquet es demasiado grande para cargarlo en el mapa ({size} MB, límite {maxSize} MB).",
+      "tooLarge": "Los datos GeoParquet tienen {count} entidades, demasiadas para mostrarlas directamente en el mapa (límite: {max})."
+    },
     "zoom": {
       "in": {
         "description": "Acercar el zoom",
@@ -216,6 +284,7 @@
   },
   "messageForSchemaError": "{message}, para el esquema {schemaPath}",
   "metadata": {
+    "additional": "Metadatos adicionales",
     "general": "General",
     "title": "Metadatos"
   },
@@ -234,9 +303,26 @@
     "next": "Siguiente ›",
     "previous": "‹ Anterior"
   },
+  "parquet": {
+    "allColumns": "Todas las columnas",
+    "dataPreview": "Vista previa de datos",
+    "filterPlaceholder": "Filtrar filas...",
+    "loadFailed": "No se pudieron cargar los datos parquet: {message}",
+    "loadedRowCount": "{loaded} / {total} fila | {loaded} / {total} filas",
+    "loadingMetadata": "Cargando metadatos...",
+    "loadingRows": "Cargando fila ({count})... | Cargando filas ({count})...",
+    "networkError": "No se puede mostrar la vista previa: el acceso entre orígenes no está permitido o hay un error de red.",
+    "pageRows": "Fila {from}–{to} de {total} | Filas {from}–{to} de {total}",
+    "retry": "Reintentar",
+    "rowCount": "{count} fila | {count} filas",
+    "showingOf": "Mostrando la primera {loaded} de {total} fila | Mostrando las primeras {loaded} de {total} filas",
+    "zoomToFeature": "Acercar a la entidad"
+  },
   "poweredBy": "Ofrecido por {link}",
   "programming": {
     "csharp": "C#",
+    "curl": "cURL",
+    "go": "Go",
     "java": "Java",
     "javascript": "JavaScript",
     "python": "Python",
@@ -271,7 +357,9 @@
   },
   "reset": "Restablecer",
   "search": {
+    "collectionsRequired": "Seleccione al menos una colección para buscar elementos.",
     "addCollections": "Presione enter para añadir una colección",
+    "addDate": "Añadir fecha",
     "addFilter": "Añadir filtro",
     "additionalFilters": "Filtros adicionales",
     "addItemIds": "Presione enter para añadir el ID de un elemento",
@@ -292,6 +380,7 @@
     "betweenOperatorDescription": "Prueba si el valor de un campo numérico está dentro del rango indicado. El rango es inclusivo.",
     "dateDescription": "Todas las horas en Coordinated Universal Time (UTC).",
     "disabledDueToSingleDate": "El filtro está desactivado porque la colección tiene una única fecha y hora como extensión temporal.",
+    "droppedFilters": "Los siguientes filtros no están soportados aquí y fueron eliminados: {filters}.",
     "enterCollections": "Introduzca una o varias colecciones...",
     "enterItemIds": "Introduzca una o varias IDs de Elemento...",
     "enterSearchTerms": "Introduzca uno o más términos de búsqueda...",
@@ -326,6 +415,7 @@
     "notFullySupported": "Puede que no todas las opciones estén soportadas.",
     "notSupported": "La API no soporta la Búsqueda por Elementos.",
     "placeholder": "Búsqueda...",
+    "removeDate": "Eliminar fecha",
     "selectCollections": "Seleccione una o varias colecciones...",
     "selectDateRange": "Seleccionar el rango de fechas",
     "selectForItemSearch": "Seleccionar para Búsqueda de Elementos",
@@ -357,6 +447,7 @@
     "conformanceClasses": "Clases de conformidad",
     "detailsAboutSource": "Detalles sobre la fuente STAC",
     "extension": "Extensión",
+    "externalData": "Fuente de datos externa",
     "fileFormat": "Formato de archivo",
     "id": "ID",
     "invalid": "Ínvalido",
@@ -368,6 +459,7 @@
       "switch": "Cambiar el idioma"
     },
     "locatedAt": "El archivo de metadatos STAC se encuentra en:",
+    "manage": "Administrar",
     "share": {
       "bsky": "Bluesky",
       "email": "E-mail",
@@ -417,6 +509,7 @@
   "stacAssets": "Recurso | Recursos",
   "stacCatalog": "Catálogo | Catálogos",
   "stacCollection": "Colección | Colecciones",
+  "stacEntity": "recurso | recursos",
   "stacItem": "Elemento | Elementos",
   "submit": "Enviar",
   "switchToDarkMode": "Cambiar a modo oscuro",
@@ -446,5 +539,7 @@
     },
     "title": "Opciones de visualización"
   },
-  "widgets": {}
+  "widgets": {
+    "featured": "Destacados"
+  }
 }

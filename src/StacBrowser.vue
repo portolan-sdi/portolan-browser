@@ -10,12 +10,15 @@
       <b-row class="site">
         <b-col md="12">
           <nav class="actions navigation">
-            <b-button-group v-if="canSearch || !isServerSelector">
+            <b-button-group v-if="canSearch || !isServerSelector || showFavoritesFromVueX">
               <b-button v-if="!isServerSelector" variant="header" :title="$t('browse')" @click="sidebar = !sidebar">
-                <b-icon-list /><span class="button-label">{{ $t('browse') }}</span>
+                <b-icon-list />
               </b-button>
               <b-button v-if="canSearch" variant="header" :to="searchBrowserLink" :title="$t('search.title')" :pressed="isSearchPage">
                 <b-icon-search /><span class="button-label">{{ $t('search.title') }}</span>
+              </b-button>
+              <b-button v-if="showFavoritesFromVueX" variant="header" to="/favorites" :title="$t('favorites.title')" :pressed="isFavoritesPage">
+                <b-icon-star /><span class="button-label">{{ $t('favorites.title') }}</span>
               </b-button>
               <b-button v-if="root" variant="header" id="popover-root-btn" tabindex="0">
                 <b-icon-database /><span class="button-label">{{ serviceType }}</span>
@@ -53,12 +56,12 @@
       <b-row class="page" v-if="!loading">
         <b-col md="12">
           <div class="title">
-            <img v-if="icon && !isRoot" :src="icon.getAbsoluteUrl()" :alt="icon.title" :title="icon.title" class="icon">
+            <AuthImage v-if="icon && !isRoot" :src="icon.getAbsoluteUrl()" :alt="icon.title" :title="icon.title" class="icon" />
             <h1 :title="title">{{ title }}</h1>
           </div>
           <nav class="actions navigation">
             <b-button-group>
-              <b-button v-if="back" :to="selfBrowserLink" :title="$t('goBack.description', {type})" variant="outline-primary" size="sm">
+              <b-button v-if="backLink" :to="backLink" :title="backTitle" variant="outline-primary" size="sm">
                 <b-icon-arrow-left /><span class="button-label">{{ $t('goBack.label') }}</span>
               </b-button>
               <b-button v-if="collectionLink" :to="toBrowserPath(collectionLink)" :title="collectionLinkTitle" variant="outline-primary" size="sm">
@@ -69,7 +72,7 @@
               </b-button>
             </b-button-group>
           </nav>
-          <StacSource class="actions" :title="title" />
+          <StacSource v-if="!isFavoritesPage" class="actions" :title="title" />
         </b-col>
       </b-row>
     </header>
@@ -150,6 +153,7 @@ for(let key in CONFIG) {
 export default defineComponent({
   name: 'StacBrowser',
   components: {
+    AuthImage: defineAsyncComponent(() => import('./components/AuthImage.vue')),
     Authentication,
     BIconLock,
     BIconUnlock,
@@ -179,8 +183,10 @@ export default defineComponent({
     };
   },
   computed: {
-    ...mapState(['allowSelectCatalog', 'browserReady', 'conformsTo', 'data', 'dataLanguage', 'downloads', 'globalError', 'loading', 'stateQueryParameters', 'url']),
+    ...mapState(['allowSelectCatalog', 'browserReady', 'data', 'dataLanguage', 'downloads', 'globalError', 'loading', 'stateQueryParameters', 'url']),
     ...mapState({
+      allowExternalAccessFromVueX: 'allowExternalAccess',
+      showFavoritesFromVueX: 'showFavorites',
       footerLinksFromVueX: 'footerLinks',
       localeFromVueX: 'locale',
       fallbackLocaleFromVueX: 'fallbackLocale',
@@ -190,7 +196,7 @@ export default defineComponent({
       enforcedColorModeFromVueX: 'enforcedColorMode',
       colorModeFromVueX: 'colorMode'
     }),
-    ...mapGetters(['canSearch', 'collectionLink', 'fromBrowserPath', 'isExternalUrl', 'isRoot', 'parentLink', 'root', 'searchBrowserLink', 'supportsConformance', 'title', 'toBrowserPath']),
+    ...mapGetters(['canSearch', 'collectionLink', 'fromBrowserPath', 'getConformanceClasses', 'isExternalUrl', 'isRoot', 'parentLink', 'root', 'searchBrowserLink', 'supportsConformance', 'title', 'toBrowserPath']),
     ...mapGetters('auth', { authMethod: 'method' }),
     ...mapGetters('auth', ['canAuthenticate', 'isLoggedIn', 'showLogin']),
     browserVersion() {
@@ -203,6 +209,9 @@ export default defineComponent({
     },
     isSearchPage() {
       return this.$route.name === 'search';
+    },
+    isFavoritesPage() {
+      return this.$route.name === 'favorites';
     },
     isServerSelector() {
       return this.$route.name === 'select';
@@ -218,13 +227,40 @@ export default defineComponent({
     },
     isApi() {
       // todo: This gives false results for a statically hosted OGC API - Records, which may include conformance classes
-      return Array.isArray(this.conformsTo) && this.conformsTo.length > 0;
+      return this.getConformanceClasses().length > 0;
     },
     serviceType() {
       return this.isApi ? this.$t('index.api') : this.$t('index.catalog');
     },
     back() {
       return this.$route.name === 'validation' || Boolean(this.$route.name?.startsWith('management'));
+    },
+    backLink() {
+      if (this.back) {
+        return this.selfBrowserLink;
+      }
+      return this.refererLink;
+    },
+    backTitle() {
+      if (this.back) {
+        return this.$t('goBack.description', {type: this.type});
+      }
+      return this.$t('goBack.refererDescription');
+    },
+    // Set by the router guard in created() when navigating to external content
+    refererLink() {
+      const referer = this.$route.query['.referer'];
+      if (!hasText(referer) || !referer.startsWith('/')) {
+        return null;
+      }
+      const url = URL.parse(referer, window.location.href);
+      if (!url || url.origin !== window.location.origin) {
+        return null;
+      }
+      if (!this.allowExternalAccessFromVueX && Utils.isExternalBrowserPath(referer)) {
+        return null;
+      }
+      return referer;
     },
     selfBrowserLink() {
       return this.toBrowserPath(this.url);
@@ -292,7 +328,7 @@ export default defineComponent({
             }
             this.$store.commit('state', state);
           }
-          else if (this.supportsConformance(API_LANGUAGE_CONFORMANCE)) {
+          else if (this.supportsConformance(API_LANGUAGE_CONFORMANCE, this.data)) {
             // this.url gets reset with resetCatalog so store the url for use in load
             const url = this.url;
             // Todo: Resetting the catalogs is not ideal. 
@@ -334,6 +370,7 @@ export default defineComponent({
         'defaultItemSort',
         'defaultThumbnailSize',
         'displayGeoTiffByDefault',
+        'maxDisplayPixels',
         'preferredAssets',
         'showThumbnailsAsAssets'
       ];
@@ -402,6 +439,29 @@ export default defineComponent({
     await this.$router.isReady();
     await this.detectLocale();
     await this.parseQuery(this.$route);
+
+    // Attach a referer to pages with external content so that users can return to the
+    // page in the catalog from which they reached the external content, even after a
+    // page refresh or through a shared link (shown as "Back" button, see refererLink).
+    this.$router.beforeEach((to, from) => {
+      if (this.allowSelectCatalog || !this.allowExternalAccessFromVueX) {
+        return;
+      }
+      if (hasText(to.query['.referer']) || !Utils.isExternalBrowserPath(to.path)) {
+        return;
+      }
+      let referer;
+      if (hasText(from.query['.referer'])) {
+        // Keep the original referer while browsing external content
+        referer = from.query['.referer'];
+      }
+      else if (['browse', 'search'].includes(from.name) && !Utils.isExternalBrowserPath(from.path)) {
+        referer = from.fullPath;
+      }
+      if (referer) {
+        return { path: to.path, query: Object.assign({}, to.query, { '.referer': referer }), hash: to.hash };
+      }
+    });
 
     this.$router.afterEach((to, from, failure) => {
       // Aborted and cancelled navigations don't change the page,

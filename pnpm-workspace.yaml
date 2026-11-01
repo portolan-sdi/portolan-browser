@@ -3,3 +3,7 @@ allowBuilds:
   esbuild: false
   msw: false
   vue-demi: false
+
+# Upstream pins rollup: 4.63.0 breaks tree-shaking (radiantearth/stac-browser#1002)
+overrides:
+  rollup: 4.62.5

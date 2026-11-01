@@ -1,12 +1,13 @@
 # Actions <!-- omit in toc -->
 
-STAC Browser has a pluggable interface to share or open assets and links with other services, which we call "actions".
+STAC Browser has a pluggable interface to share or open assets, catalogs, collections, items and links with other services, which we call "actions".
 
-An action adds a button to an asset or link if certain requirements are met, which can then be executed by users.
+An action adds a button to an asset, catalog, collection, item or link if certain requirements are met, which can then be executed by users.
 For example, you could open COPC files in a dedicated COPC Viewer, which otherwise you could only download.
 
 - [User Guide](#user-guide)
   - [Assets](#assets)
+  - [Catalogs, collections, and items](#catalogs-collections-and-items)
   - [Links](#links)
 - [Developer Guide](#developer-guide)
 
@@ -18,9 +19,8 @@ The following actions are available:
 
 - `Cesium`: Allows to open OGC 3D Tiles (media type `application/3dtiles+json`) files through the Cesium Sandcastle at <https://sandcastle.cesium.com>.
 - `CopcViewer`: Allows to open Cloud-Optimized Point Cloud (COPC, media type `application/vnd.laszip+copc`) files through the Hobu COPC Viewer at <https://viewer.copc.io>.
-- `F3D`: Allows to open 3D models (media types `model/gltf-binary`, `model/gltf+json`, and `application/fbx`) files through the F3D Web App at <https://f3d.app/web>.
+- `F3D`: Allows to open 3D models (media types `model/gltf-binary`, `model/gltf+json`, and `application/fbx`) files through the F3D Web App at <https://f3d.app/viewer/>.
 - `Felt`: Allows to open GeoTIFF, GeoJSON and KML/KMZ files through Felt at <https://felt.com/map/>.
-- `Geofox`: Allows to open OGC 3D Tiles  (media type `application/3dtiles+json`) files through the 3D Assets Viewer at <https://viewer.geofox.ai>.
 - `GeoJsonIo`: Allows to open GeoJSON files through [geojson.io](https://geojson.io).
 - `Potree`: Allows to open Cloud-Optimized Point Cloud (COPC, media type `application/vnd.laszip+copc`) and Potree files (file names `cloud.js`, `metadata.json`, `ept.json`) files through the Potree Viewer at <https://3d.iconem.com/apps/load_potree_project_from_urlparam/>.
 - `Protomaps`: Allows to open PMTiles (media type `application/vnd.pmtiles`) files through PMTiles Viewer at <https://pmtiles.io>.
@@ -39,7 +39,7 @@ The path is fixed to `./src/actions/assets/`, the file extension is always `.js`
 In-between add the file name from the list above.
 The import name should be the file name without extension (i.e. `Felt` again).
 
-Lastly, add the import name to the list of exports, e.g.
+Then add the import name to the list of exports:
 
 ```js
 export default {
@@ -50,20 +50,51 @@ export default {
 
 Save the file and restart / rebuild STAC Browser.
 
+### Catalogs, collections, and items
+
+The following actions are available:
+
+- `FavoriteCard`: Adds a button to the catalog, collection and item cards to add/remove them to/from the favorites. Requires `showFavorites` to be enabled in the config. By default, the button is shown on all pages with cards. To hide it on specific pages, set `showInBrowse` or `showInSearch` to `false` after the import in `stacActions.config.js`, e.g. `FavoriteCard.showInBrowse = false;`.
+- `stac-map`: Allows to open items through stac-map at <https://developmentseed.org/stac-map/>.
+
+All actions for catalogs, collections and items are stored in the folder [`src/actions/stac`](../src/actions/stac) if you want to inspect them.
+
+The actions can be enabled by adding them to the [`stacActions.config.js`](../stacActions.config.js) file.
+Open the file and you'll see a number of imports and exports.
+Import the file for the action that you want to enable, such as stac-map:
+
+```js
+import StacMap from './src/actions/stac/StacMap.js';
+```
+
+The path is fixed to `./src/actions/stac/`, the file extension is always `.js`.
+In-between add the file name from the list above.
+The import name should be the file name without extension (i.e. `StacMap` again).
+
+Then add the import name to the list of exports:
+
+```js
+export default {
+  OtherAction,
+  StacMap
+};
+```
+
+Save the file and rebuild / restart STAC Browser.
+
 ### Links
 
 The following actions are available:
 
 - `Cesium`: Allows to open OGC 3D Tiles (relation type `3d-tiles`, see [web-map-links extension](https://github.com/stac-extensions/web-map-links/blob/v1.2.0/README.md#3d-tiles)) files through the Cesium Sandcastle at <https://sandcastle.cesium.com>.
 - `Felt`: Allows to open XYZ tile services (relation type `xyz`, see [web-map-links extension](https://github.com/stac-extensions/web-map-links/blob/v1.2.0/README.md#xyz)) files through Felt at <https://felt.com/map/>.
-- `Geofox`: Allows to open OGC 3D Tiles (relation type `3d-tiles`, see [web-map-links extension](https://github.com/stac-extensions/web-map-links/blob/v1.2.0/README.md#3d-tiles)) files through the 3D Assets Viewer at <https://viewer.geofox.ai>.
 - `Protomaps`: Allows to open PMTiles (relation type `pmtiles`, see [web-map-links extension](https://github.com/stac-extensions/web-map-links/blob/v1.2.0/README.md#pmtiles)) files through PMTiles Viewer at <https://pmtiles.io>.
 
 All actions for links are stored in the folder [`src/actions/links`](../src/actions/links) if you want to inspect them.
 
 The actions can be enabled by adding them to the [`linkActions.config.js`](../linkActions.config.js) file.
 Open the file and you'll see a number of imports and exports.
-Import the file for the action that you want to enable, e.g. for PMTiles / Protomaps:
+Import the file for the action that you want to enable, such as PMTiles / Protomaps:
 
 ```js
 import Protomaps from './src/actions/links/Protomaps.js';
@@ -71,9 +102,9 @@ import Protomaps from './src/actions/links/Protomaps.js';
 
 The path is fixed to `./src/actions/links/`, the file extension is always `.js`.
 In-between add the file name from the list above.
-The import name should be the file name without extension (i.e. `Protomaps` again).
+The import name should be the file name without extension (`Protomaps` in this case).
 
-Lastly, add the import name to the list of exports, e.g.
+Then add the import name to the list of exports:
 
 ```js
 export default {
@@ -86,28 +117,31 @@ Save the file and rebuild / restart STAC Browser.
 
 ## Developer Guide
 
-Implementing actions for assets and links follows a very similar pattern.
-The main difference is that assets implement the [`AssetActionPlugin` interface](../src/actions/AssetActionPlugin.js) while links implement the [`LinkActionPlugin` interface](../src/actions/LinkActionPlugin.js).
-Similarly, actions for assets are stored in the folder links are stored in the folder [`src/actions/assets`](../src/actions/assets) while links are stored in the folder [`src/actions/links`](../src/actions/links).
+Implementing actions for assets, catalogs/collections/items and links follows a very similar pattern.
+The main difference is that each kind of action implements its own interface:
 
-The interfaces for both look as follows:
+- assets implement the [`AssetActionPlugin` interface](../src/actions/AssetActionPlugin.js) and are stored in the folder [`src/actions/assets`](../src/actions/assets)
+- catalogs, collections and items implement the [`StacActionPlugin` interface](../src/actions/StacActionPlugin.js) and are stored in the folder [`src/actions/stac`](../src/actions/stac)
+- links implement the [`LinkActionPlugin` interface](../src/actions/LinkActionPlugin.js) and are stored in the folder [`src/actions/links`](../src/actions/links)
+
+All interfaces look as follows:
 
 - `constructor(data: object, component: Vue, id: string)`
-  - `data`: The asset or link object, it is available in the class through `this.asset` (for assets) and `this.link` (for links).
-  - `component`: The parent Asset/Link Vue component (available in the class through `this.component`)
-  - `id`: Internal ID of the asset or link, not meant to be used.
+  - `data`: The asset, catalog, collection, item or link object. It is available in the class through `this.asset` (for assets), `this.object` (for catalogs/collections/items) and `this.link` (for links).
+  - `component`: The parent Asset/StacActions/Link Vue component (available in the class through `this.component`)
+  - `id`: Internal ID of the asset, catalog, collection, item or link, not meant to be used.
 - `get btnOptions() : object`
   - This should return an object of button options, see [VueBootstrap b-button](https://bootstrap-vue.org/docs/components/button/#component-reference) for details. Returns `href`, `rel` (only for links) and `target` (set to `_blank`) by default.
 - `get onClick() : function(event: MouseEvent)`
   - Returns a function that accepts a [MouseEvent](https://developer.mozilla.org/de/docs/Web/API/MouseEvent). This is the action to execute in case no `href` is set.
 - `get uri() : string`
-  - Returns the URL to use as `href` for the button/link. This should a valid URL that a browser can navigate to, including the asset or link URL as a query parameter or so.
+  - Returns the URL to use as `href` for the button/link. This should be a valid URL that a browser can open. It usually carries the URL of the STAC entity as a query parameter.
 - `get show() : boolean`
-  - Return `true` if the action should be shown for the given asset or link. Return `false` otherwise, default to `false`.
+  - Return `true` if the action should be shown for the given asset, catalog, collection, item or link. Return `false` otherwise, default to `false`.
 - `get text() : string`
-  - Returns the text that is displayed for the button, defaults to "Open". Should be using the [i18n methods](https://kazupon.github.io/vue-i18n/api/#methods) to localize the text.
+  - Returns the text that is displayed for the button, defaults to "Open". Should be using the [i18n methods](https://vue-i18n.intlify.dev/api/general.html) to localize the text.
 - `get icon() : Vue`
-  - Returns a Vue component that should be the icon for the button. Defaults to `BIconBoxArrowUpRight`, see <https://bootstrap-vue.org/docs/icons#icons-1> and search for `arrow-up-right`.
+  - Returns a Vue component that should be the icon for the button. Defaults to the `box-arrow-up-right` icon, see the [Bootstrap Icons list](https://icones.js.org/collection/bi) for other icons that can be imported through `~icons/bi/<name>` (via [unplugin-icons](https://github.com/unplugin/unplugin-icons)).
 
 Each action should at least implement custom behaviour for `uri`, `show` and `text`.
 
@@ -115,8 +149,7 @@ It is recommended to inspect the existing actions to get an impression of what i
 
 Some notes:
 
-- It is recommended to use [urijs](https://www.npmjs.com/package/urijs) through stac-js for URL manipulations,
-  it comes packaged with STAC Browser anyway. Example:
+- It is recommended to use `URI` from stac-js for URL manipulations, it comes packaged with STAC Browser anyway. Example:
 
   ```js
   import { URI } from 'stac-js/src/utils.js';
@@ -127,5 +160,6 @@ Some notes:
   - `this.component.href` is the absolute asset URL (while `this.asset.href` could be relative or absolute)
   - `this.component.isBrowserProtocol` returns whether it's a http/https URL
   - `this.asset.type` / `this.link.type` contains the media type of the asset/link
+  - `this.object.isItem` / `this.object.isCollection` returns whether the STAC object is an Item or a Collection
 
 To enable a newly implemented action in STAC Browser, please follow the [User Guide](#user-guide).

@@ -1,6 +1,7 @@
 <template>
   <nav class="share">
     <b-button-group>
+      <StacActions v-if="data" :data="data" variant="outline-primary" size="sm" bare />
       <b-dropdown
         v-if="canManage" size="sm" variant="outline-primary" tabindex="0"
       >
@@ -65,6 +66,10 @@
             <b-col cols="4">{{ $t('source.stacVersion') }}</b-col>
             <b-col>{{ stacVersion }}</b-col>
           </b-row>
+          <b-row v-if="!allowSelectCatalog" class="stac-external">
+            <b-col cols="4">{{ $t('source.externalData') }}</b-col>
+            <b-col>{{ $t(`checkbox.${isExternalContext}`) }}</b-col>
+          </b-row>
           <b-row class="stac-valid">
             <b-col cols="4">{{ $t('source.valid') }}</b-col>
             <b-col>
@@ -87,19 +92,13 @@
         <SocialSharing :text="sharingMessage" :title="title" :url="browserUrl()" />
       </template>
     </b-popover>
-    <b-modal :title="$t('manage.confirmDeleteTitle')" v-model="confirmDelete">
+    <ConfirmModal
+      v-model="confirmDelete" :title="$t('manage.confirmDeleteTitle')"
+      :confirmLabel="$t('manage.delete')" :busy="deleting" @confirm="deleteThis"
+    >
       <p>{{ $t('manage.confirmDeleteMessage') }}</p>
       <p>{{ $t('manage.noUndo') }}</p>
-      <template #footer="{ close }">
-        <b-button variant="danger" :disabled="deleting" @click="deleteThis">
-          <b-spinner v-if="deleting" small />
-          {{ $t('manage.delete') }}
-        </b-button>
-        <b-button variant="secondary" @click="close()">
-          {{ $t('cancel') }}
-        </b-button>
-      </template>
-    </b-modal>
+    </ConfirmModal>
   </nav>
 </template>
 
@@ -121,8 +120,9 @@ export default {
     Url,
     CopyButton,
     SocialSharing,
-    BModal: defineAsyncComponent(() => import('bootstrap-vue-next').then(m => m.BModal)),
     BPopover: defineAsyncComponent(() => import('bootstrap-vue-next').then(m => m.BPopover)),
+    ConfirmModal: defineAsyncComponent(() => import('./ConfirmModal.vue')),
+    StacActions: defineAsyncComponent(() => import('./StacActions.vue')),
     Validation: defineAsyncComponent(() => import('./Validation.vue'))
   },
   props: {
@@ -139,8 +139,8 @@ export default {
     };
   },
   computed: {
-    ...mapState(['data', 'socialSharing', 'url']),
-    ...mapGetters(['toBrowserPath', 'collectionLink', 'parentLink', 'rootLink']),
+    ...mapState(['allowSelectCatalog', 'data', 'socialSharing', 'url']),
+    ...mapGetters(['isExternalContext', 'toBrowserPath', 'collectionLink', 'parentLink', 'rootLink']),
     ...mapGetters('manager', ['browserPaths', 'canEdit', 'canDelete', 'canManage', 'canAddCollections', 'canAddItems', 'externalCreateLink', 'externalEditLink']),
     stacVersion() {
       return this.data?.stac_version;
@@ -205,5 +205,9 @@ export default {
     padding-top: 0.1rem;
     padding-bottom: 0.1rem;
     font-size: 0.7rem;
+}
+
+#popover-link .row + .row {
+    margin-top: 0.25rem;
 }
 </style>

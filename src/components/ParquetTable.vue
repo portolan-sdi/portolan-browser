@@ -5,10 +5,10 @@
         v-model="filterText"
         type="text"
         class="form-control form-control-sm parquet-filter-input"
-        :placeholder="$t('parquet.filterPlaceholder', 'Filter rows...')"
+        :placeholder="$t('parquet.filterPlaceholder')"
       >
       <select v-model="filterColumn" class="form-select form-select-sm parquet-filter-column">
-        <option value="">{{ $t('parquet.allColumns', 'All columns') }}</option>
+        <option value="">{{ $t('parquet.allColumns') }}</option>
         <option v-for="col in displayColumns" :key="col" :value="col">{{ col }}</option>
       </select>
       <span class="parquet-row-count">
@@ -16,10 +16,10 @@
           {{ filteredRows.length }} / {{ rows.length }}
         </template>
         <template v-else-if="loadedRows < totalRows">
-          {{ $t('parquet.showingOf', { loaded: loadedRows.toLocaleString(), total: totalRows.toLocaleString() }, `Showing first ${loadedRows.toLocaleString()} of ${totalRows.toLocaleString()} rows`) }}
+          {{ $t('parquet.showingOf', { loaded: loadedRows.toLocaleString($i18n.locale), total: totalRows.toLocaleString($i18n.locale) }, totalRows) }}
         </template>
         <template v-else>
-          {{ totalRows.toLocaleString() }} {{ $t('parquet.rows', 'rows') }}
+          {{ $t('parquet.rowCount', { count: totalRows.toLocaleString($i18n.locale) }, totalRows) }}
         </template>
       </span>
     </div>
@@ -53,7 +53,7 @@
             <td v-if="geometryColumn" class="parquet-data-cell parquet-geom-col">
               <button
                 class="btn btn-link btn-sm parquet-zoom-btn p-0"
-                :title="$t('parquet.zoomToFeature', 'Zoom to feature')"
+                :title="$t('parquet.zoomToFeature')"
                 @click.stop="zoomToRow(row)"
               >
                 <svg
@@ -94,7 +94,7 @@
         {{ $t('pagination.previous') }}
       </button>
       <span class="parquet-page-info" role="status" aria-live="polite">
-        {{ $t('parquet.pageRows', { from: pageFrom.toLocaleString(), to: pageTo.toLocaleString(), total: sortedRows.length.toLocaleString() }, `Rows ${pageFrom.toLocaleString()}–${pageTo.toLocaleString()} of ${sortedRows.length.toLocaleString()}`) }}
+        {{ $t('parquet.pageRows', { from: pageFrom.toLocaleString($i18n.locale), to: pageTo.toLocaleString($i18n.locale), total: sortedRows.length.toLocaleString($i18n.locale) }, sortedRows.length) }}
       </span>
       <button
         type="button" class="btn btn-sm btn-outline-primary"

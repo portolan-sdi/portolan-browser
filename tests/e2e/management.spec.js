@@ -150,6 +150,10 @@ test.describe('Management - capability gating', () => {
     await expect(page.getByRole('heading', { name: /add item/i })).toBeVisible();
     await expect(page.locator('.cm-content')).toContainText('"type": "Feature"');
     await expect(page.getByRole('button', { name: /manage/i })).toBeVisible();
+
+    // A late collection load must not revert the editor to the edited collection.
+    await expect(page.locator('.cm-content')).not.toContainText('"type": "Collection"');
+    await expect(page.locator('.cm-content')).toContainText('"type": "Feature"');
   });
 });
 

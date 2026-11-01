@@ -125,6 +125,27 @@
     "storeAs": "Store code as:",
     "installDependencies": "Install dependencies:"
   },
+  "externalInfo": "This {type} is provided by an external data source.",
+  "favorites": {
+    "add": "Add to favorites",
+    "empty": "No favorites have been added yet. To add favorites, use the 'Favorite' button on the page of a catalog, collection, or item.",
+    "export": "Export",
+    "exportDescription": "Export the favorites to a file, e.g. to import them in another browser.",
+    "exportFormats": {
+      "csv": "CSV",
+      "excel": "Excel",
+      "json": "JSON",
+      "stac": "STAC Catalog"
+    },
+    "import": "Import",
+    "importDescription": "Import favorites from a file that was exported before.",
+    "importInvalid": "The selected file does not contain favorites.",
+    "imported": "{count} new favorites were imported.",
+    "label": "Favorite",
+    "localOnly": "Favorites are stored only locally in this web browser. They are not synchronized across devices or browsers.",
+    "remove": "Remove from favorites",
+    "title": "Favorites"
+  },
   "featureExperimental": "This feature is still experimental and may give unexpected results!",
   "features": {
     "empty": "No features available.",
@@ -139,7 +160,8 @@
   },
   "goBack": {
     "description": "Go back to the {type}",
-    "label": "Back"
+    "label": "Back",
+    "refererDescription": "Go back to the last visited page in the catalog"
   },
   "goToCollection": {
     "description": "Go to the associated collection",
@@ -220,7 +242,13 @@
       "westLon": "West Longitude"
     },
     "close": "Close",
+    "displayLimit": {
+      "message": "This dataset is very large and displaying it may slow down or freeze the browser.",
+      "showAnyway": "Show anyway",
+      "title": "Large dataset"
+    },
     "fit": "Fit to extent",
+    "focusHint": "Click or tap the map to zoom and pan",
     "layers": {
       "base": "Base Layers",
       "footprint": "Footprint",
@@ -284,9 +312,26 @@
     "next": "Next ›",
     "previous": "‹ Previous"
   },
+  "parquet": {
+    "allColumns": "All columns",
+    "dataPreview": "Data Preview",
+    "filterPlaceholder": "Filter rows...",
+    "loadFailed": "Failed to load parquet data: {message}",
+    "loadedRowCount": "{loaded} / {total} row | {loaded} / {total} rows",
+    "loadingMetadata": "Loading metadata...",
+    "loadingRows": "Loading row ({count})... | Loading rows ({count})...",
+    "networkError": "Unable to preview: cross-origin access not allowed or network error.",
+    "pageRows": "Row {from}–{to} of {total} | Rows {from}–{to} of {total}",
+    "retry": "Retry",
+    "rowCount": "{count} row | {count} rows",
+    "showingOf": "Showing first {loaded} of {total} row | Showing first {loaded} of {total} rows",
+    "zoomToFeature": "Zoom to feature"
+  },
   "poweredBy": "Powered by {link}",
   "programming": {
     "csharp": "C#",
+    "curl": "cURL",
+    "go": "Go",
     "java": "Java",
     "javascript": "JavaScript",
     "python": "Python",
@@ -322,6 +367,7 @@
   "reset": "Reset",
   "search": {
     "addCollections": "Press enter to add a collection",
+    "addDate": "Add date",
     "addFilter": "Add filter",
     "additionalFilters": "Additional filters",
     "addItemIds": "Press enter to add an Item ID",
@@ -340,6 +386,7 @@
     "arrayOverlapsDescription": "Array contains at least one of the specified values",
     "between": "between",
     "betweenOperatorDescription": "Tests whether a numeric field value lies within the given range. The given range is inclusive.",
+    "collectionsRequired": "Select at least one collection to search for items.",
     "dateDescription": "All times in Coordinated Universal Time (UTC).",
     "disabledDueToSingleDate": "This filter is disabled because the collection has a single date and time as temporal extent.",
     "droppedFilters": "The following filters are not supported here and were removed: {filters}.",
@@ -377,6 +424,7 @@
     "notFullySupported": "Not all of the options may be supported.",
     "notSupported": "Item Search is not supported by the API.",
     "placeholder": "Search...",
+    "removeDate": "Remove date",
     "selectCollections": "Select one or multiple collections...",
     "selectDateRange": "Select date range",
     "selectForItemSearch": "Select for Item Search",
@@ -408,6 +456,7 @@
     "conformanceClasses": "Conformance Classes",
     "detailsAboutSource": "Details about the STAC source",
     "extension": "Extension",
+    "externalData": "External data source",
     "fileFormat": "File Format",
     "id": "ID",
     "invalid": "Invalid",
@@ -469,6 +518,7 @@
   "stacAssets": "Asset | Assets",
   "stacCatalog": "Catalog | Catalogs",
   "stacCollection": "Collection | Collections",
+  "stacEntity": "resource | resources",
   "stacItem": "Item | Items",
   "submit": "Submit",
   "switchToDarkMode": "Switch to dark mode",

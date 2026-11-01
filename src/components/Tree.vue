@@ -128,21 +128,24 @@ export default {
       return false;
     },
     to() {
+      // undefined, never null: bootstrap-vue-next treats a present-but-null
+      // `to` as a link and falls back to href="#", which navigates to the
+      // start page in hash history mode.
       if (this.active) {
-        return null;
+        return undefined;
       }
       if (this.pagination) {
         if (this.parent && (!this.data || this.parent.getAbsoluteUrl() !== this.data.getAbsoluteUrl())) {
           return this.toBrowserPath(this.parent);
         }
         else {
-          return null;
+          return undefined;
         }
       }
       else if (this.stac instanceof STAC) {
         return this.toBrowserPath(this.stac);
       }
-      return null;
+      return undefined;
     },
     title() {
       if (this.pagination) {
