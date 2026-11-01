@@ -268,6 +268,46 @@ export function synthesizeRgbRender(asset) {
 }
 
 /**
+ * The zero-based index of an asset's alpha band, or null when it has none.
+ *
+ * An alpha band is named `alpha`. The band must be 8-bit, because the channel
+ * it writes to is: a 16-bit coverage value written straight into an 8-bit
+ * alpha channel clamps every covered pixel to opaque.
+ */
+export function alphaBandIndex(asset) {
+  const bands = assetBands(asset);
+  const index = bands.findIndex(
+    b => typeof b?.name === 'string' && b.name.toLowerCase() === 'alpha');
+  if (index === -1) {return null;}
+  const type = bands[index].data_type;
+  return type == null || type === 'uint8' ? index : null;
+}
+
+/**
+ * A render with what the asset says about its own emptiness folded in.
+ *
+ * A render describes colour. An asset's bands describe the data: which value
+ * means "nothing here", and which band is a coverage mask. A render that says
+ * nothing about `nodata` does not state that the asset covers every pixel, so
+ * the asset keeps its say. A render that names its own `nodata` wins, because
+ * the publisher wrote that for this picture.
+ *
+ * A coverage band outranks a nodata value. A nodata value infers emptiness
+ * from the colour, so it punches out a black roof together with the sea. A
+ * coverage band states which pixels the data covers.
+ */
+export function withAssetEmptiness(render, asset) {
+  if (!render) {return render;}
+  const alphaBand = alphaBandIndex(asset);
+  if (alphaBand != null) {return { ...render, alphaBand };}
+  if (render.nodata != null) {return render;}
+  const nodata = [...new Set(
+    assetBands(asset).slice(0, 3).map(b => b?.nodata).filter(v => v != null),
+  )];
+  return nodata.length > 0 ? { ...render, nodata } : render;
+}
+
+/**
  * Whether an asset may inherit the item's first render for want of one of its
  * own: only when its band metadata describes exactly one band. A colormap is a
  * function of one band, so a multi-band asset would draw as a ramp of its red
@@ -377,14 +417,18 @@ function stretch(v, min, span) {
 // interleaved samples and the Zarr reader produces one plane per band, which
 // is the whole of the difference between them.
 
+// `planes` is how many bands the tile carries. The compositor checks a band
+// index against it, because a band the tile does not have reads the next
+// pixel's samples as if they were data.
+
 /** Samples over an interleaved buffer: pixel `i` of band `b` at `i * stride + b`. */
 export function interleavedSamples({ data, w, h, npix, stride }) {
-  return { data, w, h, npix, offsetOf: (band, i) => i * stride + band };
+  return { data, w, h, npix, planes: stride, offsetOf: (band, i) => i * stride + band };
 }
 
 /** Samples over band planes: pixel `i` of band `b` at `b * planeStride + i`. */
-export function planarSamples({ data, w, h, npix, planeStride }) {
-  return { data, w, h, npix, offsetOf: (band, i) => band * planeStride + i };
+export function planarSamples({ data, w, h, npix, planeStride, planes = 1 }) {
+  return { data, w, h, npix, planes, offsetOf: (band, i) => band * planeStride + i };
 }
 
 /** Composite three bands of `samples` into true colour. */
@@ -393,13 +437,28 @@ function compositeRgb(render, bands, samples) {
   const nodataSet = nodataSetOf(render);
   const hasNodata = nodataSet.size > 0;
   const [b0, b1, b2] = bands;
-  const { data, w, h, npix, offsetOf } = samples;
+  const { data, w, h, npix, planes, offsetOf } = samples;
+  // A coverage band states the alpha of every pixel, so it replaces the guess
+  // that the nodata sentinels make. One the tile does not carry is dropped.
+  const alphaBand = Number.isInteger(render.alphaBand)
+    && render.alphaBand >= 0 && render.alphaBand < planes
+    ? render.alphaBand
+    : null;
 
   const out = new Uint8ClampedArray(npix * 4);
   for (let i = 0, o = 0; i < npix; i++, o += 4) {
     const r = data[offsetOf(b0, i)];
     const g = data[offsetOf(b1, i)];
     const b = data[offsetOf(b2, i)];
+    if (alphaBand != null) {
+      const a = data[offsetOf(alphaBand, i)];
+      if (!(a > 0)) {continue;} // alpha stays 0
+      out[o] = stretch(r, m0, s0);
+      out[o + 1] = stretch(g, m1, s1);
+      out[o + 2] = stretch(b, m2, s2);
+      out[o + 3] = a;
+      continue;
+    }
     // A pixel is empty only where every channel reads as empty: a single
     // channel that happens to equal the sentinel is real data, and punching
     // it out would perforate the scene.
@@ -540,7 +599,7 @@ export function zarrSamples(chunk, bandAxis = null) {
   const leading = shape.slice(0, shape.length - 2);
   const banded = leading.length > 0 && leading[axis] > 1;
   const planeStride = banded ? (chunk.stride?.[axis] ?? npix) : 0;
-  return { data, w, h, npix, planeStride };
+  return { data, w, h, npix, planeStride, planes: banded ? leading[axis] : 1 };
 }
 
 /**

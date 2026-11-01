@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   makeRenderTileLoader, resolveRenders, renderFromClassification,
   classificationClasses, discreteLegend, assetBands, synthesizeRgbRender, canInheritRender,
+  withAssetEmptiness,
 } from '../../src/utils/renders.js'
 
 // Build a fake deck.gl-geotiff COGLayer `image` whose fetchTile returns one
@@ -537,6 +538,29 @@ describe('RGB renders', () => {
     expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
   })
 
+  // A coverage mask states which pixels the data covers. A nodata value only
+  // guesses it from the colour, so it punches out a black roof with the sea.
+  it('takes alpha from the coverage band the render names', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100]], alphaBand: 3 }
+    const res = await call(render, rgbTile([100, 50, 0, 0], [100, 50, 0, 255]))
+    expect(pixel(res, 0)[3]).toBe(0)
+    expect(pixel(res, 1)).toEqual([255, 128, 0, 255])
+  })
+
+  it('keeps a partial value from the coverage band', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100]], alphaBand: 3 }
+    const res = await call(render, rgbTile([100, 50, 0, 128]))
+    expect(pixel(res, 0)).toEqual([255, 128, 0, 128])
+  })
+
+  // A coverage band the tile does not carry would read the next pixel's red
+  // channel as alpha, which perforates the scene at random.
+  it('ignores a coverage band the tile does not carry', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100]], alphaBand: 9 }
+    const res = await call(render, rgbTile([100, 50, 0, 0]))
+    expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
+  })
+
   it('keeps the colormap path for a single-band bidx', async () => {
     const render = { colormap_name: 'viridis', bidx: [1], rescale: [[0, 1]] }
     const res = await call(render, fakeImage(new Float32Array([1]), 1, 1))
@@ -639,6 +663,59 @@ describe('synthesizeRgbRender', () => {
     expect(synthesizeRgbRender({ bands: [band(0, 1), band(0, 1), {}] })).toBeNull()
     expect(synthesizeRgbRender({ bands: [band(0, 1), band(0, 1), band(5, 5)] })).toBeNull()
     expect(synthesizeRgbRender({})).toBeNull()
+  })
+})
+
+describe('withAssetEmptiness', () => {
+  const rgba = [
+    { name: 'red', nodata: 0 },
+    { name: 'green', nodata: 0 },
+    { name: 'blue', nodata: 0 },
+    { name: 'alpha', data_type: 'uint8' },
+  ]
+
+  it('names the alpha band of an asset that carries one', () => {
+    const render = { rescale: [[0, 255], [0, 255], [0, 255]] }
+    expect(withAssetEmptiness(render, { bands: rgba })).toEqual({ ...render, alphaBand: 3 })
+  })
+
+  // The italy-aerial mosaic declares a render with no `nodata` and an asset
+  // whose bands say 0 means "no imagery". The render says nothing about
+  // coverage, so it must not erase what the asset says. Before this the
+  // mosaic drew opaque over the sea.
+  it('keeps the band nodata of a render that declares none', () => {
+    const render = { rescale: [[0, 255]] }
+    const bands = rgba.slice(0, 3)
+    expect(withAssetEmptiness(render, { bands })).toEqual({ ...render, nodata: [0] })
+  })
+
+  it('leaves the nodata a render declares for itself', () => {
+    const render = { rescale: [[0, 255]], nodata: 255 }
+    expect(withAssetEmptiness(render, { bands: rgba.slice(0, 3) })).toEqual(render)
+  })
+
+  it('reads the bands of an asset that uses the raster extension', () => {
+    const render = { rescale: [[0, 255]] }
+    const got = withAssetEmptiness(render, { 'raster:bands': rgba })
+    expect(got.alphaBand).toBe(3)
+  })
+
+  it('leaves a render alone when the asset says nothing about emptiness', () => {
+    const render = { rescale: [[0, 255]] }
+    expect(withAssetEmptiness(render, { bands: [{ name: 'red' }] })).toEqual(render)
+    expect(withAssetEmptiness(render, {})).toEqual(render)
+  })
+
+  // An alpha band of a wider type does not hold 0-255, so writing it straight
+  // into the alpha channel would clamp every covered pixel to opaque or make
+  // a partial value meaningless.
+  it('ignores an alpha band that is not 8-bit', () => {
+    const bands = [...rgba.slice(0, 3), { name: 'alpha', data_type: 'uint16' }]
+    expect(withAssetEmptiness({ rescale: [[0, 255]] }, { bands }).alphaBand).toBeUndefined()
+  })
+
+  it('passes a null render through', () => {
+    expect(withAssetEmptiness(null, { bands: rgba })).toBeNull()
   })
 })
 

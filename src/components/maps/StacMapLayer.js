@@ -4,6 +4,7 @@ import { pmtilesProtocol } from './MapMixin.js';
 import {
   resolveRenders, makeRenderTileLoader, renderFromClassification,
   classificationClasses, discreteLegend, assetBands, synthesizeRgbRender, canInheritRender,
+  withAssetEmptiness,
 } from '../../utils/renders.js';
 import { orderedRenderLayers } from '../../utils/renderOrder.js';
 import { isHttpZarrHref, isZarrAsset } from '../../utils/zarrSource.js';
@@ -1201,7 +1202,10 @@ export default class StacMapLayer {
     }
 
     if (direct) {
-      return { asset, render: direct[1], title: direct[1].title || direct[0] };
+      // A declared render states colour, not coverage. The asset's bands keep
+      // their say about where it holds no data. See withAssetEmptiness.
+      const render = withAssetEmptiness(direct[1], asset);
+      return { asset, render, title: direct[1].title || direct[0] };
     }
     const rgb = synthesizeRgbRender(asset);
     if (rgb) {

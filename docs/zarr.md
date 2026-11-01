@@ -122,9 +122,20 @@ true-colour Sentinel-2 mosaic with this one:
 ```
 
 An 8-bit store with three or more bands needs no render: its samples are
-already display values, so the browser composites them as true colour. It
-takes the no-data values from the asset's `bands`, which is what keeps the sea
-transparent in an orthophoto rather than black.
+already display values, so the browser composites them as true colour.
+
+A render states colour, not coverage. The asset's `bands` state coverage, and
+the browser reads them next to any render. This is what keeps the sea
+transparent in an orthophoto rather than black. Two things mark a pixel as
+empty:
+
+- A band named `alpha`. The browser writes its 8-bit value straight to the
+  alpha channel, so a partial value at a mosaic seam survives.
+- The `nodata` value of the colour bands, for a store with no alpha band. The
+  browser drops a pixel only where every colour band reads as no-data.
+
+Prefer an alpha band. A no-data value infers coverage from the colour, so it
+also punches out a black roof.
 
 ### Use a projection the browser can reproject
 

@@ -24,7 +24,7 @@ import {
   geoZarrAttrsFromCoordinates, isIcechunkAsset, openZarrRoot, resolveLevelPaths,
   unsupportedCodecs, unusableCrs, zarrZoomGuard,
 } from './zarrSource.js';
-import { assetBands, makeZarrRenderTileLoader } from './renders.js';
+import { assetBands, makeZarrRenderTileLoader, withAssetEmptiness } from './renders.js';
 
 /** Notice reasons the map surfaces for a Zarr asset it will not draw. */
 export const ZARR_NOTICE_CHUNK_SHAPE = 'zarr-chunk-shape';
@@ -505,8 +505,13 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
   // default 0 to 1 range, which for anything else saturates to one flat
   // colour. That is a gap in the collection's metadata, so it is reported
   // rather than guessed at.
-  const effective = render
-    ?? synthesizeZarrRgbRender(probe, asset)
+  // A declared render states colour, not coverage. The asset's own bands say
+  // where the store holds no data, so they are folded into either render. The
+  // italy-aerial mosaic is the case: it declares a true-colour render with no
+  // `nodata`, and its fourth band is the coverage mask that keeps the sea
+  // transparent. See withAssetEmptiness.
+  const effective = withAssetEmptiness(
+    render ?? synthesizeZarrRgbRender(probe, asset), asset)
     ?? renderFromStatistics(variable)
     ?? reportMissingRender(descriptor, probe);
   const { getTileData, renderTile } = makeZarrRenderTileLoader(effective, { zarr });
