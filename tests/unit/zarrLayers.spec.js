@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   chunkAmplification,
   defaultVariable,
+  describesArray,
   zarrDescriptors,
   zarrVariables,
 } from '../../src/utils/zarrLayers.js'
@@ -203,5 +204,28 @@ describe('zarrDescriptors', () => {
       title: 'A Zarr store',
       render: null,
     }])
+  })
+})
+
+describe('describesArray', () => {
+  // The GOES store's root states this grid. Each fire variable is a
+  // [time, y, x] array over the same two spatial dimensions.
+  const meta = { levels: [{ path: '.', arrayWidth: 2500, arrayHeight: 1500 }] }
+
+  it('accepts a description that matches the two spatial dimensions', () => {
+    expect(describesArray(meta, { shape: [3996, 1500, 2500] })).toBe(true)
+    expect(describesArray(meta, { shape: [1500, 2500] })).toBe(true)
+  })
+
+  it('rejects a description of a different grid', () => {
+    expect(describesArray(meta, { shape: [3996, 1200, 2500] })).toBe(false)
+    expect(describesArray(meta, { shape: [3996, 2500, 1500] })).toBe(false)
+  })
+
+  it('rejects metadata or an array it cannot read', () => {
+    expect(describesArray(null, { shape: [1500, 2500] })).toBe(false)
+    expect(describesArray({ levels: [] }, { shape: [1500, 2500] })).toBe(false)
+    expect(describesArray(meta, { shape: [2500] })).toBe(false)
+    expect(describesArray(meta, {})).toBe(false)
   })
 })

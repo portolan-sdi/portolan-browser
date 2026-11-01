@@ -41,7 +41,10 @@ const CASES = [
     name: 'goes',
     title: 'GOES-18 fire characterisation (virtual Zarr over netCDF)',
     url: 'https://data.source.coop/mmidzik/goes-fdc/goes-18-fdcc/collection.json',
-    expect: 'draws at the collection extent; lists 5 variables; Power is the default',
+    // The default variable is Fire Area, which holds a value only at a fire
+    // pixel, so the canvas is correctly empty for most scans. Switch to Fire
+    // Mask in the layer control to see the grid draw.
+    expect: 'lists 5 variables and draws the geostationary grid; the default variable is sparse',
   },
   {
     name: 'ftw',

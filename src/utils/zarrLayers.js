@@ -358,6 +358,26 @@ function reportMissingRender(descriptor, array) {
 }
 
 /**
+ * Whether parsed GeoZarr metadata describes the grid of an array.
+ *
+ * The test is the shape. A description taken from a parent group belongs to
+ * the array only when the array's two spatial dimensions match the size the
+ * description states. A mismatch means the group describes a different grid.
+ *
+ * @param meta Parsed GeoZarr metadata.
+ * @param array The zarrita array to check against.
+ * @returns True when the description fits the array.
+ */
+export function describesArray(meta, array) {
+  const level = meta?.levels?.[0];
+  const shape = array?.shape;
+  if (!level || !Array.isArray(shape) || shape.length < 2) {return false;}
+  const height = shape[shape.length - 2];
+  const width = shape[shape.length - 1];
+  return level.arrayWidth === width && level.arrayHeight === height;
+}
+
+/**
  * Open a Zarr descriptor's store and build the `ZarrLayer` props for it.
  *
  * This is where the store is first touched, so it is also where a store that
@@ -394,14 +414,40 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
   //
   // The attributes are normalised first, because a pyramid has two spellings
   // in the wild. See withMultiscalesLayout.
-  const attrs = withMultiscalesLayout(group.attrs);
-  let declared = null;
+  const ownAttrs = withMultiscalesLayout(group.attrs);
   let declaredError = null;
-  try {
-    declared = parseGeoZarrMetadata(attrs);
-  } catch (error) {
-    declaredError = error;
+  const parse = (candidate) => {
+    try {
+      return parseGeoZarrMetadata(candidate);
+    } catch (error) {
+      declaredError = error;
+      return null;
+    }
+  };
+
+  let declared = parse(ownAttrs);
+
+  // A store may describe its grid once on the root group and hold each
+  // variable in a child array. The child array then carries no spatial
+  // attributes of its own. Read the root's description in that case.
+  //
+  // The description must also reach the layer. The layer reads the GeoZarr
+  // attributes of the node it is given, and that node is the child array, so
+  // the root's attributes are passed as the override below.
+  //
+  // The GOES-18 store has this shape. It puts `spatial:transform` and
+  // `proj:wkt2` on the root and holds one array per fire variable.
+  let inherited = null;
+  if (!declared && group !== root) {
+    const rootAttrs = withMultiscalesLayout(root.attrs);
+    const fromRoot = parse(rootAttrs);
+    if (fromRoot) {
+      declared = fromRoot;
+      inherited = rootAttrs;
+    }
   }
+
+  const attrs = inherited ?? ownAttrs;
 
   // A store that declares a pyramid the parser cannot read must say so. The
   // coordinate arrays describe one level, so falling back to them silently
@@ -418,10 +464,19 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
     throw new ZarrUnsuitableError(ZARR_NOTICE_NO_GEO, 'The Zarr store has no array to render');
   }
 
+  // An inherited description must fit the array it describes. A root that
+  // describes a different grid would put every chunk in the wrong place, so
+  // the coordinate arrays are the safer source then.
+  if (inherited && !describesArray(declared, probe)) {
+    declared = null;
+    inherited = null;
+  }
+
   // `metadata` stays undefined for a store that describes itself, because then
-  // there is nothing to override.
+  // there is nothing to override. An inherited description is always passed,
+  // because the layer cannot read it off the array it is given.
   const metadata = declared
-    ? undefined
+    ? inherited ?? undefined
     : await geoZarrAttrsFromCoordinates(root, probe, { crs: stacCrs(asset) });
   if (!declared && !metadata) {
     throw new ZarrUnsuitableError(
