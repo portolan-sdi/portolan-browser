@@ -3,7 +3,7 @@
   "stac_version": "1.1.0",
   "id": "zarr-test-catalog",
   "title": "Zarr rendering test catalog",
-  "description": "Local Portolan catalog for the Zarr map rendering work. Each collection points at a public Zarr or Icechunk store and covers one outcome the browser has to produce: a store that draws, a store held back to a zoom level, a store refused for its chunk shape, and a store refused for its codec. Run `node tests/fixtures/catalogs/zarr/build.mjs` to rebuild the derived collections. The dev server serves this catalog at /test-catalogs/zarr/catalog.json. See docs/zarr.md.",
+  "description": "Local Portolan catalog for the Zarr map rendering work. Each collection points at a public Zarr or Icechunk store and covers one outcome the browser has to produce: a store that draws, a store held back to a zoom level, a store refused for its chunk shape, and a store refused for its codec. Run `node tests/fixtures/catalogs/zarr/build.mjs` to rebuild the derived collections. Serve this catalog with node tests/fixtures/serve-catalogs.mjs, which puts it on port 8082. See docs/zarr.md.",
   "links": [
     {
       "rel": "root",
@@ -15,13 +15,19 @@
       "rel": "child",
       "href": "https://data.source.coop/mmidzik/goes-fdc/goes-18-fdcc/collection.json",
       "type": "application/json",
-      "title": "GOES-18 fire characterisation, CONUS — draws"
+      "title": "GOES-18 fire characterisation, CONUS — refused, geostationary grid"
     },
     {
       "rel": "child",
       "href": "https://data.source.coop/ftw/global-data/features/zarr/collection.json",
       "type": "application/json",
-      "title": "Fields of The World global composites — draws from zoom 11"
+      "title": "Fields of The World global composites — held back to zoom 11, no render"
+    },
+    {
+      "rel": "child",
+      "href": "./ftw-global-rendered/collection.json",
+      "type": "application/json",
+      "title": "Fields of The World global composites, with a render — draws from zoom 11"
     },
     {
       "rel": "child",

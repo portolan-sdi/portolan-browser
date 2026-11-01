@@ -6,10 +6,14 @@
 // notice the map showed. The stores are public, so this reads real data over
 // the network and is slow by nature.
 //
-// Start the dev server first, then run it from the repository root:
+// Start the dev server and the catalog server first, then run it from the
+// repository root:
 //
 //   pnpm start &
+//   node tests/fixtures/serve-catalogs.mjs &
 //   node tests/manual/zarr-render-check.mjs
+//
+// BROWSER_URL and CATALOG_URL override the two ports.
 //
 // Pass a collection directory name to check one case only:
 //
@@ -18,16 +22,19 @@
 import { chromium } from '@playwright/test';
 
 const BASE = process.env.BROWSER_URL || 'http://localhost:8080';
-const CATALOG = `${BASE}/test-catalogs/zarr/catalog.json`;
+// The catalogs are served on their own port, as they are in any deployment.
+// See tests/fixtures/serve-catalogs.mjs.
+const CATALOGS = process.env.CATALOG_URL || 'http://localhost:8082';
+const CATALOG = `${CATALOGS}/zarr/catalog.json`;
 
 const CASES = [
   {
     name: 'italy',
     title: 'Italy AGEA orthophoto (12-level pyramid, RGBA)',
-    path: '/test-catalogs/italy/agea-orthophoto/collection.json',
+    path: '/italy/agea-orthophoto/collection.json',
     expect: 'draws true colour over Italy at every zoom',
-    // This catalog is not in the repository. Link one in to run the case:
-    //   ln -s /path/to/italy-aerial-catalog/catalog tests/fixtures/catalogs/italy
+    // This catalog is not in the repository. Mount it to run the case:
+    //   node tests/fixtures/serve-catalogs.mjs italy=/path/to/italy-aerial-catalog/catalog
     optional: true,
   },
   {
@@ -45,19 +52,19 @@ const CASES = [
   {
     name: 'ftw-rendered',
     title: 'FTW global composites, with a render declared',
-    path: '/test-catalogs/zarr/ftw-global-rendered/collection.json',
+    path: '/zarr/ftw-global-rendered/collection.json',
     expect: 'same store as ftw; draws in true colour once past zoom 11',
   },
   {
     name: 'dynamical-native',
     title: 'NOAA GFS analysis (chunked for time series)',
-    path: '/test-catalogs/zarr/dynamical-gfs-analysis/collection.json',
+    path: '/zarr/dynamical-gfs-analysis/collection.json',
     expect: 'refuses with the chunk-shape notice',
   },
   {
     name: 'dynamical-virtual',
     title: 'NOAA GFS analysis, virtual (GRIB codec)',
-    path: '/test-catalogs/zarr/dynamical-gfs-analysis-virtual/collection.json',
+    path: '/zarr/dynamical-gfs-analysis-virtual/collection.json',
     expect: 'refuses with the codec notice',
   },
 ];
@@ -114,7 +121,7 @@ for (const testCase of cases) {
     }
   });
 
-  if (testCase.optional && !await isServed(`${BASE}${testCase.path}`)) {
+  if (testCase.optional && !await isServed(`${CATALOGS}${testCase.path}`)) {
     console.log(`\n=== ${testCase.name}: skipped, ${testCase.path} is not served`);
     await context.close();
     continue;
@@ -122,7 +129,7 @@ for (const testCase of cases) {
 
   const target = testCase.url
     ? `${BASE}/#/external/${testCase.url.replace(/^https?:\/\//, '')}`
-    : `${BASE}/#/external/${BASE}${testCase.path}`;
+    : `${BASE}/#/external/${CATALOGS}${testCase.path}`;
 
   console.log(`\n=== ${testCase.name}: ${testCase.title}`);
   console.log(`    expect: ${testCase.expect}`);

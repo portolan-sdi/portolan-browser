@@ -157,18 +157,33 @@ files too, not only on the store itself.
 ## Testing
 
 `tests/fixtures/catalogs/zarr` is a local catalog whose collections cover each
-outcome above. The dev server serves it at `/test-catalogs/zarr/catalog.json`.
+outcome above. Serve it with:
+
+```sh
+node tests/fixtures/serve-catalogs.mjs
+```
+
+That puts the catalogs on port 8082, which is a different origin from the dev
+server on port 8080. A catalog is a separate origin in every real deployment,
+and serving it from the browser's own origin hides the CORS mistakes that stop
+a real Zarr store from drawing.
+
+Open one by its full URL:
+
+```
+http://localhost:8080/#/external/http://localhost:8082/zarr/catalog.json
+```
+
+Mount a catalog that lives outside the repository under a name of its own:
+
+```sh
+node tests/fixtures/serve-catalogs.mjs italy=/path/to/italy-aerial-catalog/catalog
+```
+
 Rebuild the derived collections from the publishers' own metadata with:
 
 ```sh
 node tests/fixtures/catalogs/zarr/build.mjs
-```
-
-Any other Portolan catalog can be linked into the same directory and is then
-served the same way:
-
-```sh
-ln -s /path/to/italy-aerial-catalog/catalog tests/fixtures/catalogs/italy
 ```
 
 `tests/manual/zarr-render-check.mjs` drives a real browser over the catalog and
@@ -178,5 +193,6 @@ and it needs the network.
 
 ```sh
 pnpm start &
+node tests/fixtures/serve-catalogs.mjs &
 node tests/manual/zarr-render-check.mjs
 ```
