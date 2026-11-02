@@ -71,10 +71,22 @@ function mirrorUrl(context) {
 // The parquet asset of one partition, as an absolute href. An href that the
 // pattern matches wins. Otherwise the parquet asset with the `data` role wins,
 // which covers a publisher whose pattern and item hrefs do not correspond.
+// Null rather than a TypeError for an href that URL cannot parse, so one
+// malformed asset does not turn the resolver's answer into a generic
+// "Invalid URL" failure.
+function toAbsolute(href, base) {
+  try {
+    return new URL(href, base).href;
+  } catch {
+    return null;
+  }
+}
+
 function findPartitionHref(item, pattern, itemUrl) {
   const candidates = Object.values(item?.assets || {})
     .filter(asset => isParquetAsset(asset) && typeof asset.href === 'string')
-    .map(asset => ({ asset, url: new URL(asset.href, itemUrl).href }));
+    .map(asset => ({ asset, url: toAbsolute(asset.href, itemUrl) }))
+    .filter(candidate => candidate.url);
   const matcher = globToRegExp(pattern);
   const matched = candidates.find(candidate => matcher.test(candidate.url));
   if (matched) {
@@ -119,7 +131,12 @@ export async function resolveParquetGlob(asset, { signal, fetchJson = fetchItemJ
   }
 
   const link = itemLinks[0];
-  const itemUrl = link.getAbsoluteUrl?.() || link.href;
+  // A relative href with no getAbsoluteUrl would fetch against the page
+  // origin, which is never the catalog's host under hash routing.
+  const itemUrl = toAbsolute(link.getAbsoluteUrl?.() || link.href || '');
+  if (!itemUrl) {
+    throw unresolved(`The first item link of ${url} has no absolute href`);
+  }
   const item = await fetchJson(itemUrl, signal);
   const partitionUrl = findPartitionHref(item, url, itemUrl);
   if (!partitionUrl) {

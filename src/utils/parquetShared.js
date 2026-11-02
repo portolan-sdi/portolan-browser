@@ -55,6 +55,10 @@ export function hasGlobPattern(url) {
   return WILDCARD.test(url.split('#')[0].split('?')[0]);
 }
 
+function matchesParquet(type, href) {
+  return PARQUET_MEDIA_TYPES.some(mt => type.includes(mt)) || href.endsWith('.parquet');
+}
+
 // Matches the sibling predicates in StacMapLayer (isCogAsset/isPmtilesAsset):
 // substring media-type match — so parameterized types like
 // `application/vnd.apache.parquet; charset=binary` are detected — plus an
@@ -64,14 +68,16 @@ export function hasGlobPattern(url) {
 // through utils/parquetGlob.js. A caller that fetches the href as one file
 // filters with isLoadableParquetAsset below.
 export function isParquetAsset(asset) {
-  const type = asset.type || '';
   const href = asset.getAbsoluteUrl?.() || asset.href || '';
-  return PARQUET_MEDIA_TYPES.some(mt => type.includes(mt)) || href.endsWith('.parquet');
+  return matchesParquet(asset.type || '', href);
 }
 
 // A parquet asset whose href names one fetchable file. The map render path
 // downloads an asset's bytes directly and cannot expand a glob, so it filters
-// with this predicate and leaves glob assets to the table preview.
+// with this predicate and leaves glob assets to the table preview. The href
+// is computed once: stac-js builds the absolute URL on every getAbsoluteUrl
+// call, and the map filters whole asset lists with this predicate.
 export function isLoadableParquetAsset(asset) {
-  return isParquetAsset(asset) && !hasGlobPattern(asset.getAbsoluteUrl?.() || asset.href || '');
+  const href = asset.getAbsoluteUrl?.() || asset.href || '';
+  return matchesParquet(asset.type || '', href) && !hasGlobPattern(href);
 }

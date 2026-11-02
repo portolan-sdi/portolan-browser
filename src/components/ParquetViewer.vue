@@ -61,6 +61,7 @@ import {
   getBboxForRow,
   MAX_ROWS,
   GLOB_UNRESOLVED,
+  isLoadableParquetAsset,
   readMirrorRowTotal,
   resolveParquetGlob,
 } from '../utils/parquet';
@@ -131,17 +132,25 @@ export default {
     },
     rowInfo() {
       if (!this.tableData) {return null;}
-      if (this.tableData.loadedRows < this.displayRows) {
-        return this.$t('parquet.loadedRowCount', {
-          loaded: this.tableData.loadedRows.toLocaleString(this.$i18n.locale),
-          total: this.displayRows.toLocaleString(this.$i18n.locale)
-        }, this.displayRows);
-      }
-      // One partition, and no count for the rest of them. Say so, rather than
-      // let this file's rows read as the whole collection.
-      if (this.partition) {
+      const loaded = this.tableData.loadedRows;
+      // One partition, and no count for the rest of them. Every number here
+      // is this file's, so every label says "in this partition" rather than
+      // let a partition's rows read as the whole collection.
+      if (this.partition && !this.collectionRows) {
+        if (loaded < this.tableData.totalRows) {
+          return this.$t('parquet.partitionLoadedRowCount', {
+            loaded: loaded.toLocaleString(this.$i18n.locale),
+            total: this.tableData.totalRows.toLocaleString(this.$i18n.locale)
+          }, this.tableData.totalRows);
+        }
         return this.$t('parquet.partitionRowCount', {
-          count: this.displayRows.toLocaleString(this.$i18n.locale)
+          count: loaded.toLocaleString(this.$i18n.locale)
+        }, loaded);
+      }
+      if (loaded < this.displayRows) {
+        return this.$t('parquet.loadedRowCount', {
+          loaded: loaded.toLocaleString(this.$i18n.locale),
+          total: this.displayRows.toLocaleString(this.$i18n.locale)
         }, this.displayRows);
       }
       return this.$t('parquet.rowCount', {
@@ -175,6 +184,10 @@ export default {
         // A partitioned collection points one asset at every partition with a
         // wildcard href. Resolve it to one partition the browser can read.
         const { url, partition } = await resolveParquetGlob(this.selectedAsset);
+        // Every await below re-checks loadId: the user may have selected
+        // another asset meanwhile, and this load's results belong to the old
+        // one. The same check guards the catch and finally blocks.
+        if (loadId !== this.loadId) {return;}
         this.partition = partition;
         this.collectionRows = partition?.totalRows || null;
         if (partition?.mirrorUrl) {
@@ -182,6 +195,7 @@ export default {
           this.loadCollectionRows(partition.mirrorUrl, loadId);
         }
         const meta = await loadParquetMetadata(url);
+        if (loadId !== this.loadId) {return;}
         this.parquetFile = meta.file;
         this.parquetMetadata = meta.metadata;
         this.geoInfo = {
@@ -198,10 +212,21 @@ export default {
         const data = await loadParquetRows(
           meta.file, meta.metadata, meta.columnNames, meta.geometryColumn
         );
+        if (loadId !== this.loadId) {return;}
         this.tableData = data;
       } catch (err) {
+        if (loadId !== this.loadId) {return;}
         console.error('ParquetViewer: failed to load', err);
         if (err.code === GLOB_UNRESOLVED) {
+          // The default pick fell on a glob that no item expands. Show the
+          // first loadable asset instead; an error about the glob belongs to
+          // the user's own pick, not to a pick they never made.
+          const fallback = !this.selectedAssetKey
+            && this.parquetAssets.find(a => isLoadableParquetAsset(a));
+          if (fallback) {
+            this.selectedAssetKey = fallback.getKey();
+            return;
+          }
           this.error = this.$t('parquet.globUnresolved');
         } else if (err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
           this.error = this.$t('parquet.networkError');
@@ -209,8 +234,10 @@ export default {
           this.error = this.$t('parquet.loadFailed', { message: err.message });
         }
       } finally {
-        this.loading = false;
-        this.loadingMessage = '';
+        if (loadId === this.loadId) {
+          this.loading = false;
+          this.loadingMessage = '';
+        }
       }
     },
     // Totals the partitions from the collection's item mirror. A failure

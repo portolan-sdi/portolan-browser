@@ -13,6 +13,7 @@ vi.mock('../../src/utils/parquet', () => ({
   loadParquetRows: vi.fn(),
   getBboxForRow: vi.fn(),
   GLOB_UNRESOLVED: 'globUnresolved',
+  isLoadableParquetAsset: asset => !/\*|%2A/i.test(asset.getAbsoluteUrl?.() || asset.href || ''),
   readMirrorRowTotal: vi.fn(),
   resolveParquetGlob: vi.fn(),
   MAX_ROWS: 10000,
@@ -125,8 +126,62 @@ describe('ParquetViewer glob resolution', () => {
     resolveParquetGlob.mockRejectedValue(error)
     const wrapper = viewer([globAsset])
     await flushPromises()
-    expect(wrapper.find('.parquet-error').text()).toContain('the href has a wildcard')
+    expect(wrapper.find('.parquet-error').text()).toContain('a pattern over many files')
     expect(loadParquetMetadata).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('falls back to the next loadable asset when the default pick is an unexpandable glob', async () => {
+    const plainAsset = { getKey: () => 'mirror', getAbsoluteUrl: () => PARTITION_HREF }
+    const error = new Error('No item links expand the pattern')
+    error.code = 'globUnresolved'
+    // By key, not identity: Vue hands the component a reactive proxy of the asset.
+    resolveParquetGlob.mockImplementation(asset => asset.getKey() === 'data'
+      ? Promise.reject(error)
+      : Promise.resolve({ url: asset.getAbsoluteUrl(), partition: null }))
+    tableLoads()
+    const wrapper = viewer([globAsset, plainAsset])
+    await flushPromises()
+    expect(wrapper.find('.parquet-error').exists()).toBe(false)
+    expect(loadParquetMetadata).toHaveBeenCalledWith(PARTITION_HREF)
+    expect(wrapper.vm.selectedAssetKey).toBe('mirror')
+    wrapper.unmount()
+  })
+
+  it('keeps the error when the user picked the glob asset themselves', async () => {
+    const plainAsset = { getKey: () => 'mirror', getAbsoluteUrl: () => PARTITION_HREF }
+    const error = new Error('No item links expand the pattern')
+    error.code = 'globUnresolved'
+    // By key, not identity: Vue hands the component a reactive proxy of the asset.
+    resolveParquetGlob.mockImplementation(asset => asset.getKey() === 'data'
+      ? Promise.reject(error)
+      : Promise.resolve({ url: asset.getAbsoluteUrl(), partition: null }))
+    tableLoads()
+    const wrapper = viewer([plainAsset, globAsset])
+    await flushPromises()
+    await wrapper.setData({ selectedAssetKey: 'data' })
+    await flushPromises()
+    expect(wrapper.find('.parquet-error').text()).toContain('a pattern over many files')
+    expect(wrapper.vm.selectedAssetKey).toBe('data')
+    wrapper.unmount()
+  })
+
+  it('drops a stale load when the user switches assets during the resolve', async () => {
+    const plainAsset = { getKey: () => 'mirror', getAbsoluteUrl: () => PARTITION_HREF }
+    const slow = deferred()
+    resolveParquetGlob.mockImplementation(asset => asset.getKey() === 'data'
+      ? slow.promise
+      : Promise.resolve({ url: asset.getAbsoluteUrl(), partition: null }))
+    tableLoads()
+    const wrapper = viewer([globAsset, plainAsset])
+    await wrapper.setData({ selectedAssetKey: 'mirror' })
+    await flushPromises()
+    // The stale resolve lands after the switch and must change nothing.
+    slow.resolve({ url: 'https://data.test/stale.parquet', partition: partitionOf() })
+    await flushPromises()
+    expect(wrapper.find('.parquet-partition-note').exists()).toBe(false)
+    expect(loadParquetMetadata).not.toHaveBeenCalledWith('https://data.test/stale.parquet')
+    expect(loadParquetMetadata).toHaveBeenCalledWith(PARTITION_HREF)
     wrapper.unmount()
   })
 
