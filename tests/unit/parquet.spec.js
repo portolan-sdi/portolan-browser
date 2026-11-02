@@ -29,6 +29,18 @@ describe('parquet utilities', () => {
     it('returns false for missing type and href', () => {
       expect(isParquetAsset({})).toBe(false)
     })
+
+    it('returns false for a glob href, which names many files rather than one', () => {
+      const type = 'application/vnd.apache.parquet'
+      expect(isParquetAsset({ type, href: './country=*/geom_type=*/type=*/*.parquet' })).toBe(false)
+      // getAbsoluteUrl() percent-encodes the asterisk
+      expect(isParquetAsset({
+        type,
+        href: './country=*/*.parquet',
+        getAbsoluteUrl: () => 'https://example.com/col/country=%2A/%2A.parquet',
+      })).toBe(false)
+      expect(isParquetAsset({ type, getAbsoluteUrl: () => 'https://example.com/col/country=%2a/%2a.parquet' })).toBe(false)
+    })
   })
 
   describe('findParquetAssets', () => {
@@ -42,6 +54,14 @@ describe('parquet utilities', () => {
       expect(result).toHaveLength(2)
       expect(result[0].href).toBe('data.parquet')
       expect(result[1].href).toBe('other.parquet')
+    })
+
+    it('skips a partition glob asset and keeps the single files', () => {
+      const assets = [
+        { type: 'application/vnd.apache.parquet', href: './key=*/*.parquet' },
+        { type: 'application/vnd.apache.parquet', href: './items.parquet' },
+      ]
+      expect(findParquetAssets(assets).map(a => a.href)).toEqual(['./items.parquet'])
     })
 
     it('returns empty array when no parquet assets', () => {
