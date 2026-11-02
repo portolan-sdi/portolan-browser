@@ -551,6 +551,58 @@ export async function loadGeoJsonFromParquet(url, { signal, fields = [] } = {}) 
   };
 }
 
+// Byte cap for the item-mirror read below. The mirror holds one row per item,
+// so a collection with 54 partitions ships about 34 KB. The cap stops a
+// catalog with an unusually large mirror from costing the preview a long read
+// for a number it only displays.
+export const MAX_MIRROR_BYTES = 10 * 1024 * 1024;
+
+const MIRROR_ROW_COUNT_COLUMN = 'table:row_count';
+
+/**
+ * Total the row counts the collection's STAC-GeoParquet item mirror declares.
+ *
+ * Each row of the mirror is one item, and a partitioned collection's item is
+ * one partition, so the sum is the row count over every partition. Only the
+ * `table:row_count` column is read.
+ *
+ * Returns null rather than a wrong number whenever the file cannot settle the
+ * question: no such column, a file over MAX_MIRROR_BYTES, or a row with no
+ * count. A partial sum would understate the collection and read as a fact.
+ */
+export async function readMirrorRowTotal(url, { signal } = {}) {
+  const { file, metadata, columnNames, totalRows } = await loadParquetMetadata(url, { signal });
+  if (!columnNames.includes(MIRROR_ROW_COUNT_COLUMN) || file.byteLength > MAX_MIRROR_BYTES) {
+    return null;
+  }
+
+  const rows = await parquetReadObjects({
+    file,
+    metadata,
+    compressors,
+    columns: [MIRROR_ROW_COUNT_COLUMN],
+    rowStart: 0,
+    rowEnd: totalRows,
+  });
+
+  let sum = 0;
+  for (const row of rows) {
+    const declared = row[MIRROR_ROW_COUNT_COLUMN];
+    // An explicit null check, because `Number(null)` is 0: an item with no
+    // count would otherwise add nothing and the total would understate the
+    // collection.
+    if (declared === null || declared === undefined) {
+      return null;
+    }
+    const count = Number(declared);
+    if (!Number.isFinite(count)) {
+      return null;
+    }
+    sum += count;
+  }
+  return sum > 0 ? sum : null;
+}
+
 export async function loadParquetRows(file, metadata, columnNames, geometryColumn) {
   const totalRows = Number(metadata.num_rows);
   const rowEnd = Math.min(totalRows, MAX_ROWS);

@@ -315,6 +315,7 @@
     "networkError": "Unable to preview: cross-origin access not allowed or network error.",
     "pageRows": "Row {from}–{to} of {total} | Rows {from}–{to} of {total}",
     "partitionPreview": "Preview of the only partition: {name}. | Preview of the first of {count} partitions: {name}.",
+    "partitionRowCount": "{count} row in this partition | {count} rows in this partition",
     "retry": "Retry",
     "rowCount": "{count} row | {count} rows",
     "showingOf": "Showing first {loaded} of {total} row | Showing first {loaded} of {total} rows",

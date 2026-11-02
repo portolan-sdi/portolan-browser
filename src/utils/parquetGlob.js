@@ -60,6 +60,26 @@ async function fetchItemJson(url, signal) {
   return response.json();
 }
 
+// The row count over every partition, when the metadata states it. The asset
+// stands for the whole collection, so its `table:row_count` is the total.
+// stac-js falls back from the asset to its collection, which covers a
+// collection that declares the count once for all of its assets.
+function declaredTotalRows(asset) {
+  const count = Number(asset.getMetadata?.('table:row_count'));
+  return Number.isFinite(count) && count > 0 ? count : null;
+}
+
+// The STAC-GeoParquet copy of the collection's items, which the spec marks
+// with the `collection-mirror` role. Its one row per item holds each
+// partition's own row count, so a reader can total the collection from one
+// small file instead of 54 item requests. Null when the collection has no
+// mirror, and the caller then leaves the total unknown.
+function mirrorUrl(context) {
+  const mirror = context.getAssets?.()
+    ?.find(candidate => candidate.hasRole?.('collection-mirror') && isParquetAsset(candidate));
+  return mirror?.getAbsoluteUrl?.() || null;
+}
+
 // The parquet asset of one partition, as an absolute href. An href that the
 // pattern matches wins. Otherwise the parquet asset with the `data` role wins,
 // which covers a publisher whose pattern and item hrefs do not correspond.
@@ -85,6 +105,12 @@ function findPartitionHref(item, pattern, itemUrl) {
  * `partition` reports that partition's `title` and the collection's partition
  * `count` so the caller can state which partition it shows.
  *
+ * `partition` also carries the row count over every partition, so a count over
+ * one file does not read as a count over the collection. `totalRows` holds the
+ * count when the metadata declares it. Otherwise `mirrorUrl` names the
+ * collection's STAC-GeoParquet item mirror, which the caller can total itself.
+ * Both are null when neither is available.
+ *
  * Rejects with `error.code === GLOB_UNRESOLVED` when the collection lists no
  * items, when the asset has no collection, or when the first item declares no
  * parquet asset. A failed item request rejects with that request's own error.
@@ -98,7 +124,8 @@ export async function resolveParquetGlob(asset, { signal, fetchJson = fetchItemJ
     return { url, partition: null };
   }
 
-  const itemLinks = asset.getContext?.()?.getStacLinksWithRel?.('item') || [];
+  const context = asset.getContext?.();
+  const itemLinks = context?.getStacLinksWithRel?.('item') || [];
   if (itemLinks.length === 0) {
     throw unresolved(`No item links expand the pattern ${url}`);
   }
@@ -111,8 +138,14 @@ export async function resolveParquetGlob(asset, { signal, fetchJson = fetchItemJ
     throw unresolved(`Item ${itemUrl} declares no parquet asset`);
   }
 
+  const totalRows = declaredTotalRows(asset);
   return {
     url: partitionUrl,
-    partition: { title: link.title || item?.id || itemUrl, count: itemLinks.length },
+    partition: {
+      title: link.title || item?.id || itemUrl,
+      count: itemLinks.length,
+      totalRows,
+      mirrorUrl: totalRows ? null : mirrorUrl(context),
+    },
   };
 }

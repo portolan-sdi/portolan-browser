@@ -27,7 +27,9 @@ import {
   loadGeometryTypesForRows,
   getBboxForRow,
   bboxFromGeoJson,
+  readMirrorRowTotal,
   MAX_MAP_FEATURES,
+  MAX_MIRROR_BYTES,
   MAX_MAP_PARQUET_BYTES,
 } from '../../src/utils/parquet.js'
 
@@ -1081,5 +1083,53 @@ describe('bboxFromGeoJson', () => {
     expect(bboxFromGeoJson({ type: 'Point' })).toBeNull()
     expect(bboxFromGeoJson({ type: 'MultiPolygon', coordinates: [] })).toBeNull()
     expect(bboxFromGeoJson({ type: 'GeometryCollection', geometries: [] })).toBeNull()
+  })
+})
+
+describe('readMirrorRowTotal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const mirror = ({ counts, columns = ['table:row_count'], byteLength = 34424 }) => mockParquetFile({
+    numRows: counts.length,
+    rows: counts.map(count => ({ 'table:row_count': count })),
+    columns,
+    geo: false,
+    byteLength,
+  })
+
+  it('totals the row count of every item in the mirror', async () => {
+    mirror({ counts: [6311n, 7335n, 100n] })
+    expect(await readMirrorRowTotal('https://example.test/items.parquet')).toBe(13746)
+  })
+
+  it('reads the row count column alone', async () => {
+    mirror({ counts: [1n], columns: ['id', 'geometry', 'table:row_count'] })
+    await readMirrorRowTotal('https://example.test/items.parquet')
+    expect(parquetRead).toHaveBeenCalledWith(
+      expect.objectContaining({ columns: ['table:row_count'], rowStart: 0, rowEnd: 1 })
+    )
+  })
+
+  it('returns null when the mirror has no row count column', async () => {
+    mirror({ counts: [1n], columns: ['id', 'geometry'] })
+    expect(await readMirrorRowTotal('https://example.test/items.parquet')).toBeNull()
+  })
+
+  it('returns null rather than a partial total when a row has no count', async () => {
+    mirror({ counts: [6311n, null, 100n] })
+    expect(await readMirrorRowTotal('https://example.test/items.parquet')).toBeNull()
+  })
+
+  it('refuses a mirror over the byte cap without reading its rows', async () => {
+    mirror({ counts: [1n], byteLength: MAX_MIRROR_BYTES + 1 })
+    expect(await readMirrorRowTotal('https://example.test/items.parquet')).toBeNull()
+    expect(parquetRead).not.toHaveBeenCalled()
+  })
+
+  it('returns null for an empty mirror', async () => {
+    mirror({ counts: [] })
+    expect(await readMirrorRowTotal('https://example.test/items.parquet')).toBeNull()
   })
 })

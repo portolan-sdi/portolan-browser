@@ -37,7 +37,7 @@
         <ParquetTable
           :columns="tableData.columns"
           :rows="tableData.rows"
-          :totalRows="tableData.totalRows"
+          :totalRows="displayRows"
           :loadedRows="tableData.loadedRows"
           :geometryColumn="geoInfo.geometryColumn"
           :bboxMapping="geoInfo.bboxMapping"
@@ -61,6 +61,7 @@ import {
   getBboxForRow,
   MAX_ROWS,
   GLOB_UNRESOLVED,
+  readMirrorRowTotal,
   resolveParquetGlob,
 } from '../utils/parquet';
 
@@ -90,6 +91,12 @@ export default {
       parquetFile: null,
       parquetMetadata: null,
       partition: null,
+      // Rows over every partition, so the counts below describe the
+      // collection rather than the one file the table holds.
+      collectionRows: null,
+      // Identifies the current load. A late mirror total from a previous
+      // asset must not land on the asset the user selected since.
+      loadId: 0,
       tableData: null,
       geoInfo: { geometryColumn: null, bboxMapping: null, crs: null, crsDefinition: null },
     };
@@ -115,17 +122,31 @@ export default {
         count: this.partition.count.toLocaleString(this.$i18n.locale)
       }, this.partition.count);
     },
+    // Rows the reader can reach: the collection's count for a partitioned
+    // asset, the file's own count otherwise. The table shows fewer than this
+    // whenever it holds one partition of many, or the row cap cut the read.
+    displayRows() {
+      if (!this.tableData) {return 0;}
+      return this.collectionRows || this.tableData.totalRows;
+    },
     rowInfo() {
       if (!this.tableData) {return null;}
-      if (this.tableData.loadedRows < this.tableData.totalRows) {
+      if (this.tableData.loadedRows < this.displayRows) {
         return this.$t('parquet.loadedRowCount', {
           loaded: this.tableData.loadedRows.toLocaleString(this.$i18n.locale),
-          total: this.tableData.totalRows.toLocaleString(this.$i18n.locale)
-        }, this.tableData.totalRows);
+          total: this.displayRows.toLocaleString(this.$i18n.locale)
+        }, this.displayRows);
+      }
+      // One partition, and no count for the rest of them. Say so, rather than
+      // let this file's rows read as the whole collection.
+      if (this.partition) {
+        return this.$t('parquet.partitionRowCount', {
+          count: this.displayRows.toLocaleString(this.$i18n.locale)
+        }, this.displayRows);
       }
       return this.$t('parquet.rowCount', {
-        count: this.tableData.totalRows.toLocaleString(this.$i18n.locale)
-      }, this.tableData.totalRows);
+        count: this.displayRows.toLocaleString(this.$i18n.locale)
+      }, this.displayRows);
     }
   },
   watch: {
@@ -142,10 +163,12 @@ export default {
     async loadData() {
       if (!this.selectedAsset) {return;}
 
+      const loadId = ++this.loadId;
       this.loading = true;
       this.error = null;
       this.tableData = null;
       this.partition = null;
+      this.collectionRows = null;
 
       try {
         this.loadingMessage = this.$t('parquet.loadingMetadata');
@@ -153,6 +176,11 @@ export default {
         // wildcard href. Resolve it to one partition the browser can read.
         const { url, partition } = await resolveParquetGlob(this.selectedAsset);
         this.partition = partition;
+        this.collectionRows = partition?.totalRows || null;
+        if (partition?.mirrorUrl) {
+          // Not awaited: the table is the point, and the total only labels it.
+          this.loadCollectionRows(partition.mirrorUrl, loadId);
+        }
         const meta = await loadParquetMetadata(url);
         this.parquetFile = meta.file;
         this.parquetMetadata = meta.metadata;
@@ -183,6 +211,19 @@ export default {
       } finally {
         this.loading = false;
         this.loadingMessage = '';
+      }
+    },
+    // Totals the partitions from the collection's item mirror. A failure
+    // leaves the count at the one partition the table holds, because the
+    // preview itself does not depend on this number.
+    async loadCollectionRows(mirrorUrl, loadId) {
+      try {
+        const total = await readMirrorRowTotal(mirrorUrl);
+        if (total && loadId === this.loadId) {
+          this.collectionRows = total;
+        }
+      } catch (err) {
+        console.warn('ParquetViewer: failed to total the partitions', err);
       }
     },
     scrollToMap() {

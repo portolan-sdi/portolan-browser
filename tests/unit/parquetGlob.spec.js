@@ -9,14 +9,22 @@ const GLOB_HREF = 'https://data.test/ftw/2017/zone=*/utm*.parquet'
 // Collection that lists its `item` links.
 const link = (href, title) => ({ href, title, getAbsoluteUrl: () => new URL(href, COLLECTION_URL).href })
 
-const collection = (itemLinks) => ({
-  getStacLinksWithRel: rel => (rel === 'item' ? itemLinks : []),
+const mirror = (href = './items.parquet') => ({
+  type: 'application/vnd.apache.parquet',
+  hasRole: roles => (Array.isArray(roles) ? roles : [roles]).includes('collection-mirror'),
+  getAbsoluteUrl: () => new URL(href, COLLECTION_URL).href,
 })
 
-const globAsset = (itemLinks, href = GLOB_HREF) => ({
+const collection = (itemLinks, assets = []) => ({
+  getStacLinksWithRel: rel => (rel === 'item' ? itemLinks : []),
+  getAssets: () => assets,
+})
+
+const globAsset = (itemLinks, href = GLOB_HREF, { assets = [], rowCount = null } = {}) => ({
   href,
   getAbsoluteUrl: () => href,
-  getContext: () => collection(itemLinks),
+  getMetadata: field => (field === 'table:row_count' ? rowCount : undefined),
+  getContext: () => collection(itemLinks, assets),
 })
 
 const itemJson = (assets, id = 'utm01') => ({ type: 'Feature', id, assets })
@@ -82,7 +90,7 @@ describe('resolveParquetGlob', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(fetcher.mock.calls[0][0]).toBe('https://data.test/ftw/2017/zone=01/utm01.json')
     expect(result.url).toBe('https://data.test/ftw/2017/zone=01/utm01.parquet')
-    expect(result.partition).toEqual({ title: 'UTM zone 1', count: 2 })
+    expect(result.partition).toEqual({ title: 'UTM zone 1', count: 2, totalRows: null, mirrorUrl: null })
   })
 
   it('resolves a percent-encoded wildcard, the form stac-js hands it', async () => {
@@ -159,7 +167,47 @@ describe('resolveParquetGlob', () => {
   it('names the partition after the item id when the link has no title', async () => {
     const fetcher = fetchJson(itemJson({ data: { href: './utm01.parquet', roles: ['data'] } }, 'utm01'))
     const result = await resolveParquetGlob(globAsset([link('./zone=01/utm01.json')]), { fetchJson: fetcher })
-    expect(result.partition).toEqual({ title: 'utm01', count: 1 })
+    expect(result.partition).toEqual({ title: 'utm01', count: 1, totalRows: null, mirrorUrl: null })
+  })
+
+  it('reports the declared row count over every partition', async () => {
+    const fetcher = fetchJson(itemJson({ data: { href: './utm01.parquet', roles: ['data'] } }))
+    const asset = globAsset([link('./zone=01/utm01.json')], GLOB_HREF, { rowCount: 133102683 })
+    const result = await resolveParquetGlob(asset, { fetchJson: fetcher })
+    expect(result.partition.totalRows).toBe(133102683)
+    // A declared count settles the question, so the mirror stays unread.
+    expect(result.partition.mirrorUrl).toBeNull()
+  })
+
+  it('names the item mirror when the metadata declares no total', async () => {
+    const fetcher = fetchJson(itemJson({ data: { href: './utm01.parquet', roles: ['data'] } }))
+    const asset = globAsset([link('./zone=01/utm01.json')], GLOB_HREF, { assets: [mirror()] })
+    const result = await resolveParquetGlob(asset, { fetchJson: fetcher })
+    expect(result.partition.totalRows).toBeNull()
+    expect(result.partition.mirrorUrl).toBe('https://data.test/ftw/2017/items.parquet')
+  })
+
+  it('ignores a mirror asset that is not parquet', async () => {
+    const jsonMirror = {
+      type: 'application/json',
+      hasRole: roles => (Array.isArray(roles) ? roles : [roles]).includes('collection-mirror'),
+      getAbsoluteUrl: () => 'https://data.test/ftw/2017/items.json',
+    }
+    const fetcher = fetchJson(itemJson({ data: { href: './utm01.parquet', roles: ['data'] } }))
+    const asset = globAsset([link('./zone=01/utm01.json')], GLOB_HREF, { assets: [jsonMirror] })
+    const result = await resolveParquetGlob(asset, { fetchJson: fetcher })
+    expect(result.partition.mirrorUrl).toBeNull()
+  })
+
+  it('rejects a row count that is not a positive number', async () => {
+    const fetcher = fetchJson(itemJson({ data: { href: './utm01.parquet', roles: ['data'] } }))
+    for (const rowCount of [0, -5, 'many', null]) {
+      // eslint-disable-next-line no-await-in-loop
+      const result = await resolveParquetGlob(
+        globAsset([link('./zone=01/utm01.json')], GLOB_HREF, { rowCount }), { fetchJson: fetcher }
+      )
+      expect(result.partition.totalRows).toBeNull()
+    }
   })
 
   it('forwards the abort signal to the item fetch', async () => {

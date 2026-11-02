@@ -315,6 +315,7 @@
     "networkError": "No se puede mostrar la vista previa: el acceso entre orígenes no está permitido o hay un error de red.",
     "pageRows": "Fila {from}–{to} de {total} | Filas {from}–{to} de {total}",
     "partitionPreview": "Vista previa de la única partición: {name}. | Vista previa de la primera de {count} particiones: {name}.",
+    "partitionRowCount": "{count} fila en esta partición | {count} filas en esta partición",
     "retry": "Reintentar",
     "rowCount": "{count} fila | {count} filas",
     "showingOf": "Mostrando la primera {loaded} de {total} fila | Mostrando las primeras {loaded} de {total} filas",
