@@ -14,8 +14,12 @@ import {
   VECTOR_NOTICE_TOO_BIG,
   VECTOR_NOTICE_TOO_LARGE,
 } from './parquetShared.js';
+import { GLOB_UNRESOLVED, resolveParquetGlob } from './parquetGlob.js';
 
 export { isParquetAsset, MAX_MAP_FEATURES, MAX_MAP_PARQUET_BYTES, MAX_ROWS };
+// Re-exported so a caller reaches the glob resolver through the loader it
+// already imports, the same way it reaches the CRS layer below.
+export { GLOB_UNRESOLVED, resolveParquetGlob };
 // Re-exported so callers (and tests) can reach the CRS layer through the
 // loader they already import.
 export { createDomainGuard, createLonLatTransform, reprojectGeometry };

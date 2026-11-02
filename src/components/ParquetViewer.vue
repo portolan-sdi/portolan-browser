@@ -32,17 +32,19 @@
         <p class="mb-1">{{ error }}</p>
         <button class="btn btn-sm btn-outline-primary" @click="loadData">{{ $t('parquet.retry') }}</button>
       </div>
-      <ParquetTable
-        v-else-if="tableData"
-        :columns="tableData.columns"
-        :rows="tableData.rows"
-        :totalRows="tableData.totalRows"
-        :loadedRows="tableData.loadedRows"
-        :geometryColumn="geoInfo.geometryColumn"
-        :bboxMapping="geoInfo.bboxMapping"
-        @zoom-to-feature="onZoomToFeature"
-        @select-row="onSelectRow"
-      />
+      <template v-else-if="tableData">
+        <p v-if="partitionNote" class="parquet-partition-note">{{ partitionNote }}</p>
+        <ParquetTable
+          :columns="tableData.columns"
+          :rows="tableData.rows"
+          :totalRows="tableData.totalRows"
+          :loadedRows="tableData.loadedRows"
+          :geometryColumn="geoInfo.geometryColumn"
+          :bboxMapping="geoInfo.bboxMapping"
+          @zoom-to-feature="onZoomToFeature"
+          @select-row="onSelectRow"
+        />
+      </template>
     </b-collapse>
   </section>
 </template>
@@ -58,6 +60,8 @@ import {
   loadParquetRows,
   getBboxForRow,
   MAX_ROWS,
+  GLOB_UNRESOLVED,
+  resolveParquetGlob,
 } from '../utils/parquet';
 
 export default {
@@ -85,6 +89,7 @@ export default {
       selectedAssetKey: null,
       parquetFile: null,
       parquetMetadata: null,
+      partition: null,
       tableData: null,
       geoInfo: { geometryColumn: null, bboxMapping: null, crs: null, crsDefinition: null },
     };
@@ -100,6 +105,15 @@ export default {
     selectedAssetTitle() {
       if (!this.selectedAsset) {return '';}
       return this.selectedAsset.title || this.selectedAsset.getKey();
+    },
+    // Names the partition the table shows, so a row count that covers one file
+    // of many does not read as the whole collection.
+    partitionNote() {
+      if (!this.partition) {return null;}
+      return this.$t('parquet.partitionPreview', {
+        name: this.partition.title,
+        count: this.partition.count.toLocaleString(this.$i18n.locale)
+      }, this.partition.count);
     },
     rowInfo() {
       if (!this.tableData) {return null;}
@@ -131,10 +145,14 @@ export default {
       this.loading = true;
       this.error = null;
       this.tableData = null;
+      this.partition = null;
 
       try {
-        const url = this.selectedAsset.getAbsoluteUrl();
         this.loadingMessage = this.$t('parquet.loadingMetadata');
+        // A partitioned collection points one asset at every partition with a
+        // wildcard href. Resolve it to one partition the browser can read.
+        const { url, partition } = await resolveParquetGlob(this.selectedAsset);
+        this.partition = partition;
         const meta = await loadParquetMetadata(url);
         this.parquetFile = meta.file;
         this.parquetMetadata = meta.metadata;
@@ -155,7 +173,9 @@ export default {
         this.tableData = data;
       } catch (err) {
         console.error('ParquetViewer: failed to load', err);
-        if (err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
+        if (err.code === GLOB_UNRESOLVED) {
+          this.error = this.$t('parquet.globUnresolved');
+        } else if (err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
           this.error = this.$t('parquet.networkError');
         } else {
           this.error = this.$t('parquet.loadFailed', { message: err.message });
@@ -275,6 +295,13 @@ export default {
 
 .parquet-error {
   font-size: 0.9rem;
+}
+
+.parquet-partition-note {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  color: $secondary;
 }
 
 </style>
