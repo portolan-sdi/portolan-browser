@@ -17,7 +17,7 @@ import CogDecoderWorker from '@developmentseed/geotiff/pool/worker?worker';
 // parquetShared is hyparquet-free, so importing it statically keeps hyparquet
 // out of the map bundle (it stays behind the lazy _loadParquetDeps chunk).
 import {
-  isParquetAsset,
+  isLoadableParquetAsset,
   MAX_MAP_FEATURES,
   MAX_MAP_PARQUET_BYTES,
   VECTOR_NOTICE_ERROR,
@@ -202,7 +202,9 @@ function preferredTileAssets(assets) {
 // rendering is skipped entirely; GeoParquet is only the no-tiles fallback.
 function preferredVisualAssets(assets) {
   const tileAssets = preferredTileAssets(assets);
-  const parquetAssets = tileAssets.length > 0 ? [] : assets.filter(isParquetAsset);
+  // isLoadableParquetAsset, not isParquetAsset: the direct renderer downloads
+  // one file, so a glob asset stays off the map and in the table preview.
+  const parquetAssets = tileAssets.length > 0 ? [] : assets.filter(isLoadableParquetAsset);
   return { tileAssets, parquetAssets };
 }
 

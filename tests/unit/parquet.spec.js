@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isParquetAsset, findParquetAssets, parseWkbType, bboxFromWkb } from '../../src/utils/parquet.js'
+import { isLoadableParquetAsset, isParquetAsset, findParquetAssets, parseWkbType, bboxFromWkb } from '../../src/utils/parquet.js'
 
 describe('parquet utilities', () => {
   describe('isParquetAsset', () => {
@@ -30,16 +30,33 @@ describe('parquet utilities', () => {
       expect(isParquetAsset({})).toBe(false)
     })
 
+    it('returns true for a glob href: the preview resolves it to one partition', () => {
+      const type = 'application/vnd.apache.parquet'
+      expect(isParquetAsset({ type, href: './country=*/geom_type=*/type=*/*.parquet' })).toBe(true)
+    })
+  })
+
+  describe('isLoadableParquetAsset', () => {
+    it('returns true for a single-file href', () => {
+      expect(isLoadableParquetAsset({ type: 'application/vnd.apache.parquet', href: './items.parquet' })).toBe(true)
+    })
+
     it('returns false for a glob href, which names many files rather than one', () => {
       const type = 'application/vnd.apache.parquet'
-      expect(isParquetAsset({ type, href: './country=*/geom_type=*/type=*/*.parquet' })).toBe(false)
+      expect(isLoadableParquetAsset({ type, href: './country=*/geom_type=*/type=*/*.parquet' })).toBe(false)
       // getAbsoluteUrl() percent-encodes the asterisk
-      expect(isParquetAsset({
+      expect(isLoadableParquetAsset({
         type,
         href: './country=*/*.parquet',
         getAbsoluteUrl: () => 'https://example.com/col/country=%2A/%2A.parquet',
       })).toBe(false)
-      expect(isParquetAsset({ type, getAbsoluteUrl: () => 'https://example.com/col/country=%2a/%2a.parquet' })).toBe(false)
+      expect(isLoadableParquetAsset({ type, getAbsoluteUrl: () => 'https://example.com/col/country=%2a/%2a.parquet' })).toBe(false)
+    })
+
+    it('keeps a single-file href whose query string carries a wildcard', () => {
+      const type = 'application/vnd.apache.parquet'
+      expect(isLoadableParquetAsset({ type, href: 'https://example.com/data.parquet?token=ab*cd' })).toBe(true)
+      expect(isLoadableParquetAsset({ type, href: 'https://example.com/data.parquet?sig=a%2Ab' })).toBe(true)
     })
   })
 
@@ -56,12 +73,12 @@ describe('parquet utilities', () => {
       expect(result[1].href).toBe('other.parquet')
     })
 
-    it('skips a partition glob asset and keeps the single files', () => {
+    it('keeps a partition glob asset for the preview to resolve', () => {
       const assets = [
         { type: 'application/vnd.apache.parquet', href: './key=*/*.parquet' },
         { type: 'application/vnd.apache.parquet', href: './items.parquet' },
       ]
-      expect(findParquetAssets(assets).map(a => a.href)).toEqual(['./items.parquet'])
+      expect(findParquetAssets(assets).map(a => a.href)).toEqual(['./key=*/*.parquet', './items.parquet'])
     })
 
     it('returns empty array when no parquet assets', () => {

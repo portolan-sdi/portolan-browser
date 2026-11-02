@@ -12,7 +12,11 @@
 // hyparquet file handle and maps a clicked row back to a row index in it (see
 // getBboxForRow), which a concatenation of files would break.
 
-import { isParquetAsset } from './parquetShared.js';
+import { hasGlobPattern, isParquetAsset, WILDCARD } from './parquetShared.js';
+
+// Re-exported so the resolver's callers and tests reach the detector through
+// this module, which owns the glob behavior.
+export { hasGlobPattern };
 
 // Error code on the rejection when the pattern cannot be expanded. The caller
 // turns it into its own message, because this module does no localization.
@@ -22,22 +26,6 @@ function unresolved(message) {
   const error = new Error(message);
   error.code = GLOB_UNRESOLVED;
   return error;
-}
-
-// Both spellings of the wildcard. stac-js resolves an href through a URI
-// library that percent-encodes `*`, so a published `zone=*/utm*.parquet`
-// reaches this module as `zone=%2A/utm%2A.parquet`.
-// Not a global regex: `test` on one carries `lastIndex` between calls, and
-// `split` matches every occurrence either way.
-const WILDCARD = /\*|%2A/i;
-
-// Only the path is examined. A wildcard in a query string or a fragment is a
-// literal character of the URL, not a pattern over object keys.
-export function hasGlobPattern(url) {
-  if (!url) {
-    return false;
-  }
-  return WILDCARD.test(url.split('#')[0].split('?')[0]);
 }
 
 // A wildcard matches within one path segment, as it does for DuckDB and for

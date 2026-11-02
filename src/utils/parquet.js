@@ -7,6 +7,7 @@ import {
   reprojectGeometry,
 } from './crs.js';
 import {
+  isLoadableParquetAsset,
   isParquetAsset,
   MAX_MAP_FEATURES,
   MAX_MAP_PARQUET_BYTES,
@@ -16,7 +17,7 @@ import {
 } from './parquetShared.js';
 import { GLOB_UNRESOLVED, resolveParquetGlob } from './parquetGlob.js';
 
-export { isParquetAsset, MAX_MAP_FEATURES, MAX_MAP_PARQUET_BYTES, MAX_ROWS };
+export { isLoadableParquetAsset, isParquetAsset, MAX_MAP_FEATURES, MAX_MAP_PARQUET_BYTES, MAX_ROWS };
 // Re-exported so a caller reaches the glob resolver through the loader it
 // already imports, the same way it reaches the CRS layer below.
 export { GLOB_UNRESOLVED, resolveParquetGlob };
