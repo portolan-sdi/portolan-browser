@@ -34,6 +34,7 @@ import {
   isPmtilesAsset,
   isXyzVectorAsset,
   isTileJsonAsset,
+  renderableSources,
 } from '../../utils/mapAssets.js';
 
 const sharedCache = new SharedPromiseCache(300);
@@ -364,7 +365,11 @@ export default class StacMapLayer {
 
   async autoLoadVisualAssets(stac) {
     if (!stac || typeof stac.getAssets !== 'function') {return;}
-    const { tileAssets, parquetAssets } = preferredVisualAssets(stac.getAssets());
+    // renderableSources adds the PMTiles a `rel: "pmtiles"` link registers,
+    // which is where a Portolan collection is required to declare its tiles
+    // and where it may be the only declaration. Without them a collection that
+    // ships tiles and GeoParquet would fall to the GeoParquet direct read.
+    const { tileAssets, parquetAssets } = preferredVisualAssets(renderableSources(stac));
     const visualAssets = tileAssets.length > 0 ? tileAssets : parquetAssets;
     if (visualAssets.length > 0) {
       await this.setAssets(visualAssets);

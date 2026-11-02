@@ -51,6 +51,10 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ### Fixed
 
+- A collection that registers its PMTiles through the `rel: "pmtiles"` link the Portolan
+  specification requires, and publishes no matching asset, now renders those tiles. Until
+  now only a PMTiles asset reached the map, and the specification makes that asset
+  optional, so a conformant collection fell through to reading its GeoParquet instead
 - A raster layer no longer paints over the map controls: the layer picker, the style
   picker and the map notices stayed clickable but became invisible behind an enabled COG
 - Band statistics are read from `raster:bands` as well as `bands`, so a raster-extension
