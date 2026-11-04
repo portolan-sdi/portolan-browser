@@ -1723,13 +1723,6 @@ export default class StacMapLayer {
     }
 
     const mappableSourceIds = [...this._overlaySourceIds];
-    // Zero loaded sources is not a mismatch worth reporting: MapView applies
-    // the style as soon as it has one, which can be while the assets are still
-    // downloading. The setAssets tail re-binds when they arrive.
-    if (mappedStyleSourceNames.length > 0 && mappableSourceIds.length > 0
-      && mappedStyleSourceNames.length !== mappableSourceIds.length) {
-      console.warn(`Style defines ${mappedStyleSourceNames.length} data source(s) but ${mappableSourceIds.length} asset source(s) are loaded — mapping by position`);
-    }
 
     // Build a lookup from each loaded tile source's underlying URL to its
     // source ID, so style sources can be matched by URL when they specify one.
@@ -1764,6 +1757,21 @@ export default class StacMapLayer {
       if (i < remainingSourceIds.length) {
         sourceMapping[unmatchedStyleNames[i]] = remainingSourceIds[i];
       }
+    }
+
+    // Only a source that actually fell back to position is worth reporting,
+    // and only once the assets are there to match against: MapView applies a
+    // style as soon as it has one, which can be while they are still
+    // downloading, and the setAssets tail re-binds when they arrive.
+    //
+    // Reported after the matching rather than before it. Warning on a count
+    // mismatch alone said "mapping by position" every time an item carried
+    // more archives than the style names -- which is the normal shape of an
+    // item with footprints and cells archives and a style for each -- so the
+    // one case that is genuinely ambiguous was indistinguishable from the
+    // common one. That is what hid a real mismatch for as long as it did.
+    if (unmatchedStyleNames.length > 0 && mappableSourceIds.length > 0) {
+      console.warn(`Style source(s) ${unmatchedStyleNames.map(n => `"${n}"`).join(', ')} name no loaded asset — mapping by position`);
     }
 
     this._styledAssetKeys = new Set(Object.values(sourceMapping)
