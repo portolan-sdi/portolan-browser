@@ -51,6 +51,14 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ### Fixed
 
+- A style now binds to the PMTiles archive its own `sources` URL names, when the catalog
+  loads from a root-relative `catalogUrl`. The style href was then relative too, and the
+  resolver could not use it as a base, so the match fell back to the position of the asset.
+  An item with a footprints archive and a cells archive bound the cells style to the
+  footprints archive, and MapLibre reported `Source layer "cells" does not exist`
+- The `mapping by position` warning names the style sources that fall back, and stays quiet
+  when each source matched by URL. It fired on a count mismatch before, which is the normal
+  shape of an item that carries more archives than one style names
 - The data preview and the map skip a Parquet asset whose href is a glob, such as the
   `./country=*/*.parquet` asset that portolan-cli adds to a partitioned collection. The
   preview loads the next Parquet asset instead of failing with `fetch head failed 404`

@@ -154,11 +154,28 @@ const COG_LAYER_CAP = 16;
 // Resolving against the page URL (the old behaviour, and still the fallback
 // for loaded sources, whose URLs MapLibre has already absolutized) points at
 // the browser's own origin and matches nothing.
+// The base is itself resolved against the page first, because it is often
+// relative. A catalog reached through a root-relative `catalogUrl` gives its
+// documents root-relative hrefs, so the style's own href arrives here as
+// `/catalog/C/styles/x.json`. `new URL(relative, relativeBase)` throws, and
+// swallowing that left the URL unresolved -- which does not fail loudly, it
+// falls through to matching sources by position. For an item with one PMTiles
+// archive that is invisible; for one with two it binds the style to the wrong
+// archive, and MapLibre rejects the layer with "Source layer does not exist".
 function normalizePmtilesUrl(url, base) {
   if (typeof url !== 'string' || url === '') {return null;}
   let u = url.startsWith('pmtiles://') ? url.slice('pmtiles://'.length) : url;
+  const page = typeof window !== 'undefined' ? window.location.href : undefined;
+  let against = page;
+  if (base) {
+    try {
+      against = new URL(base, page).href;
+    } catch {
+      against = page;
+    }
+  }
   try {
-    u = new URL(u, base || (typeof window !== 'undefined' ? window.location.href : undefined)).href;
+    u = new URL(u, against).href;
   } catch {
     /* leave as-is if it can't be resolved */
   }
@@ -1706,13 +1723,6 @@ export default class StacMapLayer {
     }
 
     const mappableSourceIds = [...this._overlaySourceIds];
-    // Zero loaded sources is not a mismatch worth reporting: MapView applies
-    // the style as soon as it has one, which can be while the assets are still
-    // downloading. The setAssets tail re-binds when they arrive.
-    if (mappedStyleSourceNames.length > 0 && mappableSourceIds.length > 0
-      && mappedStyleSourceNames.length !== mappableSourceIds.length) {
-      console.warn(`Style defines ${mappedStyleSourceNames.length} data source(s) but ${mappableSourceIds.length} asset source(s) are loaded — mapping by position`);
-    }
 
     // Build a lookup from each loaded tile source's underlying URL to its
     // source ID, so style sources can be matched by URL when they specify one.
@@ -1747,6 +1757,21 @@ export default class StacMapLayer {
       if (i < remainingSourceIds.length) {
         sourceMapping[unmatchedStyleNames[i]] = remainingSourceIds[i];
       }
+    }
+
+    // Only a source that actually fell back to position is worth reporting,
+    // and only once the assets are there to match against: MapView applies a
+    // style as soon as it has one, which can be while they are still
+    // downloading, and the setAssets tail re-binds when they arrive.
+    //
+    // Reported after the matching rather than before it. Warning on a count
+    // mismatch alone said "mapping by position" every time an item carried
+    // more archives than the style names -- which is the normal shape of an
+    // item with footprints and cells archives and a style for each -- so the
+    // one case that is genuinely ambiguous was indistinguishable from the
+    // common one. That is what hid a real mismatch for as long as it did.
+    if (unmatchedStyleNames.length > 0 && mappableSourceIds.length > 0) {
+      console.warn(`Style source(s) ${unmatchedStyleNames.map(n => `"${n}"`).join(', ')} name no loaded asset — mapping by position`);
     }
 
     this._styledAssetKeys = new Set(Object.values(sourceMapping)
