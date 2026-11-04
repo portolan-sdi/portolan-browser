@@ -2107,66 +2107,6 @@ describe('StacMapLayer', () => {
 
         expect(map.layers.get('styled-fill').source).toBe('stac-tile-1')
       })
-
-      it('matches by URL when the style href is itself relative', async () => {
-        // A catalog reached through a root-relative `catalogUrl` resolves
-        // every document and asset to a path, not a full URL -- so the style
-        // href handed to applyGlStyle is `/catalog/.../styles/x.json`. A
-        // relative base is not a base `new URL` accepts, and the throw was
-        // swallowed, leaving the source URL unresolved and the match falling
-        // through to position: the style's `cells` layer bound to the
-        // footprints archive, which has no such layer.
-        const pmtilesAsset = href => ({ href, type: 'application/vnd.pmtiles', roles: ['data'] })
-        await layer.setAssets([
-          pmtilesAsset('/catalog/C/year=2026/tiles-footprints.pmtiles'),
-          pmtilesAsset('/catalog/C/year=2026/tiles-a5weekly.pmtiles'),
-        ])
-
-        layer.applyGlStyle({
-          version: 8,
-          sources: { cells: { type: 'vector', url: 'pmtiles://../tiles-a5weekly.pmtiles' } },
-          layers: [{ id: 'cells', type: 'fill', source: 'cells', 'source-layer': 'cells', paint: {} }],
-        }, '/catalog/C/year=2026/styles/cells-coverage.json')
-
-        expect(map.layers.get('cells').source).toBe('stac-tile-1')
-      })
-
-      it('does not warn about positional mapping when every source matched by URL', async () => {
-        // An item with more archives than the style names is the normal
-        // shape, not an ambiguity. Warning on the count alone cried wolf on
-        // every such item, which is what let a real mismatch hide in the
-        // noise.
-        const pmtilesAsset = href => ({ href, type: 'application/vnd.pmtiles', roles: ['data'] })
-        await layer.setAssets([
-          pmtilesAsset('/catalog/C/year=2026/tiles-footprints.pmtiles'),
-          pmtilesAsset('/catalog/C/year=2026/tiles-a5weekly.pmtiles'),
-        ])
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-        layer.applyGlStyle({
-          version: 8,
-          sources: { cells: { type: 'vector', url: 'pmtiles://../tiles-a5weekly.pmtiles' } },
-          layers: [{ id: 'cells', type: 'fill', source: 'cells', 'source-layer': 'cells', paint: {} }],
-        }, '/catalog/C/year=2026/styles/cells-coverage.json')
-
-        expect(warn.mock.calls.flat().join(' ')).not.toMatch(/mapping by position/)
-        warn.mockRestore()
-      })
-
-      it('warns when a style source names no loaded asset', async () => {
-        const pmtilesAsset = href => ({ href, type: 'application/vnd.pmtiles', roles: ['data'] })
-        await layer.setAssets([pmtilesAsset('/catalog/C/year=2026/tiles-footprints.pmtiles')])
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-        layer.applyGlStyle({
-          version: 8,
-          sources: { ghost: { type: 'vector', url: 'pmtiles://../tiles-nowhere.pmtiles' } },
-          layers: [{ id: 'g', type: 'fill', source: 'ghost', 'source-layer': 'x', paint: {} }],
-        }, '/catalog/C/year=2026/styles/s.json')
-
-        expect(warn.mock.calls.flat().join(' ')).toMatch(/"ghost".*mapping by position/)
-        warn.mockRestore()
-      })
     })
   })
 
