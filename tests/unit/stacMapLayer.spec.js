@@ -2107,6 +2107,29 @@ describe('StacMapLayer', () => {
 
         expect(map.layers.get('styled-fill').source).toBe('stac-tile-1')
       })
+
+      it('matches by URL when the style href is itself relative', async () => {
+        // A catalog reached through a root-relative `catalogUrl` resolves
+        // every document and asset to a path, not a full URL -- so the style
+        // href handed to applyGlStyle is `/catalog/.../styles/x.json`. A
+        // relative base is not a base `new URL` accepts, and the throw was
+        // swallowed, leaving the source URL unresolved and the match falling
+        // through to position: the style's `cells` layer bound to the
+        // footprints archive, which has no such layer.
+        const pmtilesAsset = href => ({ href, type: 'application/vnd.pmtiles', roles: ['data'] })
+        await layer.setAssets([
+          pmtilesAsset('/catalog/C/year=2026/tiles-footprints.pmtiles'),
+          pmtilesAsset('/catalog/C/year=2026/tiles-a5weekly.pmtiles'),
+        ])
+
+        layer.applyGlStyle({
+          version: 8,
+          sources: { cells: { type: 'vector', url: 'pmtiles://../tiles-a5weekly.pmtiles' } },
+          layers: [{ id: 'cells', type: 'fill', source: 'cells', 'source-layer': 'cells', paint: {} }],
+        }, '/catalog/C/year=2026/styles/cells-coverage.json')
+
+        expect(map.layers.get('cells').source).toBe('stac-tile-1')
+      })
     })
   })
 

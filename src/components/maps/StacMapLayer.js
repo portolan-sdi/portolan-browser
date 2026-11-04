@@ -154,11 +154,28 @@ const COG_LAYER_CAP = 16;
 // Resolving against the page URL (the old behaviour, and still the fallback
 // for loaded sources, whose URLs MapLibre has already absolutized) points at
 // the browser's own origin and matches nothing.
+// The base is itself resolved against the page first, because it is often
+// relative. A catalog reached through a root-relative `catalogUrl` gives its
+// documents root-relative hrefs, so the style's own href arrives here as
+// `/catalog/C/styles/x.json`. `new URL(relative, relativeBase)` throws, and
+// swallowing that left the URL unresolved -- which does not fail loudly, it
+// falls through to matching sources by position. For an item with one PMTiles
+// archive that is invisible; for one with two it binds the style to the wrong
+// archive, and MapLibre rejects the layer with "Source layer does not exist".
 function normalizePmtilesUrl(url, base) {
   if (typeof url !== 'string' || url === '') {return null;}
   let u = url.startsWith('pmtiles://') ? url.slice('pmtiles://'.length) : url;
+  const page = typeof window !== 'undefined' ? window.location.href : undefined;
+  let against = page;
+  if (base) {
+    try {
+      against = new URL(base, page).href;
+    } catch {
+      against = page;
+    }
+  }
   try {
-    u = new URL(u, base || (typeof window !== 'undefined' ? window.location.href : undefined)).href;
+    u = new URL(u, against).href;
   } catch {
     /* leave as-is if it can't be resolved */
   }
