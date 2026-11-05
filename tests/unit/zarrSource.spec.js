@@ -1,17 +1,71 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import * as zarr from 'zarrita'
 import {
   coordinateSpacing,
   geoZarrAttrsFromCoordinates,
   isIcechunkAsset,
   isZarrAsset,
   declaresMultiscales,
+  openZarrRoot,
   resolveLevelPaths,
   spatialDimNames,
+  unsupportedCodecs,
   unusableCrs,
   withMultiscalesLayout,
   zarrMinZoom,
   zarrZoomGuard,
 } from '../../src/utils/zarrSource.js'
+
+// --- Real zarrita stores, in memory ------------------------------------------
+//
+// A `Map` satisfies zarrita's read and write interfaces, so a store built with
+// `zarr.create` and read with `zarr.open` exercises the same metadata
+// documents, path resolution and chunk reads as a store over HTTP. These
+// helpers build one, which is what lets the tests below check the behaviour
+// the module has against zarrita rather than against a stub of it.
+
+/** A store with no listing, which is what plain HTTP offers. */
+function store() {
+  return new Map()
+}
+
+/**
+ * The same store with a `contents()` listing, which is what consolidated
+ * metadata and the Icechunk reader give zarrita.
+ */
+function listable(map) {
+  const suffix = '/zarr.json'
+  const contents = [...map.keys()]
+    .filter(key => key.endsWith(suffix))
+    .map((key) => {
+      const meta = JSON.parse(new TextDecoder().decode(map.get(key)))
+      return { path: key.slice(0, -suffix.length) || '/', kind: meta.node_type }
+    })
+  return { get: async key => map.get(key), contents: () => contents }
+}
+
+/** An array holding `values`, chunked in `chunkShape`. */
+async function writeArray(location, { shape, chunkShape, values, dimensionNames, attributes }) {
+  const array = await zarr.create(location, {
+    shape, chunkShape, dtype: 'float64', dimensionNames, attributes,
+  })
+  const data = Float64Array.from(
+    values ?? Array.from({ length: shape.reduce((a, b) => a * b, 1) }, (_, i) => i),
+  )
+  const stride = []
+  let step = 1
+  for (let i = shape.length - 1; i >= 0; i--) {
+    stride[i] = step
+    step *= shape[i]
+  }
+  await zarr.set(array, null, { data, shape, stride })
+  return array
+}
+
+/** A y axis of `n` cells running north to south, and an x axis running east. */
+function descending(n, origin, step) {
+  return Array.from({ length: n }, (_, i) => origin + i * step)
+}
 
 describe('isZarrAsset', () => {
   it('accepts the Zarr media types, with and without parameters', () => {
@@ -84,50 +138,396 @@ describe('spatialDimNames', () => {
   it('rejects an array whose last two dimensions are not spatial', () => {
     expect(spatialDimNames(['y', 'x', 'time'])).toBeNull()
     expect(spatialDimNames(['time'])).toBeNull()
-    expect(spatialDimNames([null, 'y', 'x'])).toBeNull()
+    expect(spatialDimNames(['y', null])).toBeNull()
+  })
+
+  it('accepts an unnamed dimension in front of the spatial ones, which v3 allows', () => {
+    expect(spatialDimNames([null, 'y', 'x'])).toEqual(['y', 'x'])
+    expect(spatialDimNames([null, null, 'latitude', 'longitude'])).toEqual(['latitude', 'longitude'])
   })
 })
 
-// A zarrita-shaped stub: enough of `open`, `resolve` and `get` for the
-// coordinate reader and the level resolver.
-function fakeStore({ arrays = {}, groups = [] } = {}) {
-  const node = (path) => ({
-    path,
-    resolve: (sub) => node(sub.startsWith('/') ? sub : `${path === '/' ? '' : path}/${sub}`),
+// A CF-style store: one data array with its coordinate arrays beside it.
+async function cfStore({
+  at = '/tas',
+  dimensionNames = ['lat', 'lon'],
+  shape = [5, 4],
+  yStep = -0.25,
+  xStep = 0.25,
+  attributes = undefined,
+} = {}) {
+  const map = store()
+  const root = zarr.root(map)
+  await zarr.create(root)
+  const base = at.slice(0, at.lastIndexOf('/')) || '/'
+  const beside = name => (base === '/' ? root.resolve(`/${name}`) : root.resolve(`${base}/${name}`))
+  if (base !== '/') {await zarr.create(root.resolve(base))}
+  await writeArray(root.resolve(at), { shape, chunkShape: shape, dimensionNames, attributes })
+  await writeArray(beside(dimensionNames[0]), {
+    shape: [shape[0]], chunkShape: [shape[0]], values: descending(shape[0], 90, yStep),
   })
-  return {
-    arrays,
-    groups,
-    root: node('/'),
-  }
+  await writeArray(beside(dimensionNames[1]), {
+    shape: [shape[1]], chunkShape: [shape[1]], values: descending(shape[1], -180, xStep),
+  })
+  return { map, root }
 }
 
 describe('geoZarrAttrsFromCoordinates', () => {
-  // The module calls zarrita directly, so the coordinate arrays are supplied
-  // through a root whose `resolve` the test controls and a zarrita `open` that
-  // the module imports. Rather than mock the module, the affine arithmetic is
-  // checked through the pure helpers above and the assembled attributes are
-  // checked here against a root that answers with real zarrita arrays.
   it('returns null for an array whose dimensions are not spatial', async () => {
-    const root = fakeStore().root
-    const array = { dimensionNames: ['time', 'level'], shape: [2, 3] }
+    const root = zarr.root(store())
+    const array = { path: '/tas', dimensionNames: ['time', 'level'], shape: [2, 3] }
     expect(await geoZarrAttrsFromCoordinates(root, array)).toBeNull()
   })
 
   it('returns null when the array has no named dimensions', async () => {
-    const root = fakeStore().root
-    expect(await geoZarrAttrsFromCoordinates(root, { shape: [2, 3] })).toBeNull()
+    const root = zarr.root(store())
+    expect(await geoZarrAttrsFromCoordinates(root, { path: '/tas', shape: [2, 3] })).toBeNull()
+  })
+
+  it('derives the affine from the coordinate arrays, descending y included', async () => {
+    const { root } = await cfStore()
+    const array = await zarr.open(root.resolve('/tas'), { kind: 'array' })
+    const attrs = await geoZarrAttrsFromCoordinates(root, array)
+    expect(attrs['spatial:transform']).toEqual([0.25, 0, -180, 0, -0.25, 90])
+    expect(attrs['spatial:shape']).toEqual([5, 4])
+    expect(attrs['spatial:registration']).toBe('node')
+    expect(attrs['spatial:dimensions']).toEqual(['lat', 'lon'])
+    expect(attrs['proj:code']).toBe('EPSG:4326')
+  })
+
+  it('refuses a coordinate array that does not label this array', async () => {
+    // A store holding a coarser copy of the axis under the same name would
+    // otherwise give full-resolution spacing over half the extent, which puts
+    // every pixel in the wrong place and says nothing about it.
+    const map = store()
+    const root = zarr.root(map)
+    await zarr.create(root)
+    await writeArray(root.resolve('/tas'), {
+      shape: [5, 4], chunkShape: [5, 4], dimensionNames: ['lat', 'lon'],
+    })
+    await writeArray(root.resolve('/lat'), {
+      shape: [3], chunkShape: [3], values: [90, 89.5, 89],
+    })
+    await writeArray(root.resolve('/lon'), {
+      shape: [4], chunkShape: [4], values: descending(4, -180, 0.25),
+    })
+    const array = await zarr.open(root.resolve('/tas'), { kind: 'array' })
+    expect(await geoZarrAttrsFromCoordinates(root, array)).toBeNull()
+  })
+
+  it('reads the coordinate arrays beside the array before the ones at the root', async () => {
+    const { root } = await cfStore({ at: '/cube/tas', yStep: -0.25, xStep: 0.25 })
+    // A different grid at the root, of the same lengths, must not win.
+    await writeArray(root.resolve('/lat'), {
+      shape: [5], chunkShape: [5], values: descending(5, 10, -0.5),
+    })
+    await writeArray(root.resolve('/lon'), {
+      shape: [4], chunkShape: [4], values: descending(4, 10, 0.5),
+    })
+    const array = await zarr.open(root.resolve('/cube/tas'), { kind: 'array' })
+    const attrs = await geoZarrAttrsFromCoordinates(root, array)
+    expect(attrs['spatial:transform']).toEqual([0.25, 0, -180, 0, -0.25, 90])
+  })
+
+  it('falls back to the coordinate arrays at the root', async () => {
+    const map = store()
+    const root = zarr.root(map)
+    await zarr.create(root)
+    await zarr.create(root.resolve('/cube'))
+    await writeArray(root.resolve('/cube/tas'), {
+      shape: [5, 4], chunkShape: [5, 4], dimensionNames: ['lat', 'lon'],
+    })
+    await writeArray(root.resolve('/lat'), {
+      shape: [5], chunkShape: [5], values: descending(5, 90, -0.25),
+    })
+    await writeArray(root.resolve('/lon'), {
+      shape: [4], chunkShape: [4], values: descending(4, -180, 0.25),
+    })
+    const array = await zarr.open(root.resolve('/cube/tas'), { kind: 'array' })
+    const attrs = await geoZarrAttrsFromCoordinates(root, array)
+    expect(attrs['spatial:transform']).toEqual([0.25, 0, -180, 0, -0.25, 90])
+  })
+
+  it('reads three slices of a coordinate axis, not the whole axis', async () => {
+    const reads = []
+    const map = store()
+    const root = zarr.root(map)
+    await zarr.create(root)
+    await writeArray(root.resolve('/tas'), {
+      shape: [10, 10], chunkShape: [10, 10], dimensionNames: ['lat', 'lon'],
+    })
+    await writeArray(root.resolve('/lat'), {
+      shape: [10], chunkShape: [1], values: descending(10, 90, -0.25),
+    })
+    await writeArray(root.resolve('/lon'), {
+      shape: [10], chunkShape: [1], values: descending(10, -180, 0.25),
+    })
+    const counting = { get: async (key) => { reads.push(key); return map.get(key) } }
+    const countingRoot = zarr.root(counting)
+    const array = await zarr.open(countingRoot.resolve('/tas'), { kind: 'array' })
+    const attrs = await geoZarrAttrsFromCoordinates(countingRoot, array)
+    expect(attrs['spatial:transform']).toEqual([0.25, 0, -180, 0, -0.25, 90])
+    // Ten one-cell chunks per axis. Three samples need the first chunk, its
+    // neighbour and the last, never the eight in between.
+    const chunkReads = reads.filter(key => key.includes('/lat/c/'))
+    expect(chunkReads.length).toBeLessThanOrEqual(3)
+    expect(chunkReads).not.toContain('/lat/c/5')
+  })
+
+  it('does not call a projected grid EPSG:4326', async () => {
+    // A rioxarray UTM store names its dimensions y and x. Reading its metres
+    // as degrees would place the data at longitude 499980.
+    const { root } = await cfStore({ dimensionNames: ['y', 'x'], yStep: -10, xStep: 10 })
+    const array = await zarr.open(root.resolve('/tas'), { kind: 'array' })
+    expect(await geoZarrAttrsFromCoordinates(root, array)).toBeNull()
+  })
+
+  it('reads a projected CRS from the CF grid-mapping array', async () => {
+    const wkt = 'PROJCRS["WGS 84 / UTM zone 33N",ID["EPSG",32633]]'
+    const { root } = await cfStore({
+      dimensionNames: ['y', 'x'], yStep: -10, xStep: 10, attributes: { grid_mapping: 'spatial_ref' },
+    })
+    await writeArray(root.resolve('/spatial_ref'), {
+      shape: [1], chunkShape: [1], values: [0], attributes: { crs_wkt: wkt },
+    })
+    const array = await zarr.open(root.resolve('/tas'), { kind: 'array' })
+    const attrs = await geoZarrAttrsFromCoordinates(root, array)
+    expect(attrs['proj:wkt2']).toBe(wkt)
+    expect(attrs['proj:code']).toBeUndefined()
+  })
+
+  it('keeps a CRS the caller supplies', async () => {
+    const { root } = await cfStore({ dimensionNames: ['y', 'x'], yStep: -10, xStep: 10 })
+    const array = await zarr.open(root.resolve('/tas'), { kind: 'array' })
+    const attrs = await geoZarrAttrsFromCoordinates(root, array, { crs: { code: 'EPSG:32633' } })
+    expect(attrs['proj:code']).toBe('EPSG:32633')
   })
 })
 
+// A pyramid written as one group per level, each holding the data array beside
+// the coordinate arrays that label it. This is how source.coop's italy-aerial
+// store is laid out.
+async function pyramidStore({ at = '/temperature', variable = 'temp', decoy = false } = {}) {
+  const map = store()
+  const root = zarr.root(map)
+  await zarr.create(root)
+  if (at !== '/') {
+    await zarr.create(root.resolve(at), {
+      attributes: { multiscales: { layout: [{ asset: '0' }, { asset: '1' }] } },
+    })
+  }
+  for (const [level, size] of [['0', 4], ['1', 2]]) {
+    const base = at === '/' ? `/${level}` : `${at}/${level}`
+    await zarr.create(root.resolve(base))
+    await writeArray(root.resolve(`${base}/${variable}`), {
+      shape: [size, size], chunkShape: [size, size], dimensionNames: ['y', 'x'],
+    })
+    await writeArray(root.resolve(`${base}/y`), { shape: [size], chunkShape: [size] })
+    await writeArray(root.resolve(`${base}/x`), { shape: [size], chunkShape: [size] })
+  }
+  if (decoy) {
+    // An unrelated array at the store root that shares a level's name. A
+    // resolver that treats the level path as absolute opens this instead.
+    await writeArray(root.resolve('/0'), { shape: [9, 9], chunkShape: [9, 9] })
+  }
+  return { map, root }
+}
+
 describe('resolveLevelPaths', () => {
-  // The resolver opens nodes through zarrita, so the interesting cases (a
-  // level that is a group holding the data array) are covered by
-  // tests/integration against the real stores. The contract checked here is
-  // that it asks for nothing when there is nothing to ask about.
   it('returns an empty list for a store with no levels', async () => {
     const group = { path: '/', resolve: () => { throw new Error('should not resolve') } }
     expect(await resolveLevelPaths(group, [])).toEqual([])
+  })
+
+  it('resolves the level paths relative to the group that declares the pyramid', async () => {
+    const { map, root } = await pyramidStore()
+    const group = await zarr.open(zarr.root(listable(map)).resolve('/temperature'), { kind: 'group' })
+    expect(root.path).toBe('/')
+    expect(await resolveLevelPaths(group, [{ path: '0' }, { path: '1' }]))
+      .toEqual(['0/temp', '1/temp'])
+  })
+
+  it('ignores a root node that shares a level name', async () => {
+    const { map } = await pyramidStore({ decoy: true })
+    const group = await zarr.open(zarr.root(listable(map)).resolve('/temperature'), { kind: 'group' })
+    expect(await resolveLevelPaths(group, [{ path: '0' }, { path: '1' }]))
+      .toEqual(['0/temp', '1/temp'])
+  })
+
+  it('leaves level paths alone when each one already names an array', async () => {
+    const map = store()
+    const root = zarr.root(map)
+    await zarr.create(root)
+    await zarr.create(root.resolve('/rgb'))
+    await writeArray(root.resolve('/rgb/0'), { shape: [4, 4], chunkShape: [4, 4] })
+    await writeArray(root.resolve('/rgb/1'), { shape: [2, 2], chunkShape: [2, 2] })
+    const group = await zarr.open(zarr.root(listable(map)).resolve('/rgb'), { kind: 'group' })
+    expect(await resolveLevelPaths(group, [{ path: '0' }, { path: '1' }])).toEqual(['0', '1'])
+  })
+
+  it('lists the children of a group whose path carries a trailing slash', async () => {
+    // `resolve('')` is how the render path reaches the group of a single-level
+    // store, and URL resolution leaves a trailing slash in the path.
+    const map = store()
+    const root = zarr.root(map)
+    await zarr.create(root)
+    await zarr.create(root.resolve('/rgb'))
+    await writeArray(root.resolve('/rgb/data'), { shape: [4, 4], chunkShape: [4, 4] })
+    await writeArray(root.resolve('/rgb/y'), { shape: [4], chunkShape: [4] })
+    await writeArray(root.resolve('/rgb/x'), { shape: [4], chunkShape: [4] })
+    const group = await zarr.open(zarr.root(listable(map)).resolve('/rgb').resolve(''), { kind: 'group' })
+    expect(group.path).toBe('/rgb/')
+    expect(await resolveLevelPaths(group, [{ path: '.' }])).toEqual(['data'])
+  })
+
+  it('opens the variable inside a level when the store cannot be listed', async () => {
+    // Icechunk offers `listChildren`, not `contents`, and plain HTTP without
+    // consolidated metadata lists nothing. The caller knows the variable, so
+    // one direct open settles the layout.
+    const { map } = await pyramidStore({ variable: 'rgba' })
+    const group = await zarr.open(zarr.root(map).resolve('/temperature'), { kind: 'group' })
+    expect(await resolveLevelPaths(group, [{ path: '0' }, { path: '1' }], 'rgba'))
+      .toEqual(['0/rgba', '1/rgba'])
+  })
+
+  it('reports a level group it can find no data array in', async () => {
+    const { map } = await pyramidStore()
+    const group = await zarr.open(zarr.root(map).resolve('/temperature'), { kind: 'group' })
+    await expect(resolveLevelPaths(group, [{ path: '0' }], 'missing'))
+      .rejects.toThrow(/no single data array/)
+  })
+})
+
+describe('openZarrRoot', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('opens a plain store over HTTP, consolidated metadata and all', async () => {
+    const files = new Map([
+      ['/zarr.json', JSON.stringify({
+        zarr_format: 3, node_type: 'group', attributes: { 'proj:code': 'EPSG:4326' },
+      })],
+    ])
+    vi.stubGlobal('fetch', async (input) => {
+      const url = new URL(typeof input === 'string' ? input : input.url)
+      const body = files.get(url.pathname.replace('/data.zarr', ''))
+      return body ? new Response(body, { status: 200 }) : new Response(null, { status: 404 })
+    })
+    const root = await openZarrRoot('https://example.com/data.zarr')
+    expect(root.kind).toBe('group')
+    expect(root.attrs['proj:code']).toBe('EPSG:4326')
+  })
+
+  it('falls back to the plain reader when the Icechunk reader fails', async () => {
+    const map = store()
+    await zarr.create(zarr.root(map), { attributes: { marker: 'plain' } })
+    vi.stubGlobal('fetch', async (input) => {
+      const url = new URL(typeof input === 'string' ? input : input.url)
+      const body = map.get(url.pathname.replace('/repo.icechunk', ''))
+      return body ? new Response(body, { status: 200 }) : new Response(null, { status: 404 })
+    })
+    const deps = { icechunk: { IcechunkStore: { open: async () => { throw new Error('no repo') } } } }
+    const root = await openZarrRoot('https://example.com/repo.icechunk', { icechunk: true, deps })
+    expect(root.attrs.marker).toBe('plain')
+  })
+})
+
+describe('unsupportedCodecs', () => {
+  const encode = value => new TextEncoder().encode(JSON.stringify(value))
+
+  // A v2 array, written as `.zarray` the way xarray and zarr-python do.
+  function v2Array({ compressor = null, filters = null, order = 'C' } = {}) {
+    const map = new Map([
+      ['/.zgroup', encode({ zarr_format: 2 })],
+      ['/tas/.zarray', encode({
+        zarr_format: 2,
+        shape: [4, 4],
+        chunks: [2, 2],
+        dtype: '<f8',
+        compressor,
+        filters,
+        fill_value: null,
+        order,
+      })],
+    ])
+    return { get: async key => map.get(key) }
+  }
+
+  it('flags the compressor of a v2 store, which reads nothing from zarr.json', async () => {
+    const backing = v2Array({ compressor: { id: 'gribberish' } })
+    const array = await zarr.open(zarr.root(backing).resolve('/tas'), { kind: 'array' })
+    expect(await unsupportedCodecs(array)).toEqual(['numcodecs.gribberish'])
+  })
+
+  it('passes a v2 store compressed with a codec zarrita has', async () => {
+    const backing = v2Array({ compressor: { id: 'blosc', cname: 'zstd' }, filters: [{ id: 'shuffle' }] })
+    const array = await zarr.open(zarr.root(backing).resolve('/tas'), { kind: 'array' })
+    expect(await unsupportedCodecs(array)).toEqual([])
+  })
+
+  it('passes a v2 store whose filter zarrita translates', async () => {
+    // zarrita rewrites `fixedscaleoffset` into codecs it implements, so
+    // naming it after numcodecs would refuse a store it can read.
+    const backing = v2Array({ filters: [{ id: 'fixedscaleoffset', scale: 10, offset: 0 }] })
+    const array = await zarr.open(zarr.root(backing).resolve('/tas'), { kind: 'array' })
+    expect(await unsupportedCodecs(array)).toEqual([])
+  })
+
+  it('passes a sharded v3 store, whose sharding zarrita implements itself', async () => {
+    const backing = {
+      // zarrita opens a sharded array only against a store that can read a
+      // byte range, because a shard index is read before its chunks.
+      getRange: async () => undefined,
+      get: async key => new Map([
+        ['/zarr.json', encode({ zarr_format: 3, node_type: 'group', attributes: {} })],
+        ['/rgb/zarr.json', encode({
+          zarr_format: 3,
+          node_type: 'array',
+          shape: [8, 8],
+          data_type: 'uint8',
+          chunk_grid: { name: 'regular', configuration: { chunk_shape: [8, 8] } },
+          chunk_key_encoding: { name: 'default' },
+          fill_value: 0,
+          attributes: {},
+          codecs: [{
+            name: 'sharding_indexed',
+            configuration: {
+              chunk_shape: [4, 4],
+              codecs: [{ name: 'bytes' }, { name: 'zstd' }],
+              index_codecs: [{ name: 'bytes' }, { name: 'crc32c' }],
+            },
+          }],
+        })],
+      ]).get(key),
+    }
+    const array = await zarr.open(zarr.root(backing).resolve('/rgb'), { kind: 'array' })
+    expect(await unsupportedCodecs(array)).toEqual([])
+  })
+
+  it('reads the metadata of an array whose path carries a trailing slash', async () => {
+    const backing = {
+      get: async key => new Map([
+        ['/zarr.json', encode({ zarr_format: 3, node_type: 'group', attributes: {} })],
+        ['/rgb/zarr.json', encode({
+          zarr_format: 3,
+          node_type: 'array',
+          shape: [4, 4],
+          data_type: 'float64',
+          chunk_grid: { name: 'regular', configuration: { chunk_shape: [4, 4] } },
+          chunk_key_encoding: { name: 'default' },
+          fill_value: 0,
+          attributes: {},
+          codecs: [{ name: 'bytes' }, { name: 'gribberish' }],
+        })],
+      ]).get(key),
+    }
+    const array = await zarr.open(zarr.root(backing).resolve('/rgb').resolve(''), { kind: 'array' })
+    expect(array.path).toBe('/rgb/')
+    expect(await unsupportedCodecs(array)).toEqual(['gribberish'])
+  })
+
+  it('reports nothing when neither metadata document can be read', async () => {
+    const array = { path: '/rgb', store: { get: async () => { throw new Error('offline') } } }
+    expect(await unsupportedCodecs(array)).toEqual([])
   })
 })
 
@@ -238,6 +638,43 @@ describe('zarrZoomGuard', () => {
     expect(zarrZoomGuard({ levels: [] }, [], null)).toEqual({ minZoom: 0, hasOverviews: false })
     expect(zarrZoomGuard(null, [], null)).toEqual({ minZoom: 0, hasOverviews: false })
   })
+
+  it('finds the coarsest level however the store orders them', () => {
+    // GeoZarr 0.4 mandates coarsest first, and the multiscales convention
+    // states no order at all, so position cannot settle which level is which.
+    const fine = { arrayWidth: 100000, arrayHeight: 100000 }
+    const coarse = { arrayWidth: 1000, arrayHeight: 1000 }
+    const chunks = [{ width: 1024, height: 1024 }, { width: 1024, height: 1024 }]
+    expect(zarrZoomGuard({ levels: [coarse, fine] }, chunks, [-180, -90, 180, 90]).minZoom).toBe(0)
+    expect(zarrZoomGuard({ levels: [fine, coarse] }, chunks, [-180, -90, 180, 90]).minZoom).toBe(0)
+  })
+
+  it('pairs the coarsest level with its own chunk size', () => {
+    // The chunk sizes run parallel to the levels, so a coarsest level listed
+    // first must be measured with the first chunk size, not the last.
+    const levels = [
+      { arrayWidth: 1024, arrayHeight: 1024 },
+      { arrayWidth: 1048576, arrayHeight: 1048576 },
+    ]
+    const chunks = [{ width: 16, height: 16 }, { width: 4096, height: 4096 }]
+    // 1024 pixels in 16-pixel chunks is 64 chunks across, and 256 small chunks
+    // afford 16 of them across a view, so the view has to narrow four times.
+    // The last chunk size would make the same level one chunk wide and the
+    // last level 256 chunks wide: neither answers 4.
+    expect(zarrZoomGuard({ levels }, chunks, [-180, -90, 180, 90]).minZoom).toBe(4)
+  })
+
+  it('measures an antimeridian box by the span it covers', () => {
+    // RFC 7946 puts the west edge east of the east edge for a box that
+    // crosses the antimeridian. Subtracting then measures the rest of the
+    // world, and the guard would let a global-resolution store draw at a
+    // world view.
+    const meta = { levels: [{ arrayWidth: 400000, arrayHeight: 200000 }] }
+    const crossing = zarrZoomGuard(meta, [chunk], [170, -10, -170, 10])
+    const equivalent = zarrZoomGuard(meta, [chunk], [0, -10, 20, 10])
+    expect(crossing.minZoom).toBe(equivalent.minZoom)
+    expect(crossing.minZoom).toBeGreaterThan(zarrZoomGuard(meta, [chunk], [-180, -90, 180, 90]).minZoom)
+  })
 })
 
 describe('withMultiscalesLayout', () => {
@@ -307,6 +744,162 @@ describe('withMultiscalesLayout', () => {
   it('ignores an array form that names no datasets', () => {
     const empty = { multiscales: [{ tile_matrix_set: 'WGS84Quad' }] }
     expect(withMultiscalesLayout(empty)).toBe(empty)
+  })
+
+  it('orders the levels finest first whatever order the store lists them in', () => {
+    const coarsestFirst = { ...ftw, multiscales: [{
+      ...ftw.multiscales[0],
+      datasets: [...ftw.multiscales[0].datasets].reverse(),
+    }] }
+    const attrs = withMultiscalesLayout(coarsestFirst)
+    expect(attrs.multiscales.layout.map(level => level.asset)).toEqual(['.', '2x'])
+  })
+})
+
+// The convention marks the per-level spatial metadata optional, so a store may
+// state only how each level was resampled. These are the convention's own
+// examples, at
+// https://github.com/zarr-conventions/multiscales/tree/main/examples.
+describe('withMultiscalesLayout, per-level metadata the convention leaves out', () => {
+  const scaled = (asset, scale, derivedFrom) => ({
+    asset,
+    ...(derivedFrom ? { derived_from: derivedFrom } : {}),
+    transform: { scale: [scale, scale], translation: [0, 0] },
+  })
+
+  it('derives the shape and the transform from the group and the level scale', () => {
+    const attrs = withMultiscalesLayout({
+      'proj:code': 'EPSG:32632',
+      'spatial:dimensions': ['y', 'x'],
+      'spatial:transform': [10, 0, 500000, 0, -10, 5000000],
+      'spatial:shape': [1024, 2048],
+      multiscales: {
+        layout: [scaled('0', 1), scaled('1', 2, '0'), scaled('2', 2, '1')],
+        resampling_method: 'average',
+      },
+    })
+    const { layout } = attrs.multiscales
+    expect(layout.map(level => level['spatial:shape']))
+      .toEqual([[1024, 2048], [512, 1024], [256, 512]])
+    expect(layout[2]['spatial:transform']).toEqual([40, 0, 500000, 0, -40, 5000000])
+    expect(attrs.multiscales.resampling_method).toBe('average')
+  })
+
+  it('reads the level scale as relative to its source level', () => {
+    // The convention states scale as "the coordinate transformation from the
+    // source level (derived_from) to this level", so a chain multiplies.
+    const attrs = withMultiscalesLayout({
+      'spatial:dimensions': ['y', 'x'],
+      'spatial:transform': [10, 0, 0, 0, -10, 0],
+      'spatial:shape': [900, 900],
+      multiscales: { layout: [scaled('r10m', 1), scaled('r20m', 2, 'r10m'), scaled('r60m', 3, 'r20m')] },
+    })
+    expect(attrs.multiscales.layout.map(level => level['spatial:shape']))
+      .toEqual([[900, 900], [450, 450], [150, 150]])
+  })
+
+  it('takes a missing shape from the bounding box and the level transform', () => {
+    // The convention's geospatial-pyramid example: every level states its own
+    // transform, none states a shape, and the group states its extent.
+    const attrs = withMultiscalesLayout({
+      'proj:code': 'EPSG:32632',
+      'spatial:dimensions': ['Y', 'X'],
+      'spatial:transform': [10, 0, 500000, 0, -10, 5000000],
+      'spatial:bbox': [500000, 4900000, 600000, 5000000],
+      multiscales: {
+        layout: [
+          { ...scaled('0', 1), 'spatial:transform': [10, 0, 500000, 0, -10, 5000000] },
+          { ...scaled('1', 2, '0'), 'spatial:transform': [20, 0, 500000, 0, -20, 5000000] },
+          { ...scaled('2', 2, '1'), 'spatial:transform': [40, 0, 500000, 0, -40, 5000000] },
+        ],
+        resampling_method: 'average',
+      },
+    })
+    expect(attrs.multiscales.layout.map(level => level['spatial:shape']))
+      .toEqual([[10000, 10000], [5000, 5000], [2500, 2500]])
+  })
+
+  it('parses the convention DEM example, whose finest level is listed last', async () => {
+    const { parseGeoZarrMetadata } = await import('@developmentseed/geozarr')
+    const attrs = withMultiscalesLayout({
+      'proj:code': 'EPSG:4326',
+      'spatial:dimensions': ['latitude', 'longitude'],
+      'spatial:transform': [0.000277778, 0, -180, 0, -0.000277778, 90],
+      'spatial:bbox': [-180, -90, 180, 90],
+      multiscales: {
+        layout: [
+          { ...scaled('dem_30m', 1), 'spatial:transform': [0.000277778, 0, -180, 0, -0.000277778, 90] },
+          { ...scaled('dem_90m', 3, 'dem_30m'), 'spatial:transform': [0.000833334, 0, -180, 0, -0.000833334, 90] },
+          { ...scaled('dem_270m', 3, 'dem_90m'), 'spatial:transform': [0.0025, 0, -180, 0, -0.0025, 90] },
+          { ...scaled('dem_10m_superres', 0.333, 'dem_30m'), 'spatial:transform': [0.000092593, 0, -180, 0, -0.000092593, 90] },
+        ],
+        resampling_method: 'cubic',
+      },
+    })
+    const meta = parseGeoZarrMetadata(attrs)
+    expect(meta.levels.map(level => level.path))
+      .toEqual(['dem_10m_superres', 'dem_30m', 'dem_90m', 'dem_270m'])
+    const widths = meta.levels.map(level => level.arrayWidth)
+    expect([...widths].sort((a, b) => b - a)).toEqual(widths)
+  })
+
+  it('leaves the convention Sentinel-2 example as it is', () => {
+    const sentinel = {
+      'proj:code': 'EPSG:32633',
+      'spatial:dimensions': ['Y', 'X'],
+      'spatial:bbox': [500000, 4900000, 600000, 5000000],
+      multiscales: {
+        layout: [
+          { ...scaled('r10m', 1), 'spatial:transform': [10, 0, 500000, 0, -10, 5000000], 'spatial:shape': [10980, 10980] },
+          { ...scaled('r20m', 2, 'r10m'), 'spatial:transform': [20, 0, 500000, 0, -20, 5000000], 'spatial:shape': [5490, 5490] },
+          { ...scaled('r60m', 3, 'r20m'), 'spatial:transform': [60, 0, 500000, 0, -60, 5000000], 'spatial:shape': [1830, 1830] },
+        ],
+      },
+    }
+    expect(withMultiscalesLayout(sentinel)).toBe(sentinel)
+  })
+
+  it('leaves a level alone when the arithmetic is not well defined', () => {
+    // The convention's array-based-pyramid example shifts each level's origin
+    // by half a cell of its source, in units the convention does not pin
+    // down, and states no spatial metadata at all.
+    const shifted = {
+      'spatial:dimensions': ['y', 'x'],
+      'spatial:transform': [10, 0, 0, 0, -10, 0],
+      'spatial:shape': [1024, 1024],
+      multiscales: {
+        layout: [
+          { asset: '0/data', transform: { scale: [1, 1] } },
+          { asset: '1/data', derived_from: '0/data', transform: { scale: [2, 2], translation: [0.5, 0.5] } },
+        ],
+      },
+    }
+    const attrs = withMultiscalesLayout(shifted)
+    expect(attrs.multiscales.layout[0]['spatial:shape']).toEqual([1024, 1024])
+    expect(attrs.multiscales.layout[1]['spatial:shape']).toBeUndefined()
+    expect(attrs.multiscales.layout[1]['spatial:transform']).toBeUndefined()
+  })
+
+  it('leaves a pyramid alone when the group describes no grid', () => {
+    // The convention's domain-agnostic examples carry no spatial conventions,
+    // so there is no arithmetic to do and nothing to draw either.
+    const generic = {
+      multiscales: {
+        layout: [scaled('0', 1), scaled('1', 2, '0'), scaled('2', 4, '1')],
+        resampling_method: 'average',
+      },
+    }
+    expect(withMultiscalesLayout(generic)).toBe(generic)
+  })
+
+  it('stops at a derived_from cycle rather than following it', () => {
+    const cyclic = {
+      'spatial:dimensions': ['y', 'x'],
+      'spatial:transform': [10, 0, 0, 0, -10, 0],
+      'spatial:shape': [1024, 1024],
+      multiscales: { layout: [scaled('a', 2, 'b'), scaled('b', 2, 'a')] },
+    }
+    expect(withMultiscalesLayout(cyclic)).toBe(cyclic)
   })
 })
 

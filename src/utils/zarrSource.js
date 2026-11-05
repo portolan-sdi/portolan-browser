@@ -166,6 +166,18 @@ export async function openZarrRoot(url, { icechunk = false, deps = null } = {}) 
 const Y_DIM_NAMES = ['y', 'lat', 'latitude'];
 const X_DIM_NAMES = ['x', 'lon', 'long', 'longitude'];
 
+// The subset of those names that states the axis is geographic. Only these
+// settle the CRS on their own: `lat` and `lon` hold degrees by the CF
+// conventions, while `y` and `x` hold whatever the grid's projection uses.
+// rioxarray writes a UTM grid with dimensions named `y` and `x`, and reading
+// its metres as degrees puts the data at longitude 499980.
+const GEOGRAPHIC_Y_DIM_NAMES = ['lat', 'latitude'];
+const GEOGRAPHIC_X_DIM_NAMES = ['lon', 'long', 'longitude'];
+
+// Names a CF grid-mapping variable is written under. The variable carries no
+// data; its attributes hold the CRS. rioxarray writes `spatial_ref`.
+const GRID_MAPPING_NAMES = ['spatial_ref', 'crs'];
+
 // The spacing between coordinates is floating point, so it is never exactly
 // constant. A grid counts as regular when the last coordinate lands within
 // this fraction of one cell of where constant spacing puts it.
@@ -184,11 +196,32 @@ const SPACING_TOLERANCE = 0.01;
  */
 export function spatialDimNames(dimensionNames) {
   const dims = Array.isArray(dimensionNames) ? dimensionNames : [];
-  if (dims.length < 2 || dims.some(d => typeof d !== 'string' || d === '')) {return null;}
+  if (dims.length < 2) {return null;}
   const [yName, xName] = dims.slice(-2);
+  // Zarr v3 allows a null entry in `dimension_names`, which names one axis and
+  // leaves another unnamed. Only the last two axes are read here, so an
+  // unnamed time or band axis in front of them is no reason to refuse the
+  // store.
+  if ([yName, xName].some(d => typeof d !== 'string' || d === '')) {return null;}
   const known = (name, list) => list.includes(String(name).toLowerCase());
   if (!known(yName, Y_DIM_NAMES) || !known(xName, X_DIM_NAMES)) {return null;}
   return [yName, xName];
+}
+
+// The origin and spacing implied by three cell centres of an axis of `length`
+// cells: the first two give the step, and the last says whether that step held
+// all the way along. Only those three are needed, which is why the reader
+// below fetches three slices rather than the whole axis.
+function spacingFromSamples({ first, second, last, length }) {
+  if (!(length >= 2)) {return null;}
+  const origin = Number(first);
+  const step = Number(second) - origin;
+  if (!Number.isFinite(origin) || !Number.isFinite(step) || step === 0) {return null;}
+  const expectedLast = origin + step * (length - 1);
+  const actualLast = Number(last);
+  if (!Number.isFinite(actualLast)) {return null;}
+  if (Math.abs(actualLast - expectedLast) > Math.abs(step) * SPACING_TOLERANCE) {return null;}
+  return { origin, step };
 }
 
 /**
@@ -196,16 +229,67 @@ export function spatialDimNames(dimensionNames) {
  * not constant. `values` holds the cell centres in storage order.
  */
 export function coordinateSpacing(values) {
-  const n = values?.length ?? 0;
-  if (n < 2) {return null;}
-  const origin = Number(values[0]);
-  const step = Number(values[1]) - origin;
-  if (!Number.isFinite(origin) || !Number.isFinite(step) || step === 0) {return null;}
-  const expectedLast = origin + step * (n - 1);
-  const actualLast = Number(values[n - 1]);
-  if (!Number.isFinite(actualLast)) {return null;}
-  if (Math.abs(actualLast - expectedLast) > Math.abs(step) * SPACING_TOLERANCE) {return null;}
-  return { origin, step };
+  const length = values?.length ?? 0;
+  return spacingFromSamples({
+    first: values?.[0],
+    second: values?.[1],
+    last: values?.[length - 1],
+    length,
+  });
+}
+
+// The group paths a coordinate array may live under, nearest first.
+//
+// CF puts the coordinate arrays beside the variable they label, so a store
+// that holds one variable per group keeps them in that group rather than at
+// the store root. The root is tried second because a store that writes its
+// coordinates once at the top is also common.
+function coordinateBases(array) {
+  const path = String(array?.path || '/').replace(/\/+$/, '');
+  const cut = path.lastIndexOf('/');
+  const parent = cut <= 0 ? '/' : path.slice(0, cut);
+  return [...new Set([parent, '/'])];
+}
+
+function childPath(base, name) {
+  return base === '/' ? `/${name}` : `${base}/${name}`;
+}
+
+/**
+ * The CRS of a CF-style store that STAC does not declare one for.
+ *
+ * Geographic dimension names settle it: `lat` and `lon` hold degrees, so the
+ * grid is EPSG:4326. Dimensions named `y` and `x` say nothing about the
+ * projection, so the CF grid-mapping variable is read instead. A store that
+ * offers neither is left undescribed, because guessing EPSG:4326 for a
+ * projected grid draws it on the other side of the world.
+ *
+ * @returns `{ code }` or `{ wkt2 }`, or null when the CRS is unknown.
+ */
+async function inferCrs(root, array, [yName, xName]) {
+  const geographic = GEOGRAPHIC_Y_DIM_NAMES.includes(String(yName).toLowerCase())
+    && GEOGRAPHIC_X_DIM_NAMES.includes(String(xName).toLowerCase());
+  if (geographic) {return { code: 'EPSG:4326' };}
+
+  // The array may name its grid-mapping variable, which is the CF way; the
+  // conventional names are tried after it.
+  const declared = typeof array?.attrs?.grid_mapping === 'string' ? [array.attrs.grid_mapping] : [];
+  const names = [...new Set([...declared, ...GRID_MAPPING_NAMES])];
+  for (const base of coordinateBases(array)) {
+    for (const name of names) {
+      try {
+        // The names are tried in order of preference, and the first one that
+        // answers settles the CRS.
+        // eslint-disable-next-line no-await-in-loop -- see above
+        const node = await zarr.open(root.resolve(childPath(base, name)), { kind: 'array' });
+        const wkt2 = node.attrs?.crs_wkt ?? node.attrs?.spatial_ref;
+        if (typeof wkt2 === 'string' && wkt2 !== '') {return { wkt2 };}
+      } catch {
+        /* no grid-mapping variable under this name: try the next */
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -219,32 +303,57 @@ export function coordinateSpacing(values) {
  *
  * @param root The opened root group.
  * @param array The data array to describe.
- * @param options.crs The CRS as `{ code }` or `{ wkt2 }`. Defaults to
- *   EPSG:4326, which is what CF latitude and longitude coordinates are in.
+ * @param options.crs The CRS as `{ code }` or `{ wkt2 }`. Omitted, it is read
+ *   from the store. See inferCrs.
  * @returns The attributes, or null when the grid cannot be described.
  */
 export async function geoZarrAttrsFromCoordinates(root, array, { crs = null } = {}) {
   const names = spatialDimNames(array?.dimensionNames);
   if (!names) {return null;}
   const [yName, xName] = names;
+  const [height, width] = (array.shape || []).slice(-2);
+  const bases = coordinateBases(array);
 
-  const read = async (name) => {
-    try {
-      const coord = await zarr.open(root.resolve(`/${name}`), { kind: 'array' });
-      if (coord.shape.length !== 1) {return null;}
-      const chunk = await zarr.get(coord, [null]);
-      return coordinateSpacing(chunk.data);
-    } catch {
-      // A store that names a spatial dimension but ships no coordinate array
-      // for it cannot be placed on the map. The caller reports it.
-      return null;
+  // The coordinate array has to label this array's grid, so its length has to
+  // match the spatial dimension it names. A store that holds a coarser copy of
+  // an axis under the same name would otherwise give full-resolution spacing
+  // over half the extent, which places every pixel wrongly and says nothing
+  // about it.
+  const read = async (name, cells) => {
+    for (const base of bases) {
+      try {
+        // The places a coordinate array may live are tried nearest first, and
+        // the nearest one that labels this array wins.
+        // eslint-disable-next-line no-await-in-loop -- see above
+        const coord = await zarr.open(root.resolve(childPath(base, name)), { kind: 'array' });
+        if (coord.shape.length !== 1 || coord.shape[0] !== cells) {continue;}
+        const n = coord.shape[0];
+        if (n < 2) {return null;}
+        // Three cell centres settle a regular axis, so three slices are read
+        // rather than the axis itself: a 4-million-cell float64 axis is 32 MB.
+        // eslint-disable-next-line no-await-in-loop -- see above
+        const [head, tail] = await Promise.all([
+          zarr.get(coord, [zarr.slice(0, 2)]),
+          zarr.get(coord, [zarr.slice(n - 1, n)]),
+        ]);
+        return spacingFromSamples({
+          first: head.data[0], second: head.data[1], last: tail.data[0], length: n,
+        });
+      } catch {
+        /* no usable coordinate array here: try the next place it may live */
+      }
     }
+    // A store that names a spatial dimension but ships no coordinate array
+    // for it cannot be placed on the map. The caller reports it.
+    return null;
   };
 
-  const [y, x] = await Promise.all([read(yName), read(xName)]);
+  const [y, x] = await Promise.all([read(yName, height), read(xName, width)]);
   if (!y || !x) {return null;}
 
-  const [height, width] = array.shape.slice(-2);
+  const projection = (crs?.wkt2 || crs?.code) ? crs : await inferCrs(root, array, names);
+  if (!projection) {return null;}
+
   const attrs = {
     'spatial:dimensions': [yName, xName],
     'spatial:transform': [x.step, 0, x.origin, 0, y.step, y.origin],
@@ -253,8 +362,8 @@ export async function geoZarrAttrsFromCoordinates(root, array, { crs = null } = 
     // CF coordinates mark cell centres, which GeoZarr calls `node`.
     'spatial:registration': 'node',
   };
-  if (crs?.wkt2) {attrs['proj:wkt2'] = crs.wkt2;}
-  else {attrs['proj:code'] = crs?.code || 'EPSG:4326';}
+  if (projection.wkt2) {attrs['proj:wkt2'] = projection.wkt2;}
+  else {attrs['proj:code'] = projection.code;}
   return attrs;
 }
 
@@ -284,11 +393,14 @@ export async function unusableCrs(crs) {
   if (!crs || crs.code) {return null;}
   const definition = crs.wkt2 ?? crs.projjson;
   if (!definition) {return 'none';}
+  // The imports sit outside the try on purpose. A chunk that fails to load is
+  // a deployment fault, not a fault in the store's CRS, and reporting it as
+  // one would name a projection that is perfectly usable.
+  const [{ default: proj4 }, { default: wktParser }] = await Promise.all([
+    import('proj4'),
+    import('wkt-parser'),
+  ]);
   try {
-    const [{ default: proj4 }, { default: wktParser }] = await Promise.all([
-      import('proj4'),
-      import('wkt-parser'),
-    ]);
     registerGeostationary(proj4);
     const parsed = wktParser(definition);
     // Building the transform is the test: proj4 throws when the definition
@@ -317,17 +429,32 @@ export async function unusableCrs(crs) {
 // "Unknown codec: gribberish". Checked up front, that becomes one message
 // about the store instead of a map of failed tiles.
 //
-// Codecs are not on zarrita's public `Array`, so the array's own metadata
-// document is read back through the store. It costs one small request, which
-// the store has usually cached from opening the array.
+// Codecs are not on zarrita's public `Array` — the metadata is a private field
+// and the normalised codec list sits behind an internal symbol — so the
+// array's own metadata document is read back through the store. It costs one
+// small request, which the store has usually cached from opening the array.
+//
+// Both Zarr versions are read, because a v2 store names its codecs in a
+// different document and under different keys. zarrita normalises a v2
+// `compressor` or `filter` to a `numcodecs.<id>` codec and looks that name up
+// in the same registry, so naming them the same way here puts both versions
+// through one check. Reading `zarr.json` alone would pass every v2 store
+// whatever it compresses with.
 
-// Every codec name in an array's metadata, including the ones nested inside a
-// sharding codec's configuration.
-async function codecNames(array) {
-  const path = array.path === '/' ? '' : array.path;
-  const raw = await array.store.get(`${path}/zarr.json`);
-  if (!raw) {return [];}
-  const meta = JSON.parse(new TextDecoder().decode(raw));
+function metadataDocumentPath(array, document) {
+  const path = String(array.path || '/').replace(/\/+$/, '');
+  return `${path}/${document}`;
+}
+
+async function readJson(store, path) {
+  const raw = await store.get(path);
+  if (!raw) {return null;}
+  return JSON.parse(new TextDecoder().decode(raw));
+}
+
+// Every codec name in a v3 array's metadata, including the ones nested inside
+// a sharding codec's configuration.
+function v3CodecNames(meta) {
   const names = [];
   const walk = (codecs) => {
     if (!Array.isArray(codecs)) {return;}
@@ -341,6 +468,30 @@ async function codecNames(array) {
   };
   walk(meta.codecs);
   return names;
+}
+
+// The same, for a v2 array, named as zarrita names them after conversion.
+function v2CodecNames(meta) {
+  const names = [];
+  if (meta.order === 'F') {names.push('transpose');}
+  const numcodec = (spec) => {
+    if (typeof spec?.id !== 'string') {return;}
+    // zarrita translates this one filter into native v3 codecs it implements,
+    // so naming it `numcodecs.fixedscaleoffset` would report a store it can
+    // read as unreadable.
+    if (spec.id === 'fixedscaleoffset') {names.push('scale_offset');}
+    else {names.push(`numcodecs.${spec.id}`);}
+  };
+  for (const filter of Array.isArray(meta.filters) ? meta.filters : []) {numcodec(filter);}
+  numcodec(meta.compressor);
+  return names;
+}
+
+async function codecNames(array) {
+  const v3 = await readJson(array.store, metadataDocumentPath(array, 'zarr.json'));
+  if (v3) {return v3CodecNames(v3);}
+  const v2 = await readJson(array.store, metadataDocumentPath(array, '.zarray'));
+  return v2 ? v2CodecNames(v2) : [];
 }
 
 // Codecs zarrita implements in its chunk pipeline rather than in the codec
@@ -371,10 +522,10 @@ export async function unsupportedCodecs(array) {
 
 // Publishers write a pyramid two ways, and a reader meets both.
 //
-// The `zarr-conventions/multiscales` v1 convention makes `multiscales` an
-// object with a `layout` array. Each entry names its level in `asset`. The
-// GeoZarr v1 mini spec adopts this form, and the italy-aerial store declares
-// it by schema URL in `zarr_conventions`.
+// The `zarr-conventions/multiscales` convention (v0.1, Pilot) makes
+// `multiscales` an object with a `layout` array. Each entry names its level in
+// `asset`. The GeoZarr v1 mini spec adopts this form, and the italy-aerial
+// store declares it by schema URL in `zarr_conventions`.
 //
 // Earlier GeoZarr drafts make `multiscales` an array, after OME-NGFF. Each
 // entry carries a `datasets` array, and each dataset names its level in
@@ -395,29 +546,216 @@ export function declaresMultiscales(attrs) {
   return Array.isArray(multiscales.layout) && multiscales.layout.length > 0;
 }
 
+// --- Per-level spatial metadata the convention leaves out --------------------
+//
+// The convention marks the per-level `spatial:shape` and `spatial:transform`
+// optional: "at each resolution level, the spatial:* metadata can be
+// overridden with level-specific values as needed". The vendored parser
+// requires both of them on every level, so a store that leaves them out is
+// refused with "a pyramid the browser cannot read" — which is four of the
+// convention's own five geospatial examples.
+//
+// What a level leaves out is often still arithmetic. A level states its
+// resampling in `transform.scale`, "the coordinate transformation from the
+// source level (derived_from) to this level", so the scale from the base level
+// is the product along the `derived_from` chain. With the group's own
+// `spatial:shape` and `spatial:transform`, that gives the level's shape and
+// transform. A level that states its transform but no shape can take the
+// shape from the group's `spatial:bbox` instead.
+//
+// The earlier array form states the same thing as `factor`, which is already
+// counted from the base level.
+//
+// Nothing is guessed. A level whose arithmetic is not well defined is left as
+// it is, and the caller's "pyramid the browser cannot read" notice still
+// reports it.
+
+const SOURCE_SCALE = 1;
+
+// Where the y and x axes sit in a per-axis array of length `length`. The
+// convention orders such an array by `spatial:dimensions`.
+function spatialAxisIndices(dimensions, length) {
+  if (Array.isArray(dimensions) && dimensions.length === length) {
+    const find = list => dimensions.findIndex(d => list.includes(String(d).toLowerCase()));
+    const y = find(Y_DIM_NAMES);
+    const x = find(X_DIM_NAMES);
+    return y >= 0 && x >= 0 ? [y, x] : null;
+  }
+  // A two-element array can only be [y, x]: the convention's spatial
+  // conventions put y before x.
+  return length === 2 ? [0, 1] : null;
+}
+
+// The y and x scale of one level relative to its source level, or null when
+// the level states none that can be used.
+function relativeScale(entry, dimensions) {
+  const scale = entry?.transform?.scale;
+  if (!Array.isArray(scale)) {return null;}
+  const axes = spatialAxisIndices(dimensions, scale.length);
+  if (!axes) {return null;}
+  const [sy, sx] = axes.map(axis => Number(scale[axis]));
+  if (!(sy > 0) || !(sx > 0)) {return null;}
+  // A translation moves the level's origin, and the convention states it in
+  // the source level's coordinates rather than in the grid's. Deriving an
+  // origin from it would be a guess, so such a level is left alone.
+  const translation = entry?.transform?.translation;
+  if (Array.isArray(translation) && translation.some(value => Number(value) !== 0)) {return null;}
+  return [sy, sx];
+}
+
+// The y and x scale of every level counted from the base level, by asset.
+function scalesFromBase(entries, dimensions) {
+  const byAsset = new Map(entries.map(entry => [entry.asset, entry]));
+  const resolved = new Map();
+  const walk = (entry, seen) => {
+    if (!entry) {return null;}
+    if (resolved.has(entry.asset)) {return resolved.get(entry.asset);}
+    // A `derived_from` cycle is malformed metadata, and following it would not
+    // terminate.
+    if (seen.has(entry.asset)) {return null;}
+    seen.add(entry.asset);
+    let scale = null;
+    const factor = Number(entry.factor);
+    if (Number.isFinite(factor) && factor > 0) {
+      // The array form counts `factor` from the base level already.
+      scale = [factor, factor];
+    } else {
+      const relative = relativeScale(entry, dimensions);
+      if (relative) {
+        const source = typeof entry.derived_from === 'string'
+          ? walk(byAsset.get(entry.derived_from), seen)
+          : [SOURCE_SCALE, SOURCE_SCALE];
+        if (source) {scale = [relative[0] * source[0], relative[1] * source[1]];}
+      }
+    }
+    resolved.set(entry.asset, scale);
+    return scale;
+  };
+  for (const entry of entries) {walk(entry, new Set());}
+  return resolved;
+}
+
+function affine(value) {
+  return Array.isArray(value) && value.length === 6 && value.every(n => Number.isFinite(Number(n)))
+    ? value.map(Number)
+    : null;
+}
+
+function shape2d(value) {
+  return Array.isArray(value) && value.length === 2
+    && value.every(n => Number.isInteger(Number(n)) && Number(n) >= 1)
+    ? value.map(Number)
+    : null;
+}
+
+// The group's affine scaled by a level's own scale. An affine maps column and
+// row to x and y, so a level whose cells are `sx` by `sy` of the base's
+// multiplies the column terms by `sx` and the row terms by `sy`.
+function scaledAffine(base, [sy, sx]) {
+  const [a, b, c, d, e, f] = base;
+  return [a * sx, b * sy, c, d * sx, e * sy, f];
+}
+
+function scaledShape([height, width], [sy, sx]) {
+  const scaled = [Math.ceil(height / sy), Math.ceil(width / sx)];
+  return scaled.every(n => Number.isFinite(n) && n >= 1) ? scaled : null;
+}
+
+// A level's shape from the group's bounding box and the level's own affine.
+// Only a `pixel`-registered grid can be measured this way, because its box
+// covers whole cells; a `node`-registered box covers one cell less.
+function shapeFromBbox(bbox, transform, registration) {
+  if (registration !== 'pixel') {return null;}
+  if (!Array.isArray(bbox) || bbox.length < 4) {return null;}
+  const [west, south, east, north] = bbox.slice(0, 4).map(Number);
+  const [a, b, , d, e] = transform;
+  // A rotated or skewed affine does not measure a box axis by axis.
+  if (b !== 0 || d !== 0 || a === 0 || e === 0) {return null;}
+  const width = Math.round(Math.abs((east - west) / a));
+  const height = Math.round(Math.abs((north - south) / e));
+  return [height, width].every(n => Number.isFinite(n) && n >= 1) ? [height, width] : null;
+}
+
+// The source `multiscales`, read out of either spelling, or null when it
+// declares no pyramid this module can rewrite.
+function multiscalesSource(multiscales) {
+  if (Array.isArray(multiscales)) {
+    const source = multiscales.find(entry => Array.isArray(entry?.datasets) && entry.datasets.length > 0);
+    if (!source) {return null;}
+    const entries = source.datasets
+      .filter(dataset => typeof dataset?.path === 'string')
+      .map(dataset => ({ ...dataset, asset: dataset.path }));
+    if (entries.length === 0) {return null;}
+    return { entries, minimal: true, resamplingMethod: source.resampling_method };
+  }
+  const layout = multiscales?.layout;
+  if (!Array.isArray(layout) || layout.length === 0) {return null;}
+  if (!layout.every(entry => typeof entry?.asset === 'string')) {return null;}
+  return { entries: layout, minimal: false, resamplingMethod: multiscales.resampling_method };
+}
+
 /**
- * The attributes with any array-form `multiscales` rewritten to the object
- * form the convention defines.
+ * The attributes with their `multiscales` in the object form the convention
+ * defines, every per-level `spatial:shape` and `spatial:transform` that is
+ * derivable filled in, and the levels ordered finest first.
  *
  * Returns the attributes unchanged when they need no rewrite, so a caller can
  * compare by identity.
  */
 export function withMultiscalesLayout(attrs) {
-  const multiscales = attrs?.multiscales;
-  if (!Array.isArray(multiscales)) {return attrs;}
-  const source = multiscales.find(entry => Array.isArray(entry?.datasets) && entry.datasets.length > 0);
+  const source = multiscalesSource(attrs?.multiscales);
   if (!source) {return attrs;}
-  const layout = source.datasets
-    .filter(dataset => typeof dataset?.path === 'string')
-    .map(dataset => {
-      const level = { asset: dataset.path };
-      if (dataset['spatial:transform']) {level['spatial:transform'] = dataset['spatial:transform'];}
-      if (dataset['spatial:shape']) {level['spatial:shape'] = dataset['spatial:shape'];}
-      return level;
-    });
-  if (layout.length === 0) {return attrs;}
+
+  const dimensions = attrs['spatial:dimensions'];
+  const baseAffine = affine(attrs['spatial:transform']);
+  const baseShape = shape2d(attrs['spatial:shape']);
+  const bbox = attrs['spatial:bbox'];
+  const registration = attrs['spatial:registration'] ?? 'pixel';
+  const scales = scalesFromBase(source.entries, dimensions);
+
+  let changed = Array.isArray(attrs.multiscales);
+  const layout = source.entries.map((entry) => {
+    const level = source.minimal ? { asset: entry.asset } : { ...entry };
+    const scale = scales.get(entry.asset);
+    let transform = affine(entry['spatial:transform']);
+    if (transform) {level['spatial:transform'] = entry['spatial:transform'];}
+    else if (baseAffine && scale) {
+      transform = scaledAffine(baseAffine, scale);
+      level['spatial:transform'] = transform;
+      changed = true;
+    }
+    const declaredShape = shape2d(entry['spatial:shape']);
+    if (declaredShape) {level['spatial:shape'] = entry['spatial:shape'];}
+    else {
+      const derived = (baseShape && scale && scaledShape(baseShape, scale))
+        || (transform && shapeFromBbox(bbox, transform, registration));
+      if (derived) {
+        level['spatial:shape'] = derived;
+        changed = true;
+      }
+    }
+    return level;
+  });
+
+  // The levels are ordered finest first, which is what the parser and every
+  // consumer of `meta.levels` reads them as. No order is safe to assume:
+  // GeoZarr 0.4 mandates coarsest first, this convention states no order at
+  // all, and its own DEM example puts its finest level last.
+  const widths = layout.map(level => shape2d(level['spatial:shape']));
+  if (widths.every(Boolean)) {
+    const order = layout.map((level, i) => i)
+      .sort((a, b) => widths[b][1] - widths[a][1] || widths[b][0] - widths[a][0]);
+    if (order.some((i, at) => i !== at)) {
+      changed = true;
+      const sorted = order.map(i => layout[i]);
+      layout.length = 0;
+      layout.push(...sorted);
+    }
+  }
+
+  if (!changed) {return attrs;}
   const rewritten = { layout };
-  if (source.resampling_method) {rewritten.resampling_method = source.resampling_method;}
+  if (source.resamplingMethod) {rewritten.resampling_method = source.resamplingMethod;}
   return { ...attrs, multiscales: rewritten };
 }
 
@@ -429,7 +767,10 @@ export function withMultiscalesLayout(attrs) {
 function childArrayNames(group) {
   const contents = typeof group.store?.contents === 'function' ? group.store.contents() : null;
   if (!contents) {return [];}
-  const prefix = group.path === '/' ? '/' : `${group.path}/`;
+  // A group reached through `resolve('')` carries a trailing slash in its
+  // path, because that is what URL resolution leaves there. Appending another
+  // separator would make a prefix no listed path starts with.
+  const prefix = `${String(group.path || '/').replace(/\/+$/, '')}/`;
   return contents
     .filter(entry => entry.kind === 'array' && entry.path.startsWith(prefix))
     .map(entry => entry.path.slice(prefix.length))
@@ -451,6 +792,40 @@ function soleArrayName(levelGroup, preferred = null) {
   const dimLike = new Set([...Y_DIM_NAMES, ...X_DIM_NAMES, 'band', 'bands', 'time', 'spatial_ref']);
   const data = names.filter(name => !dimLike.has(name.toLowerCase()));
   return data.length === 1 ? data[0] : null;
+}
+
+// The data array inside a level group, including the case where the group
+// cannot be listed.
+//
+// Nothing lists the children of an Icechunk repository through zarrita — the
+// repository offers `listChildren` and `listNodes`, not `contents` — and plain
+// HTTP without consolidated metadata lists nothing at all. The caller already
+// knows which variable it wants in those cases, so the name is tried against
+// the store instead of looked up in a listing. One failed request settles it.
+async function levelArrayName(levelGroup, variable, level) {
+  const name = soleArrayName(levelGroup, variable);
+  if (name) {return name;}
+  if (variable) {
+    try {
+      await zarr.open(levelGroup.resolve(variable), { kind: 'array' });
+      return variable;
+    } catch {
+      /* the variable is not an array inside this level either */
+    }
+  }
+  throw new Error(`Zarr level "${level}" is a group with no single data array to render`);
+}
+
+// Where a level path points.
+//
+// The convention states that "all paths are relative to the group containing
+// the multiscales metadata", and `.` names that group. The paths are resolved
+// that way: zarrita's `Location.resolve` reads a leading slash as a path from
+// the store root, so a pyramid in a variable group would probe `/0` instead of
+// `/temperature/0` — which finds nothing, or finds an unrelated array of the
+// same name at the root.
+function levelLocation(group, path) {
+  return path === '.' ? group : group.resolve(path);
 }
 
 /**
@@ -477,19 +852,18 @@ export async function resolveLevelPaths(group, levels, variable = null) {
   const paths = levels.map(level => level.path);
   if (paths.length === 0) {return paths;}
   const first = paths[0];
+  const location = levelLocation(group, first);
   try {
-    await zarr.open(group.resolve(first === '.' ? '' : `/${first}`), { kind: 'array' });
+    await zarr.open(location, { kind: 'array' });
     return paths;
   } catch {
     /* not an array: fall through and look for one inside it */
   }
-  const levelGroup = await zarr.open(group.resolve(first === '.' ? '' : `/${first}`), { kind: 'group' });
-  const name = soleArrayName(levelGroup, variable);
-  if (!name) {
-    throw new Error(`Zarr level "${first}" is a group with no single data array to render`);
-  }
+  const levelGroup = await zarr.open(location, { kind: 'group' });
+  const name = await levelArrayName(levelGroup, variable, first);
   return paths.map(path => (path === '.' ? name : `${path}/${name}`));
 }
+
 
 // --- The zoom at which a store is cheap enough to draw -----------------------
 
@@ -582,12 +956,24 @@ export function zarrMinZoom({
   return Math.max(0, Math.ceil(zoom));
 }
 
+// How many degrees of longitude a bounding box spans, from 0 exclusive to 360.
+function longitudeSpan(bbox) {
+  if (!Array.isArray(bbox) || bbox.length < 4) {return 360;}
+  // A box with elevation is [west, south, low, east, north, high].
+  const west = Number(bbox[0]);
+  const east = Number(bbox.length >= 6 ? bbox[3] : bbox[2]);
+  if (!Number.isFinite(west) || !Number.isFinite(east)) {return 360;}
+  const span = west > east ? east - west + 360 : east - west;
+  return span > 0 && span <= 360 ? span : 360;
+}
+
 /**
  * The minimum zoom for a parsed GeoZarr pyramid, and whether the store needs
  * one at all.
  *
  * @param meta Parsed GeoZarr metadata.
- * @param chunkSizes The chunk width and height per level, finest first.
+ * @param chunkSizes The chunk width and height per level, in the same order as
+ *   `meta.levels`.
  * @param bbox The data's bounding box in EPSG:4326, used to tell how much of
  *   the world the data covers.
  * @returns `{ minZoom, hasOverviews }`.
@@ -595,14 +981,25 @@ export function zarrMinZoom({
 export function zarrZoomGuard(meta, chunkSizes, bbox) {
   const levels = meta?.levels || [];
   const hasOverviews = levels.length > 1;
-  // The coarsest level is the last one: `meta.levels` is finest first.
-  const coarsest = levels[levels.length - 1];
-  const chunk = chunkSizes[chunkSizes.length - 1];
+  // The coarsest level is the narrowest one, found by measuring rather than by
+  // position: GeoZarr 0.4 orders its levels coarsest first, the multiscales
+  // convention states no order at all, and a store may list them either way.
+  // `chunkSizes` runs parallel to `levels`, so the chunk comes from the same
+  // index as the level it belongs to.
+  let at = -1;
+  levels.forEach((level, i) => {
+    if (!(level?.arrayWidth > 0)) {return;}
+    if (at < 0 || level.arrayWidth < levels[at].arrayWidth) {at = i;}
+  });
+  const coarsest = at >= 0 ? levels[at] : null;
+  const chunk = at >= 0 ? chunkSizes[at] : null;
   if (!coarsest || !chunk?.width) {return { minZoom: 0, hasOverviews };}
   const chunksAcross = Math.ceil(coarsest.arrayWidth / chunk.width);
-  const lonSpan = Array.isArray(bbox) && bbox.length >= 4
-    ? Math.abs(bbox[2] - bbox[0])
-    : 360;
+  // A bounding box that crosses the antimeridian has its west edge east of its
+  // east edge, which RFC 7946 states and both GeoJSON and STAC follow. Taking
+  // the difference then measures the rest of the world instead of the data,
+  // and the guard lets a global-resolution store draw at a world view.
+  const lonSpan = longitudeSpan(bbox);
   const minZoom = zarrMinZoom({
     chunksAcross,
     worldFraction: Math.min(lonSpan / 360, 1) || 1,
