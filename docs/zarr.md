@@ -91,14 +91,23 @@ both:
 
 | Spelling | Shape | Levels under | Named by |
 | -------- | ----- | ------------ | -------- |
-| [zarr-conventions/multiscales v1](https://github.com/zarr-conventions/multiscales) | object | `layout` | `asset` |
+| [zarr-conventions/multiscales](https://github.com/zarr-conventions/multiscales) v0.1 | object | `layout` | `asset` |
 | earlier GeoZarr drafts | array | `datasets` | `path` |
 
-The object form is the current convention, and the GeoZarr v1 mini spec adopts
-it. The italy-aerial store writes it and names the schema in
-`zarr_conventions`. The array form comes from the earlier drafts, after
-OME-NGFF. The FTW global prediction store writes it. The browser rewrites the
-array form to the object form before it reads the levels.
+The object form is the current convention. Its maturity is Pilot, and its own
+README expects breaking changes before a stable v1. The italy-aerial store
+writes it and names the schema in `zarr_conventions`.
+
+The array form comes from the earlier drafts, after OME-NGFF. The browser
+reads it when each level's transform and shape are stated outright. It also
+reads them when they are derivable from a `factor` relative to the base
+level, plus the group's own `spatial:transform` and `spatial:shape`. The FTW
+global prediction store writes this derivable form.
+
+A GeoZarr 0.4-style entry names its level by index, with no `factor` and no
+per-level `spatial:transform` or `spatial:shape`. The browser has nothing to
+derive from, so it reports such a pyramid as one it cannot read. The browser
+rewrites a readable array form to the object form before it reads the levels.
 
 Declare the convention in `zarr_conventions`. A store that declares a pyramid
 the browser cannot read reports that on the map. The browser then stops,

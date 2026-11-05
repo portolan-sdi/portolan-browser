@@ -95,24 +95,42 @@ async function isServed(target) {
 
 // Whether the deck.gl canvas holds anything but one flat colour. A map that
 // loaded no raster is a single colour; one that drew a raster is not.
+//
+// This has to sample the deck.gl canvas specifically, not just any canvas on
+// the page. StacMapLayer.js creates its MapboxOverlay with `interleaved:
+// false`, so deck.gl draws into a canvas of its own, stacked over MapLibre's
+// basemap canvas rather than sharing it. MapLibre's `.maplibregl-canvas`
+// always shows non-blank, colourful basemap tiles, so sampling "any canvas"
+// reports `drew: true` even when the Zarr layer drew nothing.
+//
+// The deck.gl canvas is identified by id, not by elimination. MapboxOverlay
+// passes neither `canvas` nor `id` to the Deck instance it creates
+// (@deck.gl/mapbox's `_onAddOverlaid`), so Deck's `_createCanvas`
+// (@deck.gl/core `lib/deck.ts`) falls back to `canvas.id = props.id ||
+// 'deckgl-overlay'` and appends that canvas to the overlay's own container,
+// a sibling of MapLibre's canvas.
 async function canvasDrew(page) {
   return page.evaluate(() => {
-    const canvases = [...document.querySelectorAll('canvas')];
-    for (const canvas of canvases) {
-      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
-      if (!gl) {continue;}
-      const { drawingBufferWidth: w, drawingBufferHeight: h } = gl;
-      if (!w || !h) {continue;}
-      const pixels = new Uint8Array(w * h * 4);
-      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-      const first = pixels.slice(0, 4).join(',');
-      let distinct = 0;
-      for (let i = 0; i < pixels.length; i += 4 * 97) {
-        if (pixels.slice(i, i + 4).join(',') !== first) {distinct++;}
-      }
-      if (distinct > 0) {return { drew: true, distinct, size: `${w}x${h}` };}
+    const canvas = document.getElementById('deckgl-overlay');
+    if (!canvas) {
+      return { drew: false, canvas: null, reason: 'no #deckgl-overlay canvas on the page' };
     }
-    return { drew: false };
+    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    if (!gl) {
+      return { drew: false, canvas: '#deckgl-overlay', reason: 'no WebGL context on it' };
+    }
+    const { drawingBufferWidth: w, drawingBufferHeight: h } = gl;
+    if (!w || !h) {
+      return { drew: false, canvas: '#deckgl-overlay', reason: 'zero-sized drawing buffer' };
+    }
+    const pixels = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    const first = pixels.slice(0, 4).join(',');
+    let distinct = 0;
+    for (let i = 0; i < pixels.length; i += 4 * 97) {
+      if (pixels.slice(i, i + 4).join(',') !== first) {distinct++;}
+    }
+    return { drew: distinct > 0, distinct, size: `${w}x${h}`, canvas: '#deckgl-overlay' };
   });
 }
 
@@ -170,7 +188,8 @@ for (const testCase of cases) {
     results.push({ name: testCase.name, layers, notice, drew, consoleErrors });
     console.log(`    layers: ${layers.length ? layers.join(' | ') : '(none listed)'}`);
     console.log(`    notice: ${notice || '(none)'}`);
-    console.log(`    canvas: ${drew.drew ? `drew content (${drew.distinct} differing samples, ${drew.size})` : 'blank'}`);
+    console.log(`    canvas: sampled ${drew.canvas || '(none found)'}${drew.reason ? ` (${drew.reason})` : ''}`);
+    console.log(`           ${drew.drew ? `drew content (${drew.distinct} differing samples, ${drew.size})` : 'blank'}`);
     if (consoleErrors.length) {
       console.log(`    console: ${consoleErrors.slice(0, 4).join(' // ')}`);
     }

@@ -11,6 +11,9 @@
 //
 // The four collections cover the four outcomes the browser has to produce.
 // See docs/zarr.md.
+//
+// It fetches each publisher's own STAC metadata live, so it needs network
+// access, and it only has to be re-run when that upstream metadata changes.
 
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';

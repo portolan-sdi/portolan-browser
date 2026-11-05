@@ -131,10 +131,36 @@ const server = createServer(async (req, res) => {
   res.setHeader('Accept-Ranges', 'bytes');
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
   if (range) {
-    const start = range[1] ? Number(range[1]) : info.size - Number(range[2]);
-    const end = range[1] && range[2] ? Number(range[2]) : info.size - 1;
+    const size = info.size;
+    let start;
+    let end;
+    // `bytes=-` matches with both groups empty. RFC 9110 14.1.1 requires a
+    // range-spec to carry a start, an end, or a suffix length; one with
+    // neither is unsatisfiable, not a request for the whole file.
+    if (!range[1] && !range[2]) {
+      start = Infinity;
+      end = -Infinity;
+    } else if (range[1]) {
+      // `bytes=START-` or `bytes=START-END`.
+      start = Number(range[1]);
+      end = range[2] ? Number(range[2]) : size - 1;
+    } else {
+      // `bytes=-N`: a suffix range, the last N bytes of the file.
+      const suffix = Number(range[2]);
+      start = Math.max(0, size - suffix);
+      end = size - 1;
+    }
+    // Clamp like a real object store would, so Content-Range and
+    // Content-Length describe the bytes actually sent, not the request.
+    end = Math.min(end, size - 1);
+    if (size === 0 || start > end || start >= size) {
+      res.statusCode = 416;
+      res.setHeader('Content-Range', `bytes */${size}`);
+      res.end();
+      return;
+    }
     res.statusCode = 206;
-    res.setHeader('Content-Range', `bytes ${start}-${end}/${info.size}`);
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`);
     res.setHeader('Content-Length', end - start + 1);
     createReadStream(file, { start, end }).pipe(res);
     return;
