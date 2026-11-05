@@ -3,11 +3,12 @@
   "stac_version": "1.1.0",
   "stac_extensions": [
     "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
-    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
   ],
   "id": "ctrees-agb-icechunk",
   "title": "CTrees global aboveground biomass, 100 m annual (Icechunk)",
-  "description": "ctrees.org global annual aboveground biomass (AGB) at 100 m, 2000-2025, published as a bare Icechunk 2.x repository (a `repo` config object plus `chunks/`, `manifests/`, `snapshots/` prefixes -- confirmed by a 200 on the `repo` object; there is no `zarr.json`/`.zattrs` at this path because Icechunk stores its own metadata inside the repo, not as plain Zarr files). CORS confirmed (`Access-Control-Allow-Origin: *` on the S3 bucket). Per-array shapes/chunks/dtype were not independently inspected (that needs the Icechunk manifest format, not a plain HTTP GET), so none are declared here. bbox is estimated (global biomass coverage, excluding high latitudes where AGB is not mapped).\n\nLicense unknown; declared \"proprietary\" with a via link.\n\nExpected browser outcome: draws if the Icechunk client in this browser can open a bare-repo-object 2.x layout; otherwise refused with a notice.",
+  "description": "ctrees.org global annual aboveground biomass (AGB) at 100 m, 2000-2025, published as a bare Icechunk 2.x repository (a `repo` config object plus `chunks/`, `manifests/`, `snapshots/` prefixes -- confirmed by a 200 on the `repo` object; there is no `zarr.json`/`.zattrs` at this path because Icechunk stores its own metadata inside the repo, not as plain Zarr files). CORS confirmed (`Access-Control-Allow-Origin: *` on the S3 bucket). bbox is estimated (global biomass coverage, excluding high latitudes where AGB is not mapped); the grid itself is a full [-180, -90, 180, 90].\n\nCORRECTION (browser run, 2026-11): the arrays WERE inspected, by opening the repository with `icechunk-js` 0.6.1 in node -- which reads this 2.x layout without trouble, and reports spec version 2. The store nests its data one group down, under `aboveground_biomass`, so the variables below name their full paths; with no `cube:variables` at all the browser found no array to render and reported the store as having no spatial reference. Values are raw int16 with `agb_scale_factor` 10 and `_FillValue` -9999, so the render rescales raw DN.\n\nLicense unknown; declared \"proprietary\" with a via link.\n\nExpected browser outcome: draws (viridis ramp on AGB) from zoom level 8. One level, no overviews: 405,000 cells across in 2,000-cell chunks is 203 chunks across the world, so the browser holds it back with the no-overviews zoom notice until then.",
   "license": "proprietary",
   "extent": {
     "spatial": {
@@ -55,17 +56,91 @@
         "2000-01-01T00:00:00Z",
         "2025-12-31T23:59:59Z"
       ],
-      "description": "Annual, 2000-2025 (26 years); not independently confirmed from the manifest."
+      "description": "Annual, 2000-2025 (26 steps), confirmed from the array shape."
     },
     "x": {
       "type": "spatial",
       "axis": "x",
-      "reference_system": 4326
+      "extent": [
+        -180,
+        180
+      ],
+      "reference_system": 4326,
+      "step": 0.0008888888888888889
     },
     "y": {
       "type": "spatial",
       "axis": "y",
-      "reference_system": 4326
+      "extent": [
+        -90,
+        90
+      ],
+      "reference_system": 4326,
+      "step": -0.0008888888888888889
+    }
+  },
+  "cube:variables": {
+    "aboveground_biomass/agb": {
+      "dimensions": [
+        "time",
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        1,
+        2000,
+        2000
+      ],
+      "dtype": "int16",
+      "unit": "Mg ha-1",
+      "nodata": -9999,
+      "long_name": "Above-ground biomass",
+      "description": "Shape [26, 202500, 405000]. Raw int16; `agb_scale_factor` 10, so a raw 3000 is 300 Mg/ha. CRS from the `aboveground_biomass/spatial_ref` array (`crs_wkt`, EPSG:4326).",
+      "statistics": {
+        "minimum": 0,
+        "maximum": 3000
+      }
+    },
+    "aboveground_biomass/uncertainty": {
+      "dimensions": [
+        "time",
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        1,
+        2000,
+        2000
+      ],
+      "dtype": "int16",
+      "unit": "Mg ha-1",
+      "nodata": -9999,
+      "long_name": "Above-ground biomass uncertainty (residual standard error)",
+      "statistics": {
+        "minimum": 0,
+        "maximum": 1000
+      }
+    }
+  },
+  "renders": {
+    "agb": {
+      "title": "Above-ground biomass, viridis (raw DN, scale 10)",
+      "assets": [
+        "data"
+      ],
+      "bidx": [
+        1
+      ],
+      "rescale": [
+        [
+          0,
+          3000
+        ]
+      ],
+      "colormap_name": "viridis",
+      "nodata": -9999
     }
   },
   "assets": {
@@ -73,7 +148,7 @@
       "href": "https://ctrees-agb-100m-global.s3.us-west-2.amazonaws.com/agb_100m_global/",
       "type": "application/x-icechunk",
       "title": "CTrees AGB 100m global (Icechunk 2.x repository)",
-      "description": "Bare `repo` object confirmed reachable with CORS enabled; array-level metadata not independently inspected.",
+      "description": "Icechunk spec version 2, opened with icechunk-js 0.6.1. Arrays under the `aboveground_biomass` group, with 1-D `x`/`y` float64 coordinates and a `spatial_ref` grid-mapping array.",
       "roles": [
         "data"
       ]

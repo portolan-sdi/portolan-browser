@@ -118,6 +118,30 @@
       "href": "./tessera-utm30-embeddings/collection.json",
       "type": "application/json",
       "title": "Tessera UTM zone 30 geospatial embeddings"
+    },
+    {
+      "rel": "child",
+      "href": "./carbonplan-v2-2d-tavg/collection.json",
+      "type": "application/json",
+      "title": "CarbonPlan 2D tavg demo, v2 bucket prefix (ndpyramid)"
+    },
+    {
+      "rel": "child",
+      "href": "./carbonplan-3d-tavg-prec/collection.json",
+      "type": "application/json",
+      "title": "CarbonPlan 3D tavg/prec demo (band axis, no month axis)"
+    },
+    {
+      "rel": "child",
+      "href": "./carbonplan-v1-2d-tavg/collection.json",
+      "type": "application/json",
+      "title": "CarbonPlan 2D tavg demo, v1 prefix (a pyramid that declares one level)"
+    },
+    {
+      "rel": "child",
+      "href": "./ftw-predictions-zarr/collection.json",
+      "type": "application/json",
+      "title": "Fields of The World: global field prediction probabilities (Zarr V3, 14 levels)"
     }
   ]
 }

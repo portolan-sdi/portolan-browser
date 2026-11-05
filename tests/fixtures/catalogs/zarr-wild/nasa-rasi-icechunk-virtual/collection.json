@@ -3,20 +3,21 @@
   "stac_version": "1.1.0",
   "stac_extensions": [
     "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
-    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
   ],
   "id": "nasa-rasi-icechunk-virtual",
   "title": "NASA Water Insight RASI, historical (virtual Icechunk)",
-  "description": "A NASA Water Insight dataset (\"RASI\", historical) published as an Icechunk store with VIRTUAL chunk references into source NetCDF files rather than native Icechunk chunks. Unlike the 2.x bare-`repo`-object layout used by ctrees-agb-icechunk and gmgsi-icechunk, this store uses an older v1-style layout: a top-level `config.yaml` plus `chunks/` and `manifests/` prefixes (confirmed via a bucket listing; there is no `repo` object at this path -- a direct GET for one 404s). CORS confirmed on the bucket. CONUS bbox is estimated.\n\nLicense unknown; declared \"proprietary\" with a via link.\n\nExpected browser outcome: opens only if the Icechunk client in this browser supports this older v1-layout and virtual chunk refs; and even then, reading a chunk depends on the CORS/reachability of whatever NetCDF object the virtual ref points at, not just this store's own bucket.",
+  "description": "A NASA Water Insight dataset (\"RASI\", historical) published as an Icechunk store with VIRTUAL chunk references into source NetCDF files rather than native Icechunk chunks. Unlike the 2.x bare-`repo`-object layout used by ctrees-agb-icechunk and gmgsi-icechunk, this store uses an older v1-style layout: a top-level `config.yaml` plus `chunks/` and `manifests/` prefixes (confirmed via a bucket listing; there is no `repo` object at this path -- a direct GET for one 404s). CORS confirmed on the bucket.\n\nCORRECTION (browser run, 2026-11): both halves of the uncertainty resolved, and both resolved in the store's favour. `icechunk-js` 0.6.1 opens this layout, and following a virtual reference works: reading one chunk fetches the repository manifest from the store's own bucket and then a byte range out of `s3://nasa-waterinsight/RASI/LSM/HISTORICAL/PERCENTILES/RZSM_percentiles_<yyyymm>.nc`, which answers 206 with `Access-Control-Allow-Origin: *`. Note that this is a *different host* from the store (`nasa-waterinsight.s3.amazonaws.com`, not `...s3.us-west-2...`), so a deployment that allow-lists hosts has to allow both. The arrays were also inspected: eight variables, each [time(780), percentile(5), lat(152), lon(132)] float32 chunked [1, 5, 152, 132], fill -9999, 1-D float32 `lat`/`lon`. The footprint is not CONUS: lat 23.95..39.05, lon -109.55..-96.45, which is the US southern plains and southwest. bbox corrected to that.\n\nLicense unknown; declared \"proprietary\" with a via link.\n\nExpected browser outcome: draws (ramp on the root-zone soil moisture percentile field). One chunk covers the whole grid, so it draws at the item view; one tile read costs 5 percentile levels for the 1 it draws, which is inside the amplification limit of 8.",
   "license": "proprietary",
   "extent": {
     "spatial": {
       "bbox": [
         [
-          -125,
-          25,
-          -67,
-          53
+          -109.6,
+          23.9,
+          -96.4,
+          39.1
         ]
       ]
     },
@@ -51,17 +52,125 @@
   "cube:dimensions": {
     "time": {
       "type": "temporal",
-      "description": "Not independently confirmed from the manifest."
+      "description": "780 monthly steps, confirmed from the array shape."
     },
-    "x": {
+    "percentile": {
+      "type": "other",
+      "extent": [
+        0,
+        4
+      ],
+      "description": "5 percentile levels; the browser pins a non-band axis to its last index."
+    },
+    "lon": {
       "type": "spatial",
       "axis": "x",
+      "extent": [
+        -109.55,
+        -96.45
+      ],
+      "step": 0.1,
       "reference_system": 4326
     },
-    "y": {
+    "lat": {
       "type": "spatial",
       "axis": "y",
+      "extent": [
+        23.95,
+        39.05
+      ],
+      "step": 0.1,
       "reference_system": 4326
+    }
+  },
+  "cube:variables": {
+    "RZSM_Percentiles": {
+      "dimensions": [
+        "time",
+        "percentile",
+        "lat",
+        "lon"
+      ],
+      "type": "data",
+      "chunks": [
+        1,
+        5,
+        152,
+        132
+      ],
+      "dtype": "float32",
+      "unit": "m3 m-3",
+      "nodata": -9999,
+      "long_name": "Robust dispersion statistics: root-zone soil moisture content",
+      "statistics": {
+        "minimum": 0,
+        "maximum": 0.6
+      }
+    },
+    "SWE_Percentiles": {
+      "dimensions": [
+        "time",
+        "percentile",
+        "lat",
+        "lon"
+      ],
+      "type": "data",
+      "chunks": [
+        1,
+        5,
+        152,
+        132
+      ],
+      "dtype": "float32",
+      "unit": "kg m-2",
+      "nodata": -9999,
+      "long_name": "Robust dispersion statistics: snow water equivalent",
+      "statistics": {
+        "minimum": 0,
+        "maximum": 200
+      }
+    },
+    "TotalPrecip_Percentiles": {
+      "dimensions": [
+        "time",
+        "percentile",
+        "lat",
+        "lon"
+      ],
+      "type": "data",
+      "chunks": [
+        1,
+        5,
+        152,
+        132
+      ],
+      "dtype": "float32",
+      "unit": "kg m-2",
+      "nodata": -9999,
+      "long_name": "Robust dispersion statistics: total precipitation",
+      "statistics": {
+        "minimum": 0,
+        "maximum": 300
+      }
+    }
+  },
+  "renders": {
+    "rzsm": {
+      "title": "Root-zone soil moisture percentile, viridis",
+      "assets": [
+        "data"
+      ],
+      "bidx": [
+        1
+      ],
+      "rescale": [
+        [
+          0,
+          0.6
+        ]
+      ],
+      "colormap_name": "viridis",
+      "nodata": -9999
     }
   },
   "assets": {

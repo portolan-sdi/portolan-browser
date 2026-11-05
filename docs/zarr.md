@@ -49,9 +49,13 @@ to make it exact.
 ## Requirements for a Zarr store in a Portolan catalog
 
 The browser checks these properties before it draws a store. They also govern
-how quickly it draws at every zoom. The first three are hard requirements. The browser
-refuses a store that fails them and says why, rather than hanging or drawing
-something wrong.
+how quickly it draws at every zoom. Most of them are hard requirements. The
+browser refuses a store that fails one and says why, rather than hanging or
+drawing something wrong.
+
+The last three are about the array's own layout rather than about the metadata
+a publisher can fix, so they are where the browser's limits are, not the
+store's.
 
 ### Chunk one map tile per chunk
 
@@ -196,10 +200,86 @@ The browser reads the store from the page, so the bucket needs
 `Access-Control-Allow-Origin`. A virtual store needs it on the referenced
 files too, not only on the store itself.
 
+### Put the spatial axes last, in y then x order
+
+`ZarrLayer` requires the two spatial dimensions to be the last two axes of the
+array, in that order, and nothing in the stack transposes an array. A store
+that names them anywhere else cannot be drawn however it is coloured, and the
+browser refuses it with a notice naming the axes.
+
+Tessera's global RGB mosaic is the case to know about: its array is
+`[lat, lon, band]`, so the band axis sits where the renderer looks for the x
+axis. Writing the band axis first, `[band, lat, lon]`, is what every other
+multi-band store in the test catalogs does.
+
+A column-major array is the same fault in another spelling. The colormap loop
+walks the trailing two axes as rows of pixels, so a Zarr v2 array that declares
+`order: "F"`, or a v3 array whose `transpose` codec permutes its axes, is
+refused up front. zarrita decodes both perfectly well — the refusal is about
+what the renderer can index, not about what the reader can decode.
+
+### Describe the grid with 1-D coordinate arrays, or with a transform
+
+A store that carries no `spatial:transform` is described from its coordinate
+arrays, and that route reads one 1-D array per spatial axis (see
+`geoZarrAttrsFromCoordinates`). Three cell centres settle a regular axis, so it
+costs three small reads per axis rather than the whole axis.
+
+A curvilinear or swath grid writes its coordinates as 2-D arrays instead, one
+value per cell, and no affine describes it. The browser cannot place such a
+store and says so. NOAA's CBOFS (a ROMS model on an SGRID curvilinear grid)
+and the GMGSI geostationary mosaic are both refused for this, and both are in
+`tests/fixtures/catalogs/zarr-wild`. Reprojecting a curvilinear grid in the
+browser is the missing capability, not a metadata fix the publisher can make.
+
+A coordinate array stored as float32 is fine. The spacing is measured across
+the whole axis rather than between its first two cells, because a float32
+value near 90 degrees is quantised to about a thousandth of a 0.01-degree
+cell and the error of one such step, multiplied out over 18,000 cells, lands
+ten cells away from the truth. MUR SST is the store that showed this.
+
+### A pyramid may describe itself in its levels
+
+The `multiscales` convention lets a level state its own `spatial:transform` and
+`spatial:shape`, and the browser derives the ones a level leaves out from the
+group's transform and the level's scale (see `withMultiscalesLayout`).
+
+An `ndpyramid` store states none of it. Its `multiscales` is the array spelling
+and holds nothing but a path and a `pixels_per_tile` per level; the root group
+carries no transform, no shape and no CRS at all. Each level is a group holding
+its data array beside its own `x`, `y` and `spatial_ref` arrays, CF style — so
+the pyramid and the spatial description are both real and simply live in
+different places. `geoZarrAttrsFromLevelCoordinates` joins them by reading each
+level's own coordinates. CarbonPlan's climate pyramids are this shape, and four
+of them are in `tests/fixtures/catalogs/zarr-wild`.
+
+Level order is not assumed anywhere. GeoZarr 0.4 mandates coarsest first, the
+multiscales convention states no order, `ndpyramid` writes coarsest first and
+the convention's own DEM example puts its finest level last. The browser
+measures the levels and orders them finest first, which is the order
+`ZarrLayer` reads them in — and it passes the reordered attributes to the layer
+rather than letting it read the store's own, because a layer that read a
+coarsest-first store as finest-first would map a world view onto the
+full-resolution level.
+
 ## Testing
 
-`tests/fixtures/catalogs/zarr` is a local catalog whose collections cover each
-outcome above. Serve it with:
+There are two local catalogs.
+
+`tests/fixtures/catalogs/zarr` holds collections built to cover each outcome
+above, one per rule.
+
+`tests/fixtures/catalogs/zarr-wild` holds 22 collections over real public
+stores that nobody wrote for a demo: operational weather models, research
+datacubes, satellite archives, visualization mosaics and three Icechunk
+repositories. Every collection's description ends with an "Expected browser
+outcome", and a few of them end with a `CORRECTION` paragraph: what the first
+browser run showed that the metadata research had got wrong. Its collections
+fall in three tiers — stores that must draw, stores that must be held back or
+refused with a named notice and without a large fetch, and stores that must
+fail cleanly.
+
+Serve either with:
 
 ```sh
 node tests/fixtures/serve-catalogs.mjs
@@ -238,3 +318,21 @@ pnpm start &
 node tests/fixtures/serve-catalogs.mjs &
 node tests/manual/zarr-render-check.mjs
 ```
+
+`tests/manual/zarr-wild-check.mjs` does the same for the wild catalog, and adds
+the two things a wild run needs that a fixture run does not: an expectation per
+case, checked (`draws`, `notice:<text>`, `error`), and per-case network
+accounting from the store's own host. A guard-tier case fails if one response
+exceeds 20 MB or the case total exceeds 100 MB, however correct its notice
+looks — a guard that refuses a store after fetching it has not guarded
+anything. Each case has a hard timeout, so one unreachable store cannot hang
+the run, and the script prints a verdict table at the end.
+
+```sh
+pnpm exec vite --port 8095 --strictPort &
+node tests/fixtures/serve-catalogs.mjs --port 8096 &
+BROWSER_URL=http://localhost:8095 CATALOG_URL=http://localhost:8096 \
+  node tests/manual/zarr-wild-check.mjs
+```
+
+Pass collection directory names to check only those.

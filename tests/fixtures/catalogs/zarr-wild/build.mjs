@@ -61,7 +61,7 @@ COLLECTIONS.push({
   doc: {
     ...base('carbonplan-4d-climate', {
       title: 'CarbonPlan 4D climate demo (tavg/prec monthly climatology)',
-      description: 'CarbonPlan ndpyramid demo: a Zarr V2, consolidated, carbonplan/ndpyramid "multiscales" (reduce-type) pyramid of 6 levels (path "0" coarsest 128x128 .. "5" finest 4096x4096), each level a `<level>/climate` array with dims [band, month, y, x] in EPSG:3857 (WGS 84 / Pseudo-Mercator), zlib-compressed float32, fill value 9.969209968386869e+36. The `band` coordinate is a 2-element string array; decoding the level-0 chunk confirms the order is `["tavg", "prec"]` (band 0 = mean monthly temperature, band 1 = monthly precipitation) -- this is a demo/example dataset with no documented units, so the render below assumes tavg is already in degrees Celsius, the common CarbonPlan demo convention. License is unclear for this GCS demo bucket; linked via the CarbonPlan maps project.\n\nExpected browser outcome: draws (viridis ramp on the tavg band, finest level).',
+      description: 'CarbonPlan ndpyramid demo: a Zarr V2, consolidated, carbonplan/ndpyramid "multiscales" (reduce-type) pyramid of 6 levels (path "0" coarsest 128x128 .. "5" finest 4096x4096), each level a `<level>/climate` array with dims [band, month, y, x] in EPSG:3857 (WGS 84 / Pseudo-Mercator), zlib-compressed float32, fill value 9.969209968386869e+36. The `band` coordinate is a 2-element string array; decoding the level-0 chunk confirms the order is `["tavg", "prec"]` (band 0 = mean monthly temperature, band 1 = monthly precipitation) -- this is a demo/example dataset with no documented units, so the render below assumes tavg is already in degrees Celsius, the common CarbonPlan demo convention. License is unclear for this GCS demo bucket; linked via the CarbonPlan maps project.\n\nCORRECTION (browser run, 2026-11): every level is chunked `[2, 12, n, n]`, so one chunk holds all 12 months. The map draws one month, so a tile read fetches 12 times the data it draws -- past the browser\'s amplification limit of 8. The store is chunked for a monthly animation, not for a map.\n\nExpected browser outcome: refused by the chunk-amplification guard (12x on the month axis), with the chunk-shape notice.',
       license: 'proprietary',
       bbox: [-179.9, -85.06, 179.9, 85.06],
       interval: [null, null],
@@ -235,7 +235,7 @@ COLLECTIONS.push({
   doc: {
     ...base('tessera-global-rgb', {
       title: 'Tessera global RGB visualization mosaic',
-      description: 'A true-colour RGBA visualization mosaic derived from the Tessera geospatial embeddings (geoemb convention), global, EPSG:4326, 0.0001 deg (~10 m). Zarr V3, zarr-conventions multiscales v0.1, 10 levels (path "0" finest 1,800,000 x 3,600,000 .. "9" coarsest 3,000 x 7,827 -- actually shape[0] x shape[1]; see cube:dimensions), blosc/zstd with bitshuffle. Each level group holds an array `rgb` with shape [lat, lon, band(4)] uint8 (RGBA) plus a 4-element `band` coordinate -- **the band axis is last**, not leading as in most of the other fixtures in this catalog; a reader that assumes band-first will misread the array. The store is sparse near the poles (requests there 404; coverage follows the Tessera embeddings footprint, not a filled global grid).\n\nLicense for this GeoTessera-derived product is not published on the source.coop listing at the time of writing; declared "proprietary" with a via link.\n\nExpected browser outcome: draws (RGBA, no render block needed -- the asset is already 3/4-band uint8 colour).',
+      description: 'A true-colour RGBA visualization mosaic derived from the Tessera geospatial embeddings (geoemb convention), global, EPSG:4326, 0.0001 deg (~10 m). Zarr V3, zarr-conventions multiscales v0.1, 10 levels (path "0" finest 1,800,000 x 3,600,000 .. "9" coarsest 3,000 x 7,827 -- actually shape[0] x shape[1]; see cube:dimensions), blosc/zstd with bitshuffle. Each level group holds an array `rgb` with shape [lat, lon, band(4)] uint8 (RGBA) plus a 4-element `band` coordinate -- **the band axis is last**, not leading as in most of the other fixtures in this catalog; a reader that assumes band-first will misread the array. The store is sparse near the poles (requests there 404; coverage follows the Tessera embeddings footprint, not a filled global grid).\n\nLicense for this GeoTessera-derived product is not published on the source.coop listing at the time of writing; declared "proprietary" with a via link.\n\nCORRECTION (browser run, 2026-11): the trailing band axis is not a detail this browser can read around. `@developmentseed/deck.gl-zarr` requires the two spatial axes to be the last two of the array, in y then x order, and nothing in the stack transposes an array, so `[lat, lon, band]` cannot be drawn however it is coloured.\n\nExpected browser outcome: refused with the axis-order notice naming `lat` and `lon` as not being the last two axes.',
       license: 'proprietary',
       bbox: [-180, -90, 180, 90],
       interval: [null, null],
@@ -328,7 +328,7 @@ COLLECTIONS.push({
     doc: {
       ...base('eopf-s2-l2a-zarr3', {
         title: 'EOPF Sentinel-2 L2A (GeoZarr, Zarr V3), one pinned item',
-        description: `EOPF (ESA/EODC) Sentinel-2 L2A GeoZarr-samples collection "sentinel-2-l2a-zarr3". The EOPF STAC collection rotates its items constantly (new items arrive continuously), so this fixture pins one current item, ${itemId} (datetime 2026-11-05T13:32:51Z, UTM zone EPSG:32627, bbox from the item itself), fetched from \`/collections/sentinel-2-l2a-zarr3/items?limit=1\` on build. The \`reflectance\` asset is a GeoZarr multiscales group \`r10m\`..\`r720m\` (EPSG:32627 via proj:code, confirmed per-level in the group's own spatial:* attributes), sharded (inner chunk 1024x1024 within an 11264x11264 shard at r10m), uint16 scale 1e-4, offset -0.1 (BOA reflectance, _FillValue 0). b02/b03/b04 statistics below are in raw DN (not reflectance units) so a single-variable ramp has something to rescale against.\n\nLicense: ESA/Copernicus Sentinel Data Legal Notice (not a standard SPDX license); declared "proprietary" with a via link.\n\nExpected browser outcome: draws (true colour, r10m).`,
+        description: `EOPF (ESA/EODC) Sentinel-2 L2A GeoZarr-samples collection "sentinel-2-l2a-zarr3". The EOPF STAC collection rotates its items constantly (new items arrive continuously), so this fixture pins one current item, ${itemId} (datetime 2026-11-05T13:32:51Z, UTM zone EPSG:32627, bbox from the item itself), fetched from \`/collections/sentinel-2-l2a-zarr3/items?limit=1\` on build. The \`reflectance\` asset is a GeoZarr multiscales group \`r10m\`..\`r720m\` (EPSG:32627 via proj:code, confirmed per-level in the group's own spatial:* attributes), sharded (inner chunk 1024x1024 within an 11264x11264 shard at r10m), uint16 scale 1e-4, offset -0.1 (BOA reflectance, _FillValue 0). b02/b03/b04 statistics below are in raw DN (not reflectance units) so a single-variable ramp has something to rescale against.\n\nLicense: ESA/Copernicus Sentinel Data Legal Notice (not a standard SPDX license); declared "proprietary" with a via link.\n\nCORRECTION (browser run, 2026-11): this store keeps each band in an array of its own, so there is no one array a true-colour \`bidx: [3, 2, 1]\` could read three bands from -- the render extension indexes bands within an asset, and here a map layer is one band. The render below is therefore a single-band ramp, which is what the data supports; it targets the asset, so whichever band the layer picker has on is drawn through it.\n\nExpected browser outcome: draws (ramp on the selected band, r10m).`,
         license: 'proprietary',
         bbox: [-21.000488008726094, 67.52533091973571, -19.75806232798863, 68.45226977831176],
         interval: ['2026-11-05T13:32:51.024000Z', '2026-11-05T13:32:51.024000Z'],
@@ -349,11 +349,15 @@ COLLECTIONS.push({
         b04: { dimensions: ['y', 'x'], type: 'data', dtype: 'uint16', unit: '1', statistics: { minimum: 0, maximum: 3000 }, long_name: 'BOA reflectance from MSI acquisition at spectral band 04 665 nm' },
       },
       renders: {
-        'true-colour': {
-          title: 'Sentinel-2 true colour (r10m)',
+        reflectance: {
+          // One array per band, so a render can colour one band at a time.
+          // It targets the asset, so it applies to whichever of b02/b03/b04
+          // the layer picker has on. See the CORRECTION in the description.
+          title: 'BOA reflectance (raw DN 0-3000), magma',
           assets: ['reflectance'],
-          bidx: [3, 2, 1],
+          bidx: [1],
           rescale: [[0, 3000]],
+          colormap_name: 'magma',
         },
       },
       assets: {
@@ -375,7 +379,7 @@ COLLECTIONS.push({
   doc: {
     ...base('mur-sst', {
       title: 'MUR SST: multi-scale ultra-high resolution sea surface temperature',
-      description: 'JPL MUR-JPL-L4-GLOB-v04.1 daily SST, Zarr V2, consolidated, single level (no multiscales), global 0.01 deg, CF coordinates only (no spatial_ref/CRS array -- lat/lon are plain degree arrays, EPSG:4326 implied). `analysed_sst` is [time, lat, lon], chunks [5, 1799, 3600], int16, scale_factor 0.001, add_offset 298.15, fill -32768, blosc-lz4. Decoded physical range is roughly 271-305 K (-2 to 32 degC); if the browser does NOT apply scale/offset before rendering, the raw int16 values it actually reads span about [-27150, 6850] ((kelvin-298.15)/0.001 over 271-305K) -- the statistics below are declared in those RAW units, and the render rescale matches, since the store itself does not expose decoded values without a CF-aware reader.\n\nLicense is the store\'s own non-SPDX text: "These data are available free of charge under data policy of JPL PO.DAAC."; declared "proprietary" with a via link.\n\nExpected browser outcome: draws (ramp on raw analysed_sst values).',
+      description: 'JPL MUR-JPL-L4-GLOB-v04.1 daily SST, Zarr V2, consolidated, single level (no multiscales), global 0.01 deg, CF coordinates only (no spatial_ref/CRS array -- lat/lon are plain degree arrays, EPSG:4326 implied). `analysed_sst` is [time, lat, lon], chunks [5, 1799, 3600], int16, scale_factor 0.001, add_offset 298.15, fill -32768, blosc-lz4. Decoded physical range is roughly 271-305 K (-2 to 32 degC); if the browser does NOT apply scale/offset before rendering, the raw int16 values it actually reads span about [-27150, 6850] ((kelvin-298.15)/0.001 over 271-305K) -- the statistics below are declared in those RAW units, and the render rescale matches, since the store itself does not expose decoded values without a CF-aware reader.\n\nLicense is the store\'s own non-SPDX text: "These data are available free of charge under data policy of JPL PO.DAAC."; declared "proprietary" with a via link.\n\nCORRECTION (browser run, 2026-11): the lat and lon coordinate arrays are float32, and this is the store that showed the browser was measuring their spacing from the first two cells -- near 90 degrees a float32 value is quantised to about 7.6e-6, which is 0.08% of a 0.01-degree cell, and projecting that over 17,998 cells missed the last coordinate by ten whole cells. The store was refused as having no coordinate arrays at all. The grid is regular; the arithmetic was not.\n\nExpected browser outcome: draws (ramp on raw analysed_sst values) from zoom level 4. One level, no overviews: 36,000 cells across in 3,600-cell chunks is 10 chunks across the world, so the browser holds it back at a world view and shows the no-overviews zoom notice until then.',
       license: 'proprietary',
       bbox: [-180, -90, 180, 90],
       interval: ['2002-06-01T09:00:00Z', null],
@@ -497,24 +501,59 @@ COLLECTIONS.push({
   doc: {
     ...base('ctrees-agb-icechunk', {
       title: 'CTrees global aboveground biomass, 100 m annual (Icechunk)',
-      description: 'ctrees.org global annual aboveground biomass (AGB) at 100 m, 2000-2025, published as a bare Icechunk 2.x repository (a `repo` config object plus `chunks/`, `manifests/`, `snapshots/` prefixes -- confirmed by a 200 on the `repo` object; there is no `zarr.json`/`.zattrs` at this path because Icechunk stores its own metadata inside the repo, not as plain Zarr files). CORS confirmed (`Access-Control-Allow-Origin: *` on the S3 bucket). Per-array shapes/chunks/dtype were not independently inspected (that needs the Icechunk manifest format, not a plain HTTP GET), so none are declared here. bbox is estimated (global biomass coverage, excluding high latitudes where AGB is not mapped).\n\nLicense unknown; declared "proprietary" with a via link.\n\nExpected browser outcome: draws if the Icechunk client in this browser can open a bare-repo-object 2.x layout; otherwise refused with a notice.',
+      description: 'ctrees.org global annual aboveground biomass (AGB) at 100 m, 2000-2025, published as a bare Icechunk 2.x repository (a `repo` config object plus `chunks/`, `manifests/`, `snapshots/` prefixes -- confirmed by a 200 on the `repo` object; there is no `zarr.json`/`.zattrs` at this path because Icechunk stores its own metadata inside the repo, not as plain Zarr files). CORS confirmed (`Access-Control-Allow-Origin: *` on the S3 bucket). bbox is estimated (global biomass coverage, excluding high latitudes where AGB is not mapped); the grid itself is a full [-180, -90, 180, 90].\n\nCORRECTION (browser run, 2026-11): the arrays WERE inspected, by opening the repository with `icechunk-js` 0.6.1 in node -- which reads this 2.x layout without trouble, and reports spec version 2. The store nests its data one group down, under `aboveground_biomass`, so the variables below name their full paths; with no `cube:variables` at all the browser found no array to render and reported the store as having no spatial reference. Values are raw int16 with `agb_scale_factor` 10 and `_FillValue` -9999, so the render rescales raw DN.\n\nLicense unknown; declared "proprietary" with a via link.\n\nExpected browser outcome: draws (viridis ramp on AGB) from zoom level 8. One level, no overviews: 405,000 cells across in 2,000-cell chunks is 203 chunks across the world, so the browser holds it back with the no-overviews zoom notice until then.',
       license: 'proprietary',
       bbox: [-180, -60, 180, 80],
       interval: ['2000-01-01T00:00:00Z', '2025-12-31T23:59:59Z'],
-      extensions: [DATACUBE_EXT],
+      extensions: [DATACUBE_EXT, RENDER_EXT],
       extraLinks: [via('https://ctrees.org/', 'CTrees')],
     }),
     'cube:dimensions': {
-      time: { type: 'temporal', extent: ['2000-01-01T00:00:00Z', '2025-12-31T23:59:59Z'], description: 'Annual, 2000-2025 (26 years); not independently confirmed from the manifest.' },
-      x: { type: 'spatial', axis: 'x', reference_system: 4326 },
-      y: { type: 'spatial', axis: 'y', reference_system: 4326 },
+      time: { type: 'temporal', extent: ['2000-01-01T00:00:00Z', '2025-12-31T23:59:59Z'], description: 'Annual, 2000-2025 (26 steps), confirmed from the array shape.' },
+      x: { type: 'spatial', axis: 'x', extent: [-180, 180], reference_system: 4326, step: 0.0008888888888888889 },
+      y: { type: 'spatial', axis: 'y', extent: [-90, 90], reference_system: 4326, step: -0.0008888888888888889 },
+    },
+    'cube:variables': {
+      // Named by their full path inside the repository: the arrays live one
+      // group down, under `aboveground_biomass`.
+      'aboveground_biomass/agb': {
+        dimensions: ['time', 'y', 'x'],
+        type: 'data',
+        chunks: [1, 2000, 2000],
+        dtype: 'int16',
+        unit: 'Mg ha-1',
+        nodata: -9999,
+        long_name: 'Above-ground biomass',
+        description: 'Shape [26, 202500, 405000]. Raw int16; `agb_scale_factor` 10, so a raw 3000 is 300 Mg/ha. CRS from the `aboveground_biomass/spatial_ref` array (`crs_wkt`, EPSG:4326).',
+        statistics: { minimum: 0, maximum: 3000 },
+      },
+      'aboveground_biomass/uncertainty': {
+        dimensions: ['time', 'y', 'x'],
+        type: 'data',
+        chunks: [1, 2000, 2000],
+        dtype: 'int16',
+        unit: 'Mg ha-1',
+        nodata: -9999,
+        long_name: 'Above-ground biomass uncertainty (residual standard error)',
+        statistics: { minimum: 0, maximum: 1000 },
+      },
+    },
+    renders: {
+      agb: {
+        title: 'Above-ground biomass, viridis (raw DN, scale 10)',
+        assets: ['data'],
+        bidx: [1],
+        rescale: [[0, 3000]],
+        colormap_name: 'viridis',
+        nodata: -9999,
+      },
     },
     assets: {
       data: {
         href: 'https://ctrees-agb-100m-global.s3.us-west-2.amazonaws.com/agb_100m_global/',
         type: 'application/x-icechunk',
         title: 'CTrees AGB 100m global (Icechunk 2.x repository)',
-        description: 'Bare `repo` object confirmed reachable with CORS enabled; array-level metadata not independently inspected.',
+        description: 'Icechunk spec version 2, opened with icechunk-js 0.6.1. Arrays under the `aboveground_biomass` group, with 1-D `x`/`y` float64 coordinates and a `spatial_ref` grid-mapping array.',
         roles: ['data'],
       },
     },
@@ -527,7 +566,7 @@ COLLECTIONS.push({
   doc: {
     ...base('gmgsi-icechunk', {
       title: 'GMGSI global geostationary mosaic, hourly (Icechunk)',
-      description: 'NOAA Global Mosaic of Geostationary Satellite Imagery (GMGSI), a composite of GOES, Meteosat and Himawari imagery, published as an Icechunk 2.x repository at `gmgsi_v3.icechunk` on source.coop. Confirmed reachable (200 on the `repo` object, which is binary -- an Icechunk config/snapshot object, not a plain Zarr file) with CORS enabled (`access-control-allow-origin: *`). Note: an earlier probe path for this fixture (`bkr/gmgi/gmgsi.zarr/zarr.json`, without the `_v3.icechunk` suffix and as plain Zarr) 404s -- that path does not exist; the real store is the Icechunk repo at the URL below, which does. Per-array shapes/dtypes were not independently inspected; bbox is estimated for a global geostationary composite.\n\nLicense unknown; declared "proprietary" with a via link.\n\nExpected browser outcome: draws if the Icechunk client can open this 2.x layout; otherwise refused with a notice.',
+      description: 'NOAA Global Mosaic of Geostationary Satellite Imagery (GMGSI), a composite of GOES, Meteosat and Himawari imagery, published as an Icechunk 2.x repository at `gmgsi_v3.icechunk` on source.coop. Confirmed reachable (200 on the `repo` object, which is binary -- an Icechunk config/snapshot object, not a plain Zarr file) with CORS enabled (`access-control-allow-origin: *`). Note: an earlier probe path for this fixture (`bkr/gmgi/gmgsi.zarr/zarr.json`, without the `_v3.icechunk` suffix and as plain Zarr) 404s -- that path does not exist; the real store is the Icechunk repo at the URL below, which does. bbox is estimated for a global geostationary composite.\n\nCORRECTION (browser run, 2026-11): the arrays WERE inspected, by opening the repository with `icechunk-js` 0.6.1 in node, which reads this 2.x layout without trouble (spec version 2). The blocker is not the client: this store carries `latitude` and `longitude` as **2-D** arrays of [y, x] = [3000, 5000] float32, the way a curvilinear or swath grid is written, with no affine transform and no grid-mapping variable. The browser derives a transform only from 1-D coordinate arrays (see cbofs-ssh, which is refused for the same reason), so there is nothing here it can place on the map.\n\nLicense unknown; declared "proprietary" with a via link.\n\nExpected browser outcome: refused with the no-spatial-reference notice -- 2-D (non-1-D) spatial coordinates, which this browser\'s Zarr map support does not handle.',
       license: 'proprietary',
       bbox: [-180, -70, 180, 70],
       interval: [null, null],
@@ -535,16 +574,37 @@ COLLECTIONS.push({
       extraLinks: [via('https://data.source.coop/bkr/gmgi/gmgsi_v3.icechunk/repo', 'Icechunk repo object (binary, confirms the store exists)')],
     }),
     'cube:dimensions': {
-      time: { type: 'temporal', description: 'Hourly; not independently confirmed from the manifest.' },
-      x: { type: 'spatial', axis: 'x', reference_system: 4326 },
-      y: { type: 'spatial', axis: 'y', reference_system: 4326 },
+      time: { type: 'temporal', description: 'Hourly; 11,969 steps, confirmed from the array shape.' },
+      x: { type: 'spatial', axis: 'x', reference_system: 4326, description: 'Index axis only: the longitudes are a 2-D [y, x] array, not a 1-D coordinate.' },
+      y: { type: 'spatial', axis: 'y', reference_system: 4326, description: 'Index axis only: the latitudes are a 2-D [y, x] array, not a 1-D coordinate.' },
+    },
+    'cube:variables': {
+      visible: {
+        dimensions: ['time', 'y', 'x'],
+        type: 'data',
+        chunks: [1, 375, 1250],
+        dtype: 'uint8',
+        unit: 'K',
+        long_name: '0-255 brightness temperature, visible',
+        description: 'Shape [11969, 3000, 5000]. Its `coordinates` attribute names `latitude longitude`, both 2-D [3000, 5000] float32 arrays.',
+        statistics: { minimum: 0, maximum: 255 },
+      },
+      longwave_infrared: {
+        dimensions: ['time', 'y', 'x'],
+        type: 'data',
+        chunks: [1, 375, 1250],
+        dtype: 'uint8',
+        unit: 'K',
+        long_name: '0-255 brightness temperature, longwave infrared',
+        statistics: { minimum: 0, maximum: 255 },
+      },
     },
     assets: {
       data: {
         href: 'https://data.source.coop/bkr/gmgi/gmgsi_v3.icechunk/',
         type: 'application/x-icechunk',
         title: 'GMGSI (Icechunk 2.x repository)',
-        description: 'Confirmed reachable with CORS enabled; array-level metadata not independently inspected.',
+        description: 'Icechunk spec version 2, opened with icechunk-js 0.6.1. Grid described by 2-D latitude/longitude arrays, which this browser cannot turn into an affine transform.',
         roles: ['data'],
       },
     },
@@ -557,17 +617,60 @@ COLLECTIONS.push({
   doc: {
     ...base('nasa-rasi-icechunk-virtual', {
       title: 'NASA Water Insight RASI, historical (virtual Icechunk)',
-      description: 'A NASA Water Insight dataset ("RASI", historical) published as an Icechunk store with VIRTUAL chunk references into source NetCDF files rather than native Icechunk chunks. Unlike the 2.x bare-`repo`-object layout used by ctrees-agb-icechunk and gmgsi-icechunk, this store uses an older v1-style layout: a top-level `config.yaml` plus `chunks/` and `manifests/` prefixes (confirmed via a bucket listing; there is no `repo` object at this path -- a direct GET for one 404s). CORS confirmed on the bucket. CONUS bbox is estimated.\n\nLicense unknown; declared "proprietary" with a via link.\n\nExpected browser outcome: opens only if the Icechunk client in this browser supports this older v1-layout and virtual chunk refs; and even then, reading a chunk depends on the CORS/reachability of whatever NetCDF object the virtual ref points at, not just this store\'s own bucket.',
+      description: 'A NASA Water Insight dataset ("RASI", historical) published as an Icechunk store with VIRTUAL chunk references into source NetCDF files rather than native Icechunk chunks. Unlike the 2.x bare-`repo`-object layout used by ctrees-agb-icechunk and gmgsi-icechunk, this store uses an older v1-style layout: a top-level `config.yaml` plus `chunks/` and `manifests/` prefixes (confirmed via a bucket listing; there is no `repo` object at this path -- a direct GET for one 404s). CORS confirmed on the bucket.\n\nCORRECTION (browser run, 2026-11): both halves of the uncertainty resolved, and both resolved in the store\'s favour. `icechunk-js` 0.6.1 opens this layout, and following a virtual reference works: reading one chunk fetches the repository manifest from the store\'s own bucket and then a byte range out of `s3://nasa-waterinsight/RASI/LSM/HISTORICAL/PERCENTILES/RZSM_percentiles_<yyyymm>.nc`, which answers 206 with `Access-Control-Allow-Origin: *`. Note that this is a *different host* from the store (`nasa-waterinsight.s3.amazonaws.com`, not `...s3.us-west-2...`), so a deployment that allow-lists hosts has to allow both. The arrays were also inspected: eight variables, each [time(780), percentile(5), lat(152), lon(132)] float32 chunked [1, 5, 152, 132], fill -9999, 1-D float32 `lat`/`lon`. The footprint is not CONUS: lat 23.95..39.05, lon -109.55..-96.45, which is the US southern plains and southwest. bbox corrected to that.\n\nLicense unknown; declared "proprietary" with a via link.\n\nExpected browser outcome: draws (ramp on the root-zone soil moisture percentile field). One chunk covers the whole grid, so it draws at the item view; one tile read costs 5 percentile levels for the 1 it draws, which is inside the amplification limit of 8.',
       license: 'proprietary',
-      bbox: [-125, 25, -67, 53],
+      bbox: [-109.6, 23.9, -96.4, 39.1],
       interval: [null, null],
-      extensions: [DATACUBE_EXT],
+      extensions: [DATACUBE_EXT, RENDER_EXT],
       extraLinks: [via('https://nasa-waterinsight.s3.us-west-2.amazonaws.com/virtual-zarr-store/icechunk/RASI/HISTORICAL/config.yaml', 'Icechunk v1-layout config.yaml (confirms the store exists)')],
     }),
     'cube:dimensions': {
-      time: { type: 'temporal', description: 'Not independently confirmed from the manifest.' },
-      x: { type: 'spatial', axis: 'x', reference_system: 4326 },
-      y: { type: 'spatial', axis: 'y', reference_system: 4326 },
+      time: { type: 'temporal', description: '780 monthly steps, confirmed from the array shape.' },
+      percentile: { type: 'other', extent: [0, 4], description: '5 percentile levels; the browser pins a non-band axis to its last index.' },
+      lon: { type: 'spatial', axis: 'x', extent: [-109.55, -96.45], step: 0.1, reference_system: 4326 },
+      lat: { type: 'spatial', axis: 'y', extent: [23.95, 39.05], step: 0.1, reference_system: 4326 },
+    },
+    'cube:variables': {
+      RZSM_Percentiles: {
+        dimensions: ['time', 'percentile', 'lat', 'lon'],
+        type: 'data',
+        chunks: [1, 5, 152, 132],
+        dtype: 'float32',
+        unit: 'm3 m-3',
+        nodata: -9999,
+        long_name: 'Robust dispersion statistics: root-zone soil moisture content',
+        statistics: { minimum: 0, maximum: 0.6 },
+      },
+      SWE_Percentiles: {
+        dimensions: ['time', 'percentile', 'lat', 'lon'],
+        type: 'data',
+        chunks: [1, 5, 152, 132],
+        dtype: 'float32',
+        unit: 'kg m-2',
+        nodata: -9999,
+        long_name: 'Robust dispersion statistics: snow water equivalent',
+        statistics: { minimum: 0, maximum: 200 },
+      },
+      TotalPrecip_Percentiles: {
+        dimensions: ['time', 'percentile', 'lat', 'lon'],
+        type: 'data',
+        chunks: [1, 5, 152, 132],
+        dtype: 'float32',
+        unit: 'kg m-2',
+        nodata: -9999,
+        long_name: 'Robust dispersion statistics: total precipitation',
+        statistics: { minimum: 0, maximum: 300 },
+      },
+    },
+    renders: {
+      rzsm: {
+        title: 'Root-zone soil moisture percentile, viridis',
+        assets: ['data'],
+        bidx: [1],
+        rescale: [[0, 0.6]],
+        colormap_name: 'viridis',
+        nodata: -9999,
+      },
     },
     assets: {
       data: {
@@ -894,6 +997,220 @@ COLLECTIONS.push({
         title: 'Tessera UTM30 embeddings (Zarr V3, sharded, EPSG:32630)',
         description: '2 GiB shards -- any guard must refuse before fetching one.',
         roles: ['data'],
+      },
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
+// MUST-RENDER TIER, second pass
+//
+// Added after the first browser run of this catalog (2026-11), which drew far
+// fewer stores than the tier claimed. Every one of these was verified by curl
+// before it was written: CORS header, store layout, per-level array shape and
+// chunk shape, dtype and the CRS the grid-mapping array carries.
+// ---------------------------------------------------------------------------
+
+// 19. carbonplan-v2-2d-tavg
+COLLECTIONS.push({
+  dir: 'carbonplan-v2-2d-tavg',
+  doc: {
+    ...base('carbonplan-v2-2d-tavg', {
+      title: 'CarbonPlan 2D tavg demo, v2 bucket prefix (ndpyramid)',
+      description: 'The `v2/demo/2d/tavg` sibling of carbonplan-2d-tavg: the same CarbonPlan ndpyramid shape under the older bucket prefix. 6 levels (`0` coarsest 128x128 .. `5` finest 4096x4096), each level a group holding `<level>/tavg` [y, x] float32 beside its own `x`, `y` and `spatial_ref` arrays. Chunk is 128x128 at every level, so the coarsest level is one chunk and the finest is 32 chunks across. Level and chunk shapes confirmed from `5/tavg/.zarray` and `0/tavg/.zarray`; CRS confirmed from `0/spatial_ref/.zattrs` (`crs_wkt`, EPSG:3857 with a PROJ4 extension). `multiscales` is the array spelling and carries nothing but a path and `pixels_per_tile` per level -- no transform, no shape, no CRS -- so the only description of the grid is in the levels\' own coordinate arrays. CORS confirmed (`access-control-allow-origin: *`).\n\nLicense is unclear for this GCS demo bucket; linked via the CarbonPlan maps project.\n\nExpected browser outcome: draws (viridis ramp), at a world view -- the coarsest level is one chunk.',
+      license: 'proprietary',
+      bbox: [-179.9, -85.06, 179.9, 85.06],
+      interval: [null, null],
+      extensions: [DATACUBE_EXT, RENDER_EXT],
+      extraLinks: [via('https://storage.googleapis.com/carbonplan-maps/v2/demo/2d/tavg/.zattrs', 'Source .zattrs (ndpyramid multiscales)')],
+    }),
+    'cube:dimensions': {
+      x: { type: 'spatial', axis: 'x', extent: [-20026376.39, 20026376.39], reference_system: 3857 },
+      y: { type: 'spatial', axis: 'y', extent: [-20048966.1, 20048966.1], reference_system: 3857 },
+    },
+    'cube:variables': {
+      tavg: {
+        dimensions: ['y', 'x'],
+        type: 'data',
+        chunks: [128, 128],
+        dtype: 'float32',
+        nodata: 9.969209968386869e+36,
+        long_name: 'Mean monthly temperature',
+        description: 'Finest level (path "5") is [4096, 4096]; level n is [128 * 2^n, 128 * 2^n]. Chunk is 128x128 at every level.',
+        statistics: { minimum: -30, maximum: 30 },
+      },
+    },
+    renders: {
+      tavg: {
+        title: 'Mean monthly temperature (tavg), viridis',
+        assets: ['data'],
+        bidx: [1],
+        rescale: [[-30, 30]],
+        colormap_name: 'viridis',
+      },
+    },
+    assets: {
+      data: {
+        href: 'https://storage.googleapis.com/carbonplan-maps/v2/demo/2d/tavg/',
+        type: 'application/vnd.zarr',
+        title: 'CarbonPlan 2D demo tavg pyramid, v2 prefix (Zarr V2, EPSG:3857)',
+        description: 'ndpyramid "reduce" multiscales, levels "0".."5", each a group holding `tavg`, `x`, `y` and `spatial_ref`.',
+        roles: ['data', 'cloud-optimized'],
+      },
+    },
+  },
+});
+
+// 20. carbonplan-3d-tavg-prec
+COLLECTIONS.push({
+  dir: 'carbonplan-3d-tavg-prec',
+  doc: {
+    ...base('carbonplan-3d-tavg-prec', {
+      title: 'CarbonPlan 3D tavg/prec demo (band axis, no month axis)',
+      description: 'The CarbonPlan ndpyramid demo with a band axis and no time axis: `v2/demo/3d/tavg-prec`, 6 levels, each a group holding `<level>/climate` with dims [band, y, x] float32 and chunks `[2, 128, 128]` -- confirmed from `5/climate/.zarray` ([2, 4096, 4096]) and `0/climate/.zarray`. This is the counterpart to carbonplan-4d-climate, which the amplification guard refuses: there the chunk also spans all 12 months, so a tile read wastes 12x, while here the only non-spatial axis is the band axis the renderer reads whole, so the read wastes nothing.\n\nThe `band` coordinate is a 2-element `<U4` string array; the band order is taken from the 4D store of the same family, where it was confirmed to be `["tavg", "prec"]` -- estimated here rather than decoded, since zarrita does not read a `<U4` coordinate.\n\nLicense is unclear for this GCS demo bucket; linked via the CarbonPlan maps project.\n\nExpected browser outcome: draws (viridis ramp on band 1, tavg) at a world view.',
+      license: 'proprietary',
+      bbox: [-179.9, -85.06, 179.9, 85.06],
+      interval: [null, null],
+      extensions: [DATACUBE_EXT, RENDER_EXT],
+      extraLinks: [via('https://storage.googleapis.com/carbonplan-maps/v2/demo/3d/tavg-prec/.zattrs', 'Source .zattrs (ndpyramid multiscales)')],
+    }),
+    'cube:dimensions': {
+      band: { type: 'other', values: ['tavg', 'prec'], description: 'band 0 = tavg, band 1 = prec; order estimated from the 4D store of the same family.' },
+      x: { type: 'spatial', axis: 'x', extent: [-20026376.39, 20026376.39], reference_system: 3857 },
+      y: { type: 'spatial', axis: 'y', extent: [-20048966.1, 20048966.1], reference_system: 3857 },
+    },
+    'cube:variables': {
+      climate: {
+        dimensions: ['band', 'y', 'x'],
+        type: 'data',
+        chunks: [2, 128, 128],
+        dtype: 'float32',
+        nodata: 9.969209968386869e+36,
+        description: 'Finest level (path "5") is [2, 4096, 4096]; level n is [2, 128 * 2^n, 128 * 2^n].',
+        statistics: { minimum: -30, maximum: 30 },
+      },
+    },
+    renders: {
+      tavg: {
+        title: 'Mean monthly temperature (tavg band), viridis',
+        assets: ['data'],
+        bidx: [1],
+        rescale: [[-30, 30]],
+        colormap_name: 'viridis',
+      },
+    },
+    assets: {
+      data: {
+        href: 'https://storage.googleapis.com/carbonplan-maps/v2/demo/3d/tavg-prec/',
+        type: 'application/vnd.zarr',
+        title: 'CarbonPlan 3D demo climate pyramid (Zarr V2, EPSG:3857)',
+        description: 'ndpyramid "reduce" multiscales, levels "0".."5", each a group holding `climate`, `band`, `x`, `y` and `spatial_ref`.',
+        roles: ['data', 'cloud-optimized'],
+      },
+    },
+  },
+});
+
+// 21. carbonplan-v1-2d-tavg
+COLLECTIONS.push({
+  dir: 'carbonplan-v1-2d-tavg',
+  doc: {
+    ...base('carbonplan-v1-2d-tavg', {
+      title: 'CarbonPlan 2D tavg demo, v1 prefix (a pyramid that declares one level)',
+      description: 'The oldest of the CarbonPlan ndpyramid demos, `v1/demo/2d/tavg`, kept here for the thing its metadata does that none of the others do: six level groups exist on the bucket (`0`..`5`), but the root `.zattrs` `multiscales` names **one dataset, `{"path": "5"}`** -- the finest. A reader that trusts the declaration sees a single-level store at 4096x4096 and nothing coarser to fall back on, which is the right answer: a level nobody declared is a level nobody promised. Confirmed from `.zattrs` and from `5/tavg/.zarray` ([4096, 4096], chunk 128x128, float32, zlib). `5/spatial_ref` and `5/x` both return 200.\n\nLicense is unclear for this GCS demo bucket; linked via the CarbonPlan maps project.\n\nExpected browser outcome: draws (viridis ramp) from zoom level 3. One declared level of 32 chunks across the world is past the per-view request budget at a world view, so the browser shows the no-overviews zoom notice until then.',
+      license: 'proprietary',
+      bbox: [-179.9, -85.06, 179.9, 85.06],
+      interval: [null, null],
+      extensions: [DATACUBE_EXT, RENDER_EXT],
+      extraLinks: [via('https://storage.googleapis.com/carbonplan-maps/v1/demo/2d/tavg/.zattrs', 'Source .zattrs (declares one level)')],
+    }),
+    'cube:dimensions': {
+      x: { type: 'spatial', axis: 'x', extent: [-20026376.39, 20026376.39], reference_system: 3857 },
+      y: { type: 'spatial', axis: 'y', extent: [-20048966.1, 20048966.1], reference_system: 3857 },
+    },
+    'cube:variables': {
+      tavg: {
+        dimensions: ['y', 'x'],
+        type: 'data',
+        chunks: [128, 128],
+        dtype: 'float32',
+        nodata: 9.969209968386869e+36,
+        long_name: 'Mean monthly temperature',
+        description: 'The one declared level, path "5": [4096, 4096], chunk 128x128.',
+        statistics: { minimum: -30, maximum: 30 },
+      },
+    },
+    renders: {
+      tavg: {
+        title: 'Mean monthly temperature (tavg), viridis',
+        assets: ['data'],
+        bidx: [1],
+        rescale: [[-30, 30]],
+        colormap_name: 'viridis',
+      },
+    },
+    assets: {
+      data: {
+        href: 'https://storage.googleapis.com/carbonplan-maps/v1/demo/2d/tavg/',
+        type: 'application/vnd.zarr',
+        title: 'CarbonPlan 2D demo tavg, v1 prefix (Zarr V2, EPSG:3857)',
+        description: 'ndpyramid multiscales declaring one dataset, path "5", although levels 0-4 also exist on the bucket.',
+        roles: ['data'],
+      },
+    },
+  },
+});
+
+// 22. ftw-predictions-zarr
+COLLECTIONS.push({
+  dir: 'ftw-predictions-zarr',
+  doc: {
+    ...base('ftw-predictions-zarr', {
+      title: 'Fields of The World: global field prediction probabilities (Zarr V3, 14 levels)',
+      description: 'Per-pixel softmax probabilities from the PRUE field-boundary model over the FTW global Sentinel-2 composites, as one Zarr V3 datacube on source.coop. The store describes itself properly, which is why it belongs in this catalog as a control: root attributes carry `proj:code` EPSG:4326, `spatial:dimensions`, `spatial:transform`, `spatial:shape` and `spatial:registration`, and `multiscales` in the array spelling with 14 datasets (`.`, `2x`, `4x` .. `8192x`), each stating its own `factor`, `spatial:transform` and `spatial:shape`. The data array is `variables`, [time(2), band(3), y(1566049), x(4007517)] float32, `sharding_indexed` with a [1, 3, 8192, 8192] shard -- so the shard spans all three softmax bands and one time step, which is exactly what one map tile reads, and the amplification guard has nothing to object to. Confirmed from the store\'s own `zarr.json` documents and its publisher STAC collection. CORS confirmed (`access-control-allow-origin: *`).\n\nLicense confirmed from the publisher collection: CC-BY-4.0.\n\nExpected browser outcome: draws (viridis ramp on the `field` probability band) at a world view -- the coarsest level is one chunk.',
+      license: 'CC-BY-4.0',
+      bbox: [-180, -56.93171310991181, 180.00005391686943, 83.748345],
+      interval: ['2024-01-01T00:00:00Z', '2025-01-01T00:00:00Z'],
+      extensions: [DATACUBE_EXT, RENDER_EXT],
+      extraLinks: [
+        via('https://data.source.coop/ftw/global-data/predictions/zarr/collection.json', 'Publisher STAC collection'),
+        via('https://data.source.coop/ftw/global-data/predictions/zarr/alpha/global.zarr/zarr.json', 'Source store root zarr.json'),
+      ],
+    }),
+    'cube:dimensions': {
+      time: { type: 'temporal', extent: ['2024-01-01T00:00:00Z', '2025-01-01T00:00:00Z'], values: ['2024-01-01T00:00:00Z', '2025-01-01T00:00:00Z'], description: 'Prediction year (CF time: days since 2024-01-01).' },
+      band: { type: 'other', values: ['non_field_background', 'field', 'field_boundaries'], description: 'PRUE softmax output classes.' },
+      x: { type: 'spatial', axis: 'x', extent: [-180, 180.00005391686943], step: 8.98311982e-05, reference_system: 4326 },
+      y: { type: 'spatial', axis: 'y', extent: [-56.93171310991181, 83.748345], step: -8.98311982e-05, reference_system: 4326 },
+    },
+    'cube:variables': {
+      variables: {
+        dimensions: ['time', 'band', 'y', 'x'],
+        type: 'data',
+        chunks: [1, 3, 8192, 8192],
+        dtype: 'float32',
+        unit: '1',
+        long_name: 'Per-pixel class probability (softmax) from the PRUE model',
+        description: 'Finest level is the root array itself, [2, 3, 1566049, 4007517]; 13 average-resampled overviews follow at 2x .. 8192x. The array really is named `variables`.',
+        statistics: { minimum: 0, maximum: 1 },
+      },
+    },
+    renders: {
+      field: {
+        title: 'Field probability (band 2), viridis',
+        assets: ['data'],
+        bidx: [2],
+        rescale: [[0, 1]],
+        colormap_name: 'viridis',
+      },
+    },
+    assets: {
+      data: {
+        href: 'https://data.source.coop/ftw/global-data/predictions/zarr/alpha/global.zarr',
+        type: 'application/vnd.zarr; version=3; profile=multiscales',
+        title: 'PRUE prediction probabilities (Zarr V3 datacube, 14 levels)',
+        description: 'Self-describing: spatial and geo-proj conventions on the root group, 14 multiscale levels each stating its own transform and shape.',
+        roles: ['data', 'cloud-optimized'],
       },
     },
   },

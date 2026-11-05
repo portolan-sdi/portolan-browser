@@ -8,7 +8,7 @@
   ],
   "id": "eopf-s2-l2a-zarr3",
   "title": "EOPF Sentinel-2 L2A (GeoZarr, Zarr V3), one pinned item",
-  "description": "EOPF (ESA/EODC) Sentinel-2 L2A GeoZarr-samples collection \"sentinel-2-l2a-zarr3\". The EOPF STAC collection rotates its items constantly (new items arrive continuously), so this fixture pins one current item, S2A_MSIL2A_20261105T133251_N0513_R024_T27WWR_20261105T175156 (datetime 2026-11-05T13:32:51Z, UTM zone EPSG:32627, bbox from the item itself), fetched from `/collections/sentinel-2-l2a-zarr3/items?limit=1` on build. The `reflectance` asset is a GeoZarr multiscales group `r10m`..`r720m` (EPSG:32627 via proj:code, confirmed per-level in the group's own spatial:* attributes), sharded (inner chunk 1024x1024 within an 11264x11264 shard at r10m), uint16 scale 1e-4, offset -0.1 (BOA reflectance, _FillValue 0). b02/b03/b04 statistics below are in raw DN (not reflectance units) so a single-variable ramp has something to rescale against.\n\nLicense: ESA/Copernicus Sentinel Data Legal Notice (not a standard SPDX license); declared \"proprietary\" with a via link.\n\nExpected browser outcome: draws (true colour, r10m).",
+  "description": "EOPF (ESA/EODC) Sentinel-2 L2A GeoZarr-samples collection \"sentinel-2-l2a-zarr3\". The EOPF STAC collection rotates its items constantly (new items arrive continuously), so this fixture pins one current item, S2A_MSIL2A_20261105T133251_N0513_R024_T27WWR_20261105T175156 (datetime 2026-11-05T13:32:51Z, UTM zone EPSG:32627, bbox from the item itself), fetched from `/collections/sentinel-2-l2a-zarr3/items?limit=1` on build. The `reflectance` asset is a GeoZarr multiscales group `r10m`..`r720m` (EPSG:32627 via proj:code, confirmed per-level in the group's own spatial:* attributes), sharded (inner chunk 1024x1024 within an 11264x11264 shard at r10m), uint16 scale 1e-4, offset -0.1 (BOA reflectance, _FillValue 0). b02/b03/b04 statistics below are in raw DN (not reflectance units) so a single-variable ramp has something to rescale against.\n\nLicense: ESA/Copernicus Sentinel Data Legal Notice (not a standard SPDX license); declared \"proprietary\" with a via link.\n\nCORRECTION (browser run, 2026-11): this store keeps each band in an array of its own, so there is no one array a true-colour `bidx: [3, 2, 1]` could read three bands from -- the render extension indexes bands within an asset, and here a map layer is one band. The render below is therefore a single-band ramp, which is what the data supports; it targets the asset, so whichever band the layer picker has on is drawn through it.\n\nExpected browser outcome: draws (ramp on the selected band, r10m).",
   "license": "proprietary",
   "extent": {
     "spatial": {
@@ -118,14 +118,12 @@
     }
   },
   "renders": {
-    "true-colour": {
-      "title": "Sentinel-2 true colour (r10m)",
+    "reflectance": {
+      "title": "BOA reflectance (raw DN 0-3000), magma",
       "assets": [
         "reflectance"
       ],
       "bidx": [
-        3,
-        2,
         1
       ],
       "rescale": [
@@ -133,7 +131,8 @@
           0,
           3000
         ]
-      ]
+      ],
+      "colormap_name": "magma"
     }
   },
   "assets": {
