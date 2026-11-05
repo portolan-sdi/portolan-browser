@@ -3,7 +3,7 @@ import { mapGetters, mapState } from 'vuex';
 import { stacBrowserSpecialHandling } from "../rels";
 import { orderedRenderLayers } from '../utils/renderOrder.js';
 import { resolveRenders } from '../utils/renders.js';
-import { isZarrAsset } from '../utils/zarrSource.js';
+import { isHttpZarrHref, isZarrAsset } from '../utils/zarrSource.js';
 
 const COG_MIME_TYPES = [
   'image/tiff',
@@ -134,7 +134,15 @@ export default {
         // selected. The map then lists one layer per variable of the store and
         // shows the one the render targets, so the whole asset is selected
         // rather than a choice being made here. See utils/zarrLayers.
-        const zarrAssets = assets.filter(isZarrAsset);
+        //
+        // Only a store the browser can actually read counts. Many catalogs
+        // list an `s3://` store beside its https twin, and the map leaves that
+        // one out (see StacMapLayer._collectZarrAssets). Selecting it here
+        // would say "show only this asset" about an asset that draws nothing,
+        // which would take the item's other layers — its children, its vector
+        // tiles, its GeoParquet — off the map with it.
+        const zarrAssets = assets.filter(asset => isZarrAsset(asset)
+          && isHttpZarrHref(asset.getAbsoluteUrl?.() || asset.href || ''));
         if (zarrAssets.length === 0) {return;}
         this.selectedAssets = zarrAssets;
         this.hasAutoSelected = true;

@@ -102,6 +102,15 @@ const COORDINATE_NAMES = new Set([
  *   3. Nothing, for a store that is a single array. The store is then opened
  *      and rendered as one unnamed variable.
  *
+ * The first two are read together rather than one instead of the other. The
+ * datacube extension describes the shape of a variable and little else: it
+ * gained `nodata` only in version 2.3.0 and has never carried `statistics` or
+ * `long_name` as required fields, while `bands` carries exactly those. The
+ * GOES-18 store is the case in point — its `cube:variables` names the five
+ * fire variables and their dimensions, and its `bands` holds the no-data
+ * value that picks the variable the render was written for (see
+ * defaultVariable) and the statistics a ramp is stretched to.
+ *
  * @returns An array of `{ name, title, nodata, dataType, unit }`, possibly
  *   empty.
  */
@@ -111,18 +120,24 @@ export function zarrVariables(asset, stac) {
     ?? stac?.['cube:variables']
     ?? stac?.properties?.['cube:variables'];
   if (cubeVars && typeof cubeVars === 'object') {
+    const bands = new Map(assetBands(asset)
+      .filter(b => typeof b?.name === 'string' && b.name !== '')
+      .map(b => [b.name, b]));
     return Object.entries(cubeVars)
       .filter(([name, v]) => v?.type === 'data' && !COORDINATE_NAMES.has(name.toLowerCase()))
       // A variable with fewer than two dimensions has no grid to draw.
       .filter(([, v]) => !Array.isArray(v.dimensions) || v.dimensions.length >= 2)
-      .map(([name, v]) => ({
-        name,
-        title: v.long_name || v.description || name,
-        unit: v.unit,
-        nodata: v.nodata,
-        dataType: v.data_type,
-        statistics: v.statistics,
-      }));
+      .map(([name, v]) => {
+        const band = bands.get(name) ?? {};
+        return {
+          name,
+          title: v.long_name || v.description || band.description || band.title || name,
+          unit: v.unit ?? band.unit,
+          nodata: v.nodata ?? band.nodata,
+          dataType: v.data_type ?? band.data_type,
+          statistics: v.statistics ?? band.statistics,
+        };
+      });
   }
   const bands = assetBands(asset);
   if (bands.length > 0) {
@@ -273,7 +288,12 @@ async function firstArray(zarr, group, meta, variable = null) {
   try {
     const paths = await resolveLevelPaths(group, meta?.levels ?? [{ path: '.' }], variable);
     const path = paths[0];
-    return await zarr.open(group.resolve(path === '.' ? '' : `/${path}`), { kind: 'array' });
+    // The path is relative to the group, and so is the resolve: zarrita
+    // resolves a path the way a URL does, so a leading slash would start again
+    // from the store root and miss the levels of a variable that is a group of
+    // its own. `.` is the group itself, which is passed through rather than
+    // resolved, because resolving an empty path leaves a trailing slash behind.
+    return await zarr.open(path === '.' ? group : group.resolve(path), { kind: 'array' });
   } catch {
     return null;
   }
@@ -331,6 +351,32 @@ function stacCrs(asset) {
   return null;
 }
 
+// Whether a render says anything about colour.
+//
+// A render that names a colormap, a stretch, the bands to composite, or an
+// expression to evaluate decides how the samples are coloured. One that holds
+// only `nodata` decides which samples are drawn at all, and leaves the colour
+// to whatever else can state it.
+function statesColour(render) {
+  if (!render) {return false;}
+  return Boolean(
+    render.colormap_name || render.colormap || render.rescale
+    || render.bidx || render.expression || render.color_formula,
+  );
+}
+
+// A render with the no-data values of another render folded in, so that
+// replacing a coverage-only render with a colour one keeps the sentinels it
+// declared.
+function withNodataOf(render, source) {
+  if (!render) {return null;}
+  const extra = source?.nodata;
+  if (extra == null) {return render;}
+  const declared = Array.isArray(extra) ? extra : [extra];
+  const own = Array.isArray(render.nodata) ? render.nodata : [];
+  return { ...render, nodata: [...new Set([...own, ...declared].filter(v => v != null))] };
+}
+
 /**
  * A ramp stretched to a variable's declared statistics, for a variable with no
  * render of its own.
@@ -378,6 +424,127 @@ export function describesArray(meta, array) {
 }
 
 /**
+ * Which index of each non-spatial dimension the map draws.
+ *
+ * A band axis takes every band, because a colour composite needs them
+ * together. Every other axis — time, most often — is pinned to its last index,
+ * which for an archive that grows forward in time is the most recent slice.
+ *
+ * The names are walked at their true positions, never filtered first. The
+ * position of a name is also its position in the shape and in the chunk shape,
+ * so dropping the unnamed dimensions of a Zarr v3 array would pin a named one
+ * to another axis's length: `[null, 'time', 'y', 'x']` over a shape of
+ * `[3, 100, 500, 500]` would ask for time index 2 instead of 99, and would
+ * cost the chunk waste of the wrong axis.
+ *
+ * An unnamed dimension gets no entry of its own. `ZarrLayer` keys each slice
+ * by dimension name, so it cannot read an axis that has none and refuses the
+ * array outright — see zarrDimensionFault, which reports that before a chunk
+ * is fetched.
+ *
+ * @param dimensionNames The array's `dimension_names`, nulls and all.
+ * @param shape The array's shape.
+ * @returns `selection` for `ZarrLayer`, and `used` for chunkAmplification.
+ */
+export function zarrSelection(dimensionNames, shape) {
+  const names = Array.isArray(dimensionNames) ? dimensionNames : [];
+  const lengths = Array.isArray(shape) ? shape : [];
+  const selection = {};
+  const used = [];
+  for (let i = 0; i < Math.max(0, names.length - 2); i++) {
+    const name = names[i];
+    const length = lengths[i] ?? 1;
+    if (typeof name !== 'string' || name === '') {
+      used.push(1);
+    } else if (isBandDim(name)) {
+      selection[name] = null;
+      used.push(length);
+    } else {
+      selection[name] = Math.max(0, length - 1);
+      used.push(1);
+    }
+  }
+  return { selection, used };
+}
+
+/**
+ * Why `ZarrLayer` will refuse this array, or null when it will accept it.
+ *
+ * The layer has a hard contract on the dimensions of the array it draws: every
+ * dimension must be named, and the two spatial ones must be the last two, in y
+ * then x order. It checks this itself and throws — but it throws inside
+ * deck.gl's layer update, where nothing surfaces the message, so the map goes
+ * blank and says nothing. Checked here, the same refusal becomes a notice.
+ *
+ * Only the metadata is read, so no chunk is fetched to find this out.
+ *
+ * The check needs the parsed metadata because `meta.axes` is what names the
+ * spatial dimensions. A store described from its coordinate arrays cannot fail
+ * it: those names are taken from the array's own last two dimensions (see
+ * spatialDimNames).
+ *
+ * @param meta Parsed GeoZarr metadata.
+ * @param array The probed zarrita array.
+ * @returns A sentence naming the dimensions at fault, or null.
+ */
+export function zarrDimensionFault(meta, array) {
+  const shape = Array.isArray(array?.shape) ? array.shape : null;
+  if (!shape || shape.length < 2) {
+    return `the array has ${shape?.length ?? 0} dimensions, so it holds no grid to draw`;
+  }
+  const axes = meta?.axes;
+  if (!Array.isArray(axes) || axes.length === 0) {return null;}
+  const names = array.dimensionNames;
+  if (!Array.isArray(names) || names.length !== shape.length) {
+    return 'the array names none of its dimensions, so its spatial axes cannot be told apart';
+  }
+  const unnamed = names.findIndex(name => typeof name !== 'string' || name === '');
+  if (unnamed !== -1) {
+    return `dimension ${unnamed} of the array has no name, and every dimension must be named`;
+  }
+  const y = axes[meta.yAxisIndex ?? 0];
+  const x = axes[meta.xAxisIndex ?? 1];
+  const [lastY, lastX] = names.slice(-2);
+  if (lastY !== y || lastX !== x) {
+    return `the spatial dimensions "${y}" and "${x}" are not the last two of `
+      + `[${names.join(', ')}], and the browser cannot transpose an array`;
+  }
+  return null;
+}
+
+// Run a call that may fail for a reason of its own — a store that is not
+// there, a metadata document that will not parse — and give the failure a
+// notice reason.
+//
+// A `ZarrUnsuitableError` carries its reason, and the map turns that into a
+// sentence. A bare `Error` carries none, so the map used to drop it: the layer
+// was switched on, nothing drew, and nothing said why. The generic reason
+// stands in for the ones that name a specific fault.
+async function orZarrError(message, run) {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof ZarrUnsuitableError) {throw error;}
+    throw new ZarrUnsuitableError(
+      ZARR_NOTICE_ERROR,
+      `${message}: ${error?.message ?? error}`,
+    );
+  }
+}
+
+// One pyramid level's array, or null when it cannot be opened.
+//
+// The path is resolved relative to the group, which is how `ZarrLayer` opens
+// its own levels, so the chunking read here is the chunking of the array the
+// layer will read. A leading slash would resolve from the store root instead
+// — zarrita resolves a path the way a URL does — and would miss the levels of
+// a variable that is a group of its own.
+function openLevelArray(zarr, group, path) {
+  if (path === '.') {return Promise.resolve(group);}
+  return zarr.open(group.resolve(path), { kind: 'array' }).catch(() => null);
+}
+
+/**
  * Open a Zarr descriptor's store and build the `ZarrLayer` props for it.
  *
  * This is where the store is first touched, so it is also where a store that
@@ -395,7 +562,10 @@ export function describesArray(meta, array) {
 export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }) {
   const { asset, variable, render } = descriptor;
   const url = asset.getAbsoluteUrl?.() || asset.href;
-  const root = await openZarrRoot(url, { icechunk: isIcechunkAsset(asset), deps });
+  const root = await orZarrError(
+    `Could not open the Zarr store at ${url}`,
+    () => openZarrRoot(url, { icechunk: isIcechunkAsset(asset), deps }),
+  );
 
   const parseGeoZarrMetadata = deps?.parseGeoZarrMetadata
     ?? (await import('@developmentseed/geozarr')).parseGeoZarrMetadata;
@@ -484,27 +654,22 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
       'The Zarr store declares no spatial transform and no coordinate arrays to derive one from',
     );
   }
-  const meta = declared ?? parseGeoZarrMetadata(metadata);
+  const meta = declared ?? await orZarrError(
+    'The Zarr store describes a grid the browser cannot read',
+    () => parseGeoZarrMetadata(metadata),
+  );
 
-  // One index per non-spatial dimension. A band axis takes every band, because
-  // a colour composite needs them together; every other axis — time, most
-  // often — is pinned to its last index, which for an archive that grows
-  // forward in time is the most recent slice.
-  const dimensionNames = (probe.dimensionNames || []).filter(Boolean);
-  const nonSpatial = dimensionNames.slice(0, Math.max(0, dimensionNames.length - 2));
-  const selection = {};
-  const used = [];
-  for (let i = 0; i < nonSpatial.length; i++) {
-    const name = nonSpatial[i];
-    const length = probe.shape[i];
-    if (isBandDim(name)) {
-      selection[name] = null;
-      used.push(length);
-    } else {
-      selection[name] = Math.max(0, length - 1);
-      used.push(1);
-    }
+  // The layer's own contract on the array's dimensions, checked where the
+  // answer can be reported. See zarrDimensionFault.
+  const fault = zarrDimensionFault(meta, probe);
+  if (fault) {
+    throw new ZarrUnsuitableError(
+      ZARR_NOTICE_NO_GEO,
+      `The Zarr store cannot be drawn: ${fault}`,
+    );
   }
+
+  const { selection, used } = zarrSelection(probe.dimensionNames, probe.shape);
 
   // Every guard below reads metadata only, so an unsuitable store is refused
   // before a single chunk is fetched.
@@ -535,15 +700,42 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
     );
   }
 
-  const chunkSizes = meta.levels.map(() => ({
-    width: probe.chunks[probe.chunks.length - 1],
-    height: probe.chunks[probe.chunks.length - 2],
-  }));
-  const { minZoom, hasOverviews } = zarrZoomGuard(meta, chunkSizes, bbox);
-
   // A pyramid's levels may be groups holding the array, so the paths parsed
   // from the metadata are corrected before the layer opens them.
-  const levelPaths = await resolveLevelPaths(group, meta.levels, variable?.name);
+  const levelPaths = await orZarrError(
+    'The Zarr store declares levels the browser cannot resolve to arrays',
+    () => resolveLevelPaths(group, meta.levels, variable?.name),
+  );
+
+  // The chunking of each level, which the zoom guard pairs with that level's
+  // width to count the chunks a view of it costs.
+  //
+  // The probe describes the finest level only, and a pyramid may chunk its
+  // coarse levels differently: a store written with a fixed 512-pixel chunk
+  // puts its whole top level in one chunk, while one written with a fixed
+  // chunk count keeps a 4096-pixel chunk there. Repeating the finest level's
+  // chunking would then move the minimum zoom in either direction. So the
+  // coarsest level's own array is opened for its chunk shape, which is one
+  // metadata read on the store that is already open and no chunk fetches.
+  const chunkOf = array => ({
+    width: array.chunks[array.chunks.length - 1],
+    height: array.chunks[array.chunks.length - 2],
+  });
+  const chunkSizes = meta.levels.map(() => chunkOf(probe));
+  // The entry stays parallel to `meta.levels`, so the guard can pair a level
+  // with its own chunking. Index 0 is the probe's level, whichever end of the
+  // pyramid that is; the coarsest is the narrowest.
+  const coarsest = meta.levels.reduce(
+    (best, level, i) => (level.arrayWidth < meta.levels[best].arrayWidth ? i : best),
+    0,
+  );
+  if (coarsest !== 0) {
+    const array = await openLevelArray(zarr, group, levelPaths[coarsest]);
+    if (Array.isArray(array?.chunks) && array.chunks.length >= 2) {
+      chunkSizes[coarsest] = chunkOf(array);
+    }
+  }
+  const { minZoom, hasOverviews } = zarrZoomGuard(meta, chunkSizes, bbox);
   const correctedMetadata = levelPaths.some((path, i) => path !== meta.levels[i].path)
     ? withLevelPaths(metadata ?? attrs, levelPaths)
     : metadata;
@@ -611,9 +803,17 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
   // italy-aerial mosaic is the case: it declares a true-colour render with no
   // `nodata`, and its fourth band is the coverage mask that keeps the sea
   // transparent. See withAssetEmptiness.
-  const effective = withAssetEmptiness(
-    render ?? synthesizeZarrRgbRender(probe, asset), asset)
-    ?? renderFromStatistics(variable)
+  //
+  // The descriptor's render may hold no colour at all. A variable with a
+  // no-data value and no render of its own gets `{ nodata: [...] }`, so that
+  // its sentinel is punched out (see renderForVariable), and that is a
+  // statement about coverage only. Taking it as the colour source would leave
+  // the ramp on its default 0 to 1 range and skip the statistics that state
+  // the real one, which is what a variable carrying both used to draw.
+  const base = statesColour(render)
+    ? render
+    : (synthesizeZarrRgbRender(probe, asset) ?? withNodataOf(renderFromStatistics(variable), render) ?? render);
+  const effective = withAssetEmptiness(base, asset)
     ?? reportMissingRender(descriptor, probe);
   const { getTileData, renderTile } = makeZarrRenderTileLoader(effective, { zarr });
   props.getTileData = getTileData;
