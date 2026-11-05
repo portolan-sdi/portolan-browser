@@ -230,7 +230,12 @@ export default defineConfig(async ({ mode }) => {
       // Zarr and COG layers build their own transforms, so a second instance
       // would not hold the geostationary alias that registerGeostationary
       // adds. See src/utils/projGeostationary.js.
-      dedupe: ["ol", "stac-js", "proj4"],
+      //
+      // wkt-parser is deduped for the same reason the app pins it: the CRS
+      // guard in utils/zarrSource and the layers' own reprojection must parse
+      // a WKT definition the same way. @developmentseed/proj pins an older
+      // copy, and two parsers can disagree once one of them gains a fix.
+      dedupe: ["ol", "stac-js", "proj4", "wkt-parser"],
       alias: {
         "@": fileURLToPath(new URL("./src", import.meta.url)),
         "@stac-browser-external-config": externalConfigPath,
