@@ -202,8 +202,10 @@ export default {
         if (!this.$refs.map) {return;}
 
         await this.createMap(this.$refs.map, this.stac, this.onfocusOnly);
-        // createMap waits for the first style to load. beforeUnmount can run
-        // in that window and null the map out, so nothing below may assume it.
+        // Defence in depth. createMap waits for the first style to load, and
+        // maplibre's Map.remove() never fires that event, so an unmount inside
+        // that window leaves the await pending and nothing here runs at all.
+        // This guard only matters if that promise ever settles after teardown.
         if (!this.map) {return;}
         this._addExpandControl();
         // A style switches ramps and layers by zoom, so the legend describes
@@ -267,7 +269,16 @@ export default {
 
       // The layer is gone or superseded: its state says nothing about what the
       // component shows now, and the map it drew into may be removed already.
-      if (this.stacLayer !== layer) {return;}
+      // The identity test holds only because the layer is markRaw: `stacLayer`
+      // is reactive data, so without it Vue would hand back a proxy and every
+      // comparison below would be true, which would disable this method
+      // outright. loadStyles leans on the same invariant.
+      if (this.stacLayer !== layer) {
+        // Nothing awaits the style load now. Keep it from ever surfacing as an
+        // unhandled rejection if a later refactor lets loadStyles throw.
+        stylesReady.catch(() => {});
+        return;
+      }
 
       // isEmpty() reads asset-backed state (_cogList, _overlayLayerIds), so
       // it must wait for the load above.

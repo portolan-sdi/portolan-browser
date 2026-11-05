@@ -60,8 +60,10 @@ export default {
         }
       });
 
-      // The component can unmount while the first style loads, which removes
-      // the map and nulls it out. Do not load a basemap into a dead map.
+      // Defence in depth: never load a basemap into a map that is gone.
+      // Map.remove() never fires style.load, so an unmount while the first
+      // style loads leaves the await above pending rather than resuming here.
+      // This guard only matters if that promise ever settles after teardown.
       if (!this.map) {return;}
 
       if (this.basemaps.length > 0) {

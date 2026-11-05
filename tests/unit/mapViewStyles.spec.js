@@ -283,9 +283,15 @@ describe('MapView style orchestration', () => {
       const view = createView({
         stac: parquetCollection(),
         assets: [{ href: 'https://example.com/d.parquet' }],
+        popover: true,
       })
 
       const pending = view.addStacLayer()
+      const layer = layerCalls.instances[0]
+      // Answers that differ from the starting state, so a write that did
+      // happen is visible rather than hidden under a matching default.
+      layer.isEmpty = () => true
+      layer.getChildrenLayerIds = () => { throw new Error('click setup ran on a dead layer') }
       // beforeUnmount, while the parquet read is still in flight.
       view.stacLayer = null
       view.map = null
@@ -299,20 +305,56 @@ describe('MapView style orchestration', () => {
       const view = createView({
         stac: parquetCollection(),
         assets: [{ href: 'https://example.com/d.parquet' }],
+        popover: true,
       })
 
       const pending = view.addStacLayer()
       const first = layerCalls.instances[0]
-      // A second showStacLayer, for the entity the user moved to.
+      // An answer that differs from the starting state, so a write that did
+      // happen is visible rather than hidden under a matching default.
+      first.isEmpty = () => true
+      // A second showStacLayer, for the entity the user moved to. Its calls
+      // record, so reading the new layer at all shows up here.
       const second = new first.constructor({}, {})
+      second.getChildrenLayerIds = () => { second.calls.push('getChildrenLayerIds'); return [] }
       view.stacLayer = second
 
       await pending
 
+      expect(view.empty).toBe(false)
+      expect(second.calls).toEqual([])
       // `changed` carries the data the component shows. The abandoned layer's
       // assets are not it, and the new layer reports for itself.
       expect(view.emitted.map(e => e[0])).not.toContain('changed')
-      expect(second.calls).toEqual([])
+    })
+
+    it('does not apply the default style once the component has moved on', async () => {
+      // The second guard covers a window of its own: the styles are already in
+      // hand and the default is about to be applied. Everything between the
+      // two guards is synchronous, so a teardown lands on the `await
+      // stylesReady` yield. Without that guard the abandoned entity's paint
+      // goes onto whichever layer is current by then.
+      let resolveFetch
+      styleFetch.impl = () => new Promise(resolve => { resolveFetch = resolve })
+      const view = createView({
+        stac: parquetCollection(),
+        assets: [{ href: 'https://example.com/d.parquet' }],
+      })
+
+      const pending = view.addStacLayer()
+      const first = layerCalls.instances[0]
+      const second = new first.constructor({}, {})
+      // getShownData is the last call before the await, so this stands in for
+      // an unmount that lands in the gap.
+      view.getShownData = () => { view.stacLayer = second; return {} }
+      // Let the style land first: loadStyles captured the layer while it was
+      // still current, so availableStyles is populated and a default is ready.
+      resolveFetch(styleDoc())
+
+      await pending
+
+      expect(view.availableStyles).toHaveLength(1)
+      expect(second.applied).toEqual([])
       expect(first.applied).toEqual([])
       expect(view.styleApplied).toBe(false)
     })
