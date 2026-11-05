@@ -277,6 +277,9 @@
       "crs": "{title} usa la proyección {projection}. El navegador no puede reproyectarla.",
       "loadError": "No se pudieron cargar los datos Zarr para mostrarlos.",
       "noGeo": "{title} no declara ninguna referencia espacial, por lo que el navegador no puede situarlo en el mapa.",
+      "orderAxes": "{title} no almacena sus dimensiones espaciales {y} y {x} como sus dos últimos ejes, en ese orden. El navegador no puede transponer una matriz, así que no puede mostrarla.",
+      "orderColumnMajor": "{title} se almacena columna por columna (orden Fortran). El navegador solo puede dibujar una matriz almacenada fila por fila.",
+      "orderTranspose": "{title} tiene un códec de transposición que reordena sus ejes a {order}. El navegador solo puede dibujar una matriz almacenada fila por fila.",
       "zoomIn": "Acerca el zoom hasta el nivel {zoom} para ver estos datos Zarr.",
       "zoomInNoOverviews": "Este almacén Zarr no tiene vistas generales, por lo que solo se dibuja desde el nivel de zoom {zoom}. Acerca el zoom para verlo."
     },

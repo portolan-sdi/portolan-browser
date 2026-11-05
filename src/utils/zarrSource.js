@@ -179,9 +179,15 @@ const GEOGRAPHIC_X_DIM_NAMES = ['lon', 'long', 'longitude'];
 const GRID_MAPPING_NAMES = ['spatial_ref', 'crs'];
 
 // The spacing between coordinates is floating point, so it is never exactly
-// constant. A grid counts as regular when the last coordinate lands within
+// constant. A grid counts as regular when the sampled coordinate lands within
 // this fraction of one cell of where constant spacing puts it.
 const SPACING_TOLERANCE = 0.01;
+
+// How much of its own magnitude a stored coordinate may be off by. A float32
+// coordinate carries about 1.2e-7 of relative error, and the arithmetic that
+// wrote it adds a few more of those, so a few float32 quanta is the floor
+// below which no spacing check can tell a regular axis from an irregular one.
+const COORDINATE_PRECISION = 1e-6;
 
 /**
  * The y and x dimension names of an array, taken from the last two of its
@@ -208,19 +214,79 @@ export function spatialDimNames(dimensionNames) {
   return [yName, xName];
 }
 
+/**
+ * How an array's own axis order breaks the layer's contract, or null when it
+ * keeps it.
+ *
+ * The layer requires the two spatial axes to be the last two, in y then x
+ * order, and it cannot transpose an array. Two stores break that, and both
+ * have to be refused for the reason they are refused for. Left to the
+ * metadata routes below they fail as "no coordinate arrays to derive a
+ * transform from", because the coordinate reader looks at the last two axes
+ * and finds a band axis there — so a store with a perfectly good spatial
+ * reference is told it has none.
+ *
+ * Tessera's global RGB mosaic is the first case, with dimensions
+ * `[lat, lon, band]`. The second is an array whose last two axes are the
+ * spatial ones the wrong way round.
+ *
+ * The fault is returned as named parts rather than as a sentence, because the
+ * sentence is a translated message and only the dimension names belong in it.
+ *
+ * @param dimensionNames The array's `dimension_names`.
+ * @returns `{ kind: 'axes', y, x }`, or null.
+ */
+export function spatialAxisFault(dimensionNames) {
+  const dims = Array.isArray(dimensionNames) ? dimensionNames : [];
+  if (dims.length < 2 || spatialDimNames(dims)) {return null;}
+  const [lastY, lastX] = dims.slice(-2).map(d => String(d).toLowerCase());
+  // The last two axes are the spatial ones the wrong way round, so those are
+  // the names to report rather than the first ones that match.
+  if (Y_DIM_NAMES.includes(lastX) && X_DIM_NAMES.includes(lastY)) {
+    return { kind: 'axes', y: String(dims.at(-1)), x: String(dims.at(-2)) };
+  }
+  const named = list => dims.find(d => list.includes(String(d).toLowerCase()));
+  const y = named(Y_DIM_NAMES);
+  const x = named(X_DIM_NAMES);
+  if (!y || !x) {return null;}
+  return { kind: 'axes', y: String(y), x: String(x) };
+}
+
 // The origin and spacing implied by three cell centres of an axis of `length`
-// cells: the first two give the step, and the last says whether that step held
-// all the way along. Only those three are needed, which is why the reader
-// below fetches three slices rather than the whole axis.
+// cells. Only those three are needed, which is why the reader below fetches
+// three slices rather than the whole axis.
+//
+// The step comes from the first and the last centre, not from the first two.
+// A stored coordinate carries the rounding error of its own data type, and
+// taking the difference of two adjacent values leaves that error whole in a
+// step the size of one cell; measuring across the axis divides it by the
+// `length - 1` cells it spans. MUR SST is the case: its 0.01-degree latitude
+// axis is float32, whose values near 90 degrees are quantised to about 7.6e-6,
+// so the difference of its first two cells is the step plus 0.08% of a cell —
+// and projecting that over 17,998 cells misses the last coordinate by ten
+// whole cells. Measured across the axis instead, the same error lands 0.0005
+// of a cell from the second coordinate.
+//
+// The second centre is then what tests regularity: on a regular axis it sits
+// one step from the origin, and on an irregular one — Gaussian latitudes, a
+// stretched vertical grid — it does not.
 function spacingFromSamples({ first, second, last, length }) {
   if (!(length >= 2)) {return null;}
   const origin = Number(first);
-  const step = Number(second) - origin;
-  if (!Number.isFinite(origin) || !Number.isFinite(step) || step === 0) {return null;}
-  const expectedLast = origin + step * (length - 1);
   const actualLast = Number(last);
-  if (!Number.isFinite(actualLast)) {return null;}
-  if (Math.abs(actualLast - expectedLast) > Math.abs(step) * SPACING_TOLERANCE) {return null;}
+  if (!Number.isFinite(origin) || !Number.isFinite(actualLast)) {return null;}
+  const step = (actualLast - origin) / (length - 1);
+  if (!Number.isFinite(step) || step === 0) {return null;}
+  const actualSecond = Number(second);
+  if (!Number.isFinite(actualSecond)) {return null;}
+  // One cell is the scale the tolerance is about, but a coordinate far from
+  // the origin — metres in a projected grid — is quantised more coarsely than
+  // that, so the storage error of the value itself is allowed for as well.
+  const tolerance = Math.max(
+    Math.abs(step) * SPACING_TOLERANCE,
+    Math.abs(actualSecond) * COORDINATE_PRECISION,
+  );
+  if (Math.abs(actualSecond - (origin + step)) > tolerance) {return null;}
   return { origin, step };
 }
 
@@ -476,22 +542,94 @@ function v2CodecNames(meta) {
   if (meta.order === 'F') {names.push('transpose');}
   const numcodec = (spec) => {
     if (typeof spec?.id !== 'string') {return;}
+    // A v2 filter id is written bare (`fixedscaleoffset`) or already
+    // namespaced (`numcodecs.fixedscaleoffset`), and both spellings are in the
+    // wild. The namespace is stripped first so one of them is checked, not
+    // two: namespacing an already-namespaced id gives
+    // `numcodecs.numcodecs.fixedscaleoffset`, which is in no registry, and the
+    // store was refused for a codec zarrita implements.
+    const id = spec.id.replace(/^numcodecs\./, '');
     // zarrita translates this one filter into native v3 codecs it implements,
-    // so naming it `numcodecs.fixedscaleoffset` would report a store it can
-    // read as unreadable.
-    if (spec.id === 'fixedscaleoffset') {names.push('scale_offset');}
-    else {names.push(`numcodecs.${spec.id}`);}
+    // so naming it after numcodecs would report a store it can read as
+    // unreadable.
+    if (id === 'fixedscaleoffset') {names.push('scale_offset');}
+    else {names.push(`numcodecs.${id}`);}
   };
   for (const filter of Array.isArray(meta.filters) ? meta.filters : []) {numcodec(filter);}
   numcodec(meta.compressor);
   return names;
 }
 
+// The array's own metadata document and which Zarr version wrote it, or null
+// when neither document can be read.
+//
+// Two guards below want this document, and reading it costs a request, so the
+// read is memoised per array object. The promise is cached rather than its
+// result, so two guards that ask at once share one request.
+const metadataDocuments = new WeakMap();
+
+function arrayMetadata(array) {
+  const cached = metadataDocuments.get(array);
+  if (cached) {return cached;}
+  const read = (async () => {
+    const v3 = await readJson(array.store, metadataDocumentPath(array, 'zarr.json'));
+    if (v3) {return { version: 3, meta: v3 };}
+    const v2 = await readJson(array.store, metadataDocumentPath(array, '.zarray'));
+    return v2 ? { version: 2, meta: v2 } : null;
+  })();
+  metadataDocuments.set(array, read);
+  return read;
+}
+
 async function codecNames(array) {
-  const v3 = await readJson(array.store, metadataDocumentPath(array, 'zarr.json'));
-  if (v3) {return v3CodecNames(v3);}
-  const v2 = await readJson(array.store, metadataDocumentPath(array, '.zarray'));
-  return v2 ? v2CodecNames(v2) : [];
+  const document = await arrayMetadata(array);
+  if (!document) {return [];}
+  return document.version === 3 ? v3CodecNames(document.meta) : v2CodecNames(document.meta);
+}
+
+/**
+ * Why the renderer cannot index this array's samples, or null when it can.
+ *
+ * The colormap loop walks the trailing two axes of a chunk as rows of pixels,
+ * one sample after the next, which only holds for an array stored row-major.
+ * zarrita decodes a column-major array perfectly well and hands back a result
+ * whose stride says so, and the loop then draws the tile transposed — or, with
+ * the stride guard in `utils/renders.js`, draws nothing and says nothing,
+ * because that guard can only warn to the console from inside a tile load.
+ *
+ * Both spellings of the fault are checked. A v2 array states `order: "F"`. A
+ * v3 array states a `transpose` codec, whose `order` is a permutation of the
+ * axes; the identity permutation reorders nothing and is fine.
+ *
+ * `transpose` is in zarrita's codec registry, so the codec check above passes
+ * it. That is correct — zarrita can decode it — and is exactly why this is a
+ * check of its own.
+ *
+ * The fault is returned as named parts rather than as a sentence, for the same
+ * reason spatialAxisFault is: the sentence is a translated message.
+ *
+ * @param array The opened array.
+ * @returns `{ kind: 'columnMajor' }`, `{ kind: 'transpose', order }`, or null.
+ */
+export async function unreadableArrayOrder(array) {
+  let document;
+  try {
+    document = await arrayMetadata(array);
+  } catch {
+    // The metadata could not be read back. Let the tile reads decide rather
+    // than refusing a store that may be fine.
+    return null;
+  }
+  if (!document) {return null;}
+  if (document.version === 2) {
+    return document.meta.order === 'F' ? { kind: 'columnMajor' } : null;
+  }
+  const codecs = Array.isArray(document.meta.codecs) ? document.meta.codecs : [];
+  const transpose = codecs.find(codec => codec?.name === 'transpose');
+  const order = transpose?.configuration?.order;
+  if (!Array.isArray(order)) {return null;}
+  const identity = order.every((axis, i) => Number(axis) === i);
+  return identity ? null : { kind: 'transpose', order: order.join(', ') };
 }
 
 // Codecs zarrita implements in its chunk pipeline rather than in the codec
@@ -620,11 +758,18 @@ function scalesFromBase(entries, dimensions) {
       // The array form counts `factor` from the base level already.
       scale = [factor, factor];
     } else {
-      const relative = relativeScale(entry, dimensions);
+      // A level derived from nothing is the base level, whose scale is 1 by
+      // definition. The convention does not ask it to say so — it is the level
+      // the others are scaled from — and treating a silent base as a level of
+      // unknown scale poisoned the whole pyramid, because every other level's
+      // scale is the product along its `derived_from` chain.
+      const stated = relativeScale(entry, dimensions);
+      const base = typeof entry.derived_from !== 'string';
+      const relative = stated ?? (base ? [SOURCE_SCALE, SOURCE_SCALE] : null);
       if (relative) {
-        const source = typeof entry.derived_from === 'string'
-          ? walk(byAsset.get(entry.derived_from), seen)
-          : [SOURCE_SCALE, SOURCE_SCALE];
+        const source = base
+          ? [SOURCE_SCALE, SOURCE_SCALE]
+          : walk(byAsset.get(entry.derived_from), seen);
         if (source) {scale = [relative[0] * source[0], relative[1] * source[1]];}
       }
     }
@@ -863,6 +1008,109 @@ export async function resolveLevelPaths(group, levels, variable = null) {
   const name = await levelArrayName(levelGroup, variable, first);
   return paths.map(path => (path === '.' ? name : `${path}/${name}`));
 }
+
+// --- A pyramid described only by its levels' coordinate arrays ---------------
+//
+// An ndpyramid store declares `multiscales` in the array spelling with nothing
+// in it but a path per level: no transform, no shape, no CRS anywhere on the
+// root. Each level is a group holding its data array beside its own `x`, `y`
+// and `spatial_ref` arrays, CF style. CarbonPlan's climate pyramids are this
+// shape, and so is everything the `ndpyramid` library writes.
+//
+// So the pyramid is real and the spatial description is real, but they are in
+// different places, and neither of the two routes above can join them:
+// withMultiscalesLayout needs a base transform to scale, and
+// geoZarrAttrsFromCoordinates describes one array. This reads each level's own
+// coordinate arrays, which is exactly what the multiscales convention asks a
+// level to state, and gives the group the finest level's description.
+//
+// Nothing is derived across levels. A pyramid whose coarse level covers a
+// different extent — a reprojection that trimmed the edges, a level written
+// from a different source — gets that level's own transform, not a scaled copy
+// of the finest one's.
+
+function projectionOf(attrs) {
+  if (typeof attrs?.['proj:wkt2'] === 'string') {return { wkt2: attrs['proj:wkt2'] };}
+  if (typeof attrs?.['proj:code'] === 'string') {return { code: attrs['proj:code'] };}
+  return null;
+}
+
+function sameProjection(a, b) {
+  return (a?.wkt2 ?? a?.code ?? null) === (b?.wkt2 ?? b?.code ?? null);
+}
+
+/**
+ * Build GeoZarr group attributes for a multiscale store whose levels are
+ * described only by their own coordinate arrays.
+ *
+ * @param root The opened store root, which the coordinate arrays are found
+ *   relative to.
+ * @param group The group the level paths are relative to.
+ * @param attrs The group's attributes, already through withMultiscalesLayout.
+ * @param options.variable The variable to pick inside a level group.
+ * @param options.crs The CRS as `{ code }` or `{ wkt2 }`, when STAC states one.
+ * @returns The attributes, or null when the pyramid cannot be described this
+ *   way.
+ */
+export async function geoZarrAttrsFromLevelCoordinates(
+  root, group, attrs, { variable = null, crs = null } = {},
+) {
+  const source = multiscalesSource(attrs?.multiscales);
+  if (!source) {return null;}
+
+  let paths;
+  try {
+    paths = await resolveLevelPaths(group, source.entries.map(e => ({ path: e.asset })), variable);
+  } catch {
+    // A level that resolves to no array is not a pyramid this can describe.
+    return null;
+  }
+
+  const describe = async (path, projection) => {
+    try {
+      const array = await zarr.open(path === '.' ? group : group.resolve(path), { kind: 'array' });
+      const own = await geoZarrAttrsFromCoordinates(root, array, { crs: projection });
+      return own ? { path, own } : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // The first level is described on its own, because its grid-mapping variable
+  // settles the CRS for the whole pyramid: every level names the same
+  // projection, and reading one per level would cost a request each to learn
+  // the same thing.
+  const first = await describe(paths[0], crs);
+  if (!first) {return null;}
+  const projection = crs ?? projectionOf(first.own);
+  const rest = await Promise.all(paths.slice(1).map(path => describe(path, projection)));
+  if (rest.some(level => !level)) {return null;}
+
+  const described = [first, ...rest];
+  // A pyramid whose levels disagree about their axes or their projection is
+  // not one grid at several resolutions, so it is left to the caller's notice
+  // rather than drawn as if it were.
+  const axes = String(first.own['spatial:dimensions']);
+  if (described.some(level => String(level.own['spatial:dimensions']) !== axes)) {return null;}
+  if (described.some(level => !sameProjection(projectionOf(level.own), projection))) {return null;}
+
+  // Finest first: the widest level leads, which is the order the parser and
+  // every consumer of `meta.levels` reads them as. ndpyramid writes its levels
+  // coarsest first, so this is a reversal for every store of that shape.
+  const order = [...described].sort(
+    (a, b) => b.own['spatial:shape'][1] - a.own['spatial:shape'][1]
+      || b.own['spatial:shape'][0] - a.own['spatial:shape'][0],
+  );
+  const layout = order.map(level => ({
+    asset: level.path,
+    'spatial:transform': level.own['spatial:transform'],
+    'spatial:shape': level.own['spatial:shape'],
+  }));
+  const multiscales = { layout };
+  if (source.resamplingMethod) {multiscales.resampling_method = source.resamplingMethod;}
+  return { ...order[0].own, multiscales };
+}
+
 
 
 // --- The zoom at which a store is cheap enough to draw -----------------------

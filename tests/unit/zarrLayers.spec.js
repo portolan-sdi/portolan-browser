@@ -79,6 +79,7 @@ vi.mock('../../src/utils/renders.js', async (importOriginal) => {
 })
 
 import * as fakeZarr from 'zarrita'
+import { parseGeoZarrMetadata } from '@developmentseed/geozarr'
 import {
   chunkAmplification,
   defaultVariable,
@@ -90,6 +91,7 @@ import {
   zarrVariables,
   ZARR_NOTICE_ERROR,
   ZARR_NOTICE_NO_GEO,
+  ZARR_NOTICE_ORDER,
 } from '../../src/utils/zarrLayers.js'
 import { zarrZoomGuard } from '../../src/utils/zarrSource.js'
 
@@ -559,6 +561,113 @@ describe('makeZarrLayerProps', () => {
       expect(tileRenders.calls.at(-1)).toEqual({})
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('no render'))
     })
+
+    it('narrows a render that names more bands than the variable carries', async () => {
+      // The EOPF Sentinel-2 store: one array per band, and a true-colour
+      // render whose `bidx: [3, 2, 1]` names three of them. A Zarr variable is
+      // one array, so the composite asked for bands 2 and 3 of a single-band
+      // chunk — and the tile loader answered with nothing at all. The layer
+      // was switched on, the map stayed blank, and no notice said why.
+      fake.nodes = {
+        '/': { kind: 'group', attrs: gridAttrs },
+        '/b04': {
+          kind: 'array',
+          attrs: {},
+          shape: [512, 512],
+          chunks: [256, 256],
+          dtype: 'uint16',
+          dimensionNames: ['y', 'x'],
+        },
+      }
+      await open({
+        kind: 'zarr',
+        id: 'zarr:reflectance:b04',
+        asset: { key: 'reflectance', getKey: () => 'reflectance', href: url, getAbsoluteUrl: () => url },
+        variable: { name: 'b04' },
+        title: 'Red',
+        render: { bidx: [3, 2, 1], rescale: [[0, 3000]] },
+      })
+      expect(tileRenders.calls.at(-1)).toMatchObject({ bidx: [1], rescale: [[0, 3000]] })
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('names bands'))
+    })
+
+    it('keeps a render whose bands the variable does carry', async () => {
+      fake.nodes = {
+        '/': { kind: 'group', attrs: gridAttrs },
+        '/rgb': {
+          kind: 'array',
+          attrs: {},
+          shape: [3, 512, 512],
+          chunks: [3, 256, 256],
+          dtype: 'uint16',
+          dimensionNames: ['band', 'y', 'x'],
+        },
+      }
+      await open({
+        kind: 'zarr',
+        id: 'zarr:data:rgb',
+        asset: { key: 'data', getKey: () => 'data', href: url, getAbsoluteUrl: () => url },
+        variable: { name: 'rgb' },
+        title: 'True colour',
+        render: { bidx: [3, 2, 1], rescale: [[0, 3000]] },
+      })
+      expect(tileRenders.calls.at(-1)).toMatchObject({ bidx: [3, 2, 1] })
+    })
+
+    it('stretches a declared colormap that states no range to the statistics', async () => {
+      // `colormap_name` alone counts as a render that states colour, so the
+      // statistics route was skipped — and a render with no `rescale` leaves
+      // the ramp on its default 0 to 1 range, which saturates a 0 to 200
+      // variable to one flat colour. The collection said which colours to
+      // use, not over what range.
+      fake.nodes = goesNodes()
+      const asset = fireAsset({ nodata: -9, statistics: { minimum: 0, maximum: 200 } })
+      const declared = { assets: ['icechunk'], colormap_name: 'inferno' }
+      const [descriptor] = zarrDescriptors(asset, null, declared)
+      await open(descriptor)
+      expect(tileRenders.calls.at(-1)).toMatchObject({
+        colormap_name: 'inferno',
+        rescale: [[0, 200]],
+        nodata: [-9],
+      })
+    })
+
+    it('keeps the variable\'s no-data value on a synthesized true-colour render', async () => {
+      // An RGB picture needs no declared render, but it still needs to know
+      // where the store holds nothing: the sentinel came from the variable and
+      // was dropped on the way to the synthesized render, so an uncovered
+      // pixel drew as colour.
+      fake.nodes = {
+        '/': { kind: 'group', attrs: gridAttrs },
+        '/rgb': {
+          kind: 'array',
+          attrs: {},
+          shape: [3, 512, 512],
+          chunks: [3, 256, 256],
+          dtype: 'uint8',
+          dimensionNames: ['band', 'y', 'x'],
+        },
+      }
+      const asset = {
+        key: 'data',
+        getKey: () => 'data',
+        href: url,
+        getAbsoluteUrl: () => url,
+      }
+      await open({
+        kind: 'zarr',
+        id: 'zarr:data:rgb',
+        asset,
+        variable: { name: 'rgb', nodata: 0 },
+        title: 'True colour',
+        render: { nodata: [0] },
+      })
+      expect(tileRenders.calls.at(-1)).toMatchObject({
+        bidx: [1, 2, 3],
+        rescale: [[0, 255]],
+        nodata: [0],
+      })
+    })
   })
 
   describe('the dimensions ZarrLayer insists on', () => {
@@ -588,9 +697,25 @@ describe('makeZarrLayerProps', () => {
       fake.nodes = selfDescribed(['time', 'x', 'y'])
       await expect(open(descriptor)).rejects.toMatchObject({
         name: 'ZarrUnsuitableError',
-        reason: ZARR_NOTICE_NO_GEO,
+        reason: ZARR_NOTICE_ORDER,
       })
       await expect(open(descriptor)).rejects.toThrow(/transpose/)
+    })
+
+    it('refuses an array whose band axis sits after its spatial axes', async () => {
+      // Tessera's global RGB mosaic: `[lat, lon, band]`. The coordinate reader
+      // looks at the last two axes, finds `band` there, and used to refuse the
+      // store as having no coordinate arrays — so a store with a perfectly
+      // good spatial reference was told it had none.
+      fake.nodes = selfDescribed(['lat', 'lon', 'band'])
+      await expect(open(descriptor)).rejects.toMatchObject({
+        name: 'ZarrUnsuitableError',
+        reason: ZARR_NOTICE_ORDER,
+      })
+      await expect(open(descriptor)).rejects.toThrow(/"lat" and "lon" are not the last two/)
+      await expect(open(descriptor)).rejects.toMatchObject({
+        detail: { kind: 'axes', y: 'lat', x: 'lon' },
+      })
     })
 
     it('refuses an array that leaves a dimension unnamed', async () => {
@@ -771,6 +896,154 @@ describe('makeZarrLayerProps', () => {
       expect(minZoom).toBe(zarrZoomGuard(
         nested, [{ width: 512, height: 512 }, { width: 128, height: 128 }], bbox,
       ).minZoom)
+    })
+
+    it('hands the layer the reordered levels of a coarsest-first store', async () => {
+      // A self-describing store that lists its levels coarsest first, with
+      // every level already an array, so no level path needs rewriting.
+      // `withMultiscalesLayout` reorders the levels finest first — which is
+      // the order ZarrLayer maps a tile's zoom onto — but `props.metadata`
+      // stayed undefined, so the layer read the store's own attributes and
+      // put a world view on the FULL-RESOLUTION level, while the minimum zoom
+      // computed here came from the real coarsest level. A request flood, not
+      // a drawing fault.
+      parse = parseGeoZarrMetadata
+      const level = (path, n) => ({
+        [`/${path}`]: {
+          kind: 'array',
+          attrs: {},
+          shape: [n, n],
+          chunks: [256, 256],
+          dtype: 'uint16',
+          dimensionNames: ['y', 'x'],
+        },
+      })
+      fake.nodes = {
+        '/': {
+          kind: 'group',
+          attrs: {
+            'proj:code': 'EPSG:3857',
+            'spatial:dimensions': ['y', 'x'],
+            'spatial:registration': 'pixel',
+            multiscales: {
+              layout: [
+                { asset: 'coarse', 'spatial:shape': [512, 512], 'spatial:transform': [40, 0, 0, 0, -40, 0] },
+                { asset: 'fine', 'spatial:shape': [2048, 2048], 'spatial:transform': [10, 0, 0, 0, -10, 0] },
+              ],
+            },
+          },
+        },
+        ...level('coarse', 512),
+        ...level('fine', 2048),
+      }
+      const { props } = await open({
+        kind: 'zarr',
+        id: 'zarr:data',
+        asset: { key: 'data', getKey: () => 'data', href: url, getAbsoluteUrl: () => url },
+        variable: null,
+        title: 'A coarsest-first pyramid',
+        render: { colormap_name: 'viridis', rescale: [[0, 1]] },
+      })
+      expect(props.metadata).toBeDefined()
+      expect(props.metadata.multiscales.layout.map(l => l.asset)).toEqual(['fine', 'coarse'])
+    })
+
+    it('leaves the metadata undefined for a store that needs no rewrite', async () => {
+      // The other side of it: a store already finest first, with no level path
+      // to correct, describes itself to the layer and must not be handed a
+      // copy of its own attributes.
+      parse = parseGeoZarrMetadata
+      fake.nodes = {
+        '/': {
+          kind: 'group',
+          attrs: {
+            'proj:code': 'EPSG:3857',
+            'spatial:dimensions': ['y', 'x'],
+            'spatial:transform': [10, 0, 0, 0, -10, 0],
+            'spatial:shape': [2048, 2048],
+          },
+        },
+      }
+      fake.nodes['/'] = {
+        ...fake.nodes['/'],
+        kind: 'array',
+        shape: [2048, 2048],
+        chunks: [256, 256],
+        dtype: 'uint16',
+        dimensionNames: ['y', 'x'],
+      }
+      const { props } = await open({
+        kind: 'zarr',
+        id: 'zarr:data',
+        asset: { key: 'data', getKey: () => 'data', href: url, getAbsoluteUrl: () => url },
+        variable: null,
+        title: 'A single-level store',
+        render: { colormap_name: 'viridis', rescale: [[0, 1]] },
+      })
+      expect(props.metadata).toBeUndefined()
+    })
+
+    it('describes an ndpyramid store from its levels\' own coordinate arrays', async () => {
+      // CarbonPlan's climate pyramids: `multiscales` in the array spelling
+      // naming one group per level, nothing spatial on the root, and each
+      // level holding its data array beside its own `lat`/`lon` arrays. Both
+      // halves are real; only joining them was missing, and the store was
+      // refused as "a pyramid the browser cannot read".
+      //
+      // The real parser runs here, so the synthesized document has to be one
+      // the schema actually accepts.
+      parse = parseGeoZarrMetadata
+      const axis = (n, origin, step) => ({
+        kind: 'array',
+        attrs: {},
+        shape: [n],
+        chunks: [n],
+        dtype: 'float32',
+        values: Array.from({ length: n }, (_, i) => origin + i * step),
+      })
+      const level = (path, n) => ({
+        [path]: { kind: 'group', attrs: {} },
+        [`${path}/tavg`]: {
+          kind: 'array',
+          attrs: {},
+          shape: [n, n],
+          chunks: [4, 4],
+          dtype: 'float32',
+          dimensionNames: ['lat', 'lon'],
+        },
+        [`${path}/lat`]: axis(n, 80, -160 / n),
+        [`${path}/lon`]: axis(n, -90, 180 / n),
+      })
+      fake.nodes = {
+        // ndpyramid writes its levels coarsest first and states no spatial
+        // metadata of its own.
+        '/': {
+          kind: 'group',
+          attrs: { multiscales: [{ datasets: [{ path: '0' }, { path: '1' }] }] },
+        },
+        ...level('/0', 4),
+        ...level('/1', 8),
+      }
+
+      const { props, hasOverviews } = await makeZarrLayerProps({
+        kind: 'zarr',
+        id: 'zarr:data:tavg',
+        asset: { key: 'data', getKey: () => 'data', href: url, getAbsoluteUrl: () => url },
+        variable: { name: 'tavg' },
+        title: 'Mean temperature',
+        render: { colormap_name: 'viridis', rescale: [[-30, 30]] },
+      }, { zarr: fakeZarr, bbox, deps: deps() })
+
+      expect(hasOverviews).toBe(true)
+      // Finest first, which is the order the layer reads the levels in, and
+      // the reverse of the order the store wrote them.
+      expect(props.metadata.multiscales.layout.map(l => l.asset)).toEqual(['1/tavg', '0/tavg'])
+      expect(props.metadata['spatial:shape']).toEqual([8, 8])
+      expect(props.metadata['spatial:dimensions']).toEqual(['lat', 'lon'])
+      expect(props.metadata['proj:code']).toBe('EPSG:4326')
+      // Each level keeps its own cell size, read from its own coordinates.
+      expect(props.metadata.multiscales.layout[0]['spatial:transform'][0]).toBeCloseTo(22.5, 6)
+      expect(props.metadata.multiscales.layout[1]['spatial:transform'][0]).toBeCloseTo(45, 6)
     })
 
     it('reads the coarsest level\'s own chunking, not the finest level\'s', async () => {

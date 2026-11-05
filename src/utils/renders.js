@@ -283,22 +283,36 @@ export function synthesizeRgbRender(asset) {
   return { bidx: [1, 2, 3], rescale, nodata };
 }
 
+// Integer types wider than 8 bits. An alpha band of one of these does not hold
+// 0 to 255, so writing it straight into the channel would clamp every covered
+// pixel to opaque; a float band does hold a scalable fraction, so it is not
+// listed here. See alphaScale.
+const WIDE_ALPHA_TYPES = new Set([
+  'uint16', 'int16', 'uint32', 'int32', 'uint64', 'int64',
+]);
+
 /**
  * The zero-based index of an asset's alpha band, or null when it has none.
  *
- * An alpha band is named `alpha`. The band must state that it is 8-bit,
- * because the channel it writes to is: a 16-bit coverage value written
- * straight into an 8-bit alpha channel clamps every covered pixel to opaque,
- * and a float 0..1 coverage fraction writes alpha 1 of 255, which is an
- * invisible layer. A band that declares no `data_type` says nothing, so it is
- * not read as a mask and the nodata inference takes over.
+ * An alpha band is named `alpha`. A band that declares a wider integer type
+ * does not hold 0 to 255, so writing it straight into an 8-bit alpha channel
+ * would clamp every covered pixel to opaque and make a partial value
+ * meaningless; such a band is not read as a mask and the nodata inference
+ * takes over.
+ *
+ * A band that declares no `data_type` at all is read as a mask. `data_type` is
+ * optional in the raster extension and an ordinary RGBA COG often omits it, so
+ * requiring it lost the alpha band of every such file — and a collar composite
+ * then drew opaque black where the main picture was transparent. What the
+ * samples hold, a 0-255 mask or a 0..1 coverage fraction, is settled where the
+ * samples are: see alphaScale.
  */
 export function alphaBandIndex(asset) {
   const bands = assetBands(asset);
   const index = bands.findIndex(
     b => typeof b?.name === 'string' && b.name.toLowerCase() === 'alpha');
   if (index === -1) {return null;}
-  return bands[index].data_type === 'uint8' ? index : null;
+  return WIDE_ALPHA_TYPES.has(bands[index].data_type) ? null : index;
 }
 
 /**
@@ -372,6 +386,14 @@ function singleBand(render) {
  * no band 2.
  */
 function rgbBands(render) {
+  // The multi-asset composite is settled first, because it is a fact about the
+  // render rather than about how it spells its bands. A render that names
+  // several assets names one single-band asset per channel, and each of them
+  // matches the render on its own — so compositing bands 1-3 of a one-band
+  // tile draws nothing at all, whether the render states `bidx` or leaves it
+  // to the rescale pairs. Checking it only on the rescale path left the
+  // explicit `bidx: [1, 2, 3]` spelling blanking every asset.
+  if (Array.isArray(render?.assets) && render.assets.length > 1) {return null;}
   if (Array.isArray(render?.bidx)) {
     const bands = bidxIndexes(render);
     return bands && bands.length === 3 ? bands : null;
@@ -382,7 +404,6 @@ function rgbBands(render) {
   // Only a [min, max] pair per band states a per-band stretch. A flat
   // [0, 255, 100] is one titiler-style range, malformed, not three bands.
   if (!rescale.every(Array.isArray)) {return null;}
-  if (Array.isArray(render.assets) && render.assets.length > 1) {return null;}
   return [0, 1, 2];
 }
 
@@ -485,6 +506,20 @@ function coverageBand(render, planes) {
   return Number.isInteger(band) && band >= 0 && band < planes ? band : null;
 }
 
+// What to multiply a coverage sample by to get an 8-bit alpha value.
+//
+// A coverage band is written both ways. An integer mask holds 0 to 255, which
+// the channel takes as it is. A float band holds a coverage fraction from 0 to
+// 1, and writing that straight into the channel gives alpha 1 of 255 — an
+// invisible layer.
+//
+// The sample array's own type settles it, which is a fact about the data
+// rather than a claim in the metadata: `data_type` is optional in the raster
+// extension, so a band that omits it would otherwise have to be guessed at.
+function alphaScale(data) {
+  return (data instanceof Float32Array || data instanceof Float64Array) ? 255 : 1;
+}
+
 /** Composite three bands of `samples` into true colour. */
 function compositeRgb(render, bands, samples) {
   const [[m0, s0], [m1, s1], [m2, s2]] = rgbStretches(render);
@@ -493,6 +528,7 @@ function compositeRgb(render, bands, samples) {
   const [b0, b1, b2] = bands;
   const { data, w, h, npix, planes, offsetOf } = samples;
   const alphaBand = coverageBand(render, planes);
+  const aScale = alphaScale(data);
 
   const out = new Uint8ClampedArray(npix * 4);
   for (let i = 0, o = 0; i < npix; i++, o += 4) {
@@ -500,7 +536,7 @@ function compositeRgb(render, bands, samples) {
     const g = data[offsetOf(b1, i)];
     const b = data[offsetOf(b2, i)];
     if (alphaBand != null) {
-      const a = data[offsetOf(alphaBand, i)];
+      const a = data[offsetOf(alphaBand, i)] * aScale;
       if (!(a > 0)) {continue;} // alpha stays 0
       out[o] = stretch(r, m0, s0);
       out[o + 1] = stretch(g, m1, s1);
@@ -574,12 +610,13 @@ function colormapBand(render, writer, band, samples) {
   // coverage band. The mask states which pixels the data covers, so the ramp
   // honours it the same way a composite does.
   const alphaBand = coverageBand(render, planes);
+  const aScale = alphaScale(data);
   const out = new Uint8ClampedArray(npix * 4);
   for (let i = 0, o = 0; i < npix; i++, o += 4) {
     const v = data[offsetOf(band, i)];
     if (nodataSet.has(v) || Number.isNaN(v)) { continue; } // alpha stays 0
     if (alphaBand != null) {
-      const a = data[offsetOf(alphaBand, i)];
+      const a = data[offsetOf(alphaBand, i)] * aScale;
       if (!(a > 0)) {continue;} // alpha stays 0
       writePixel(v, out, o);
       // A coverage band says how much of the pixel the data covers, and a

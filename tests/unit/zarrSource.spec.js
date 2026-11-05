@@ -1,14 +1,17 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import * as zarr from 'zarrita'
+import { parseGeoZarrMetadata } from '@developmentseed/geozarr'
 import {
   coordinateSpacing,
   geoZarrAttrsFromCoordinates,
+  geoZarrAttrsFromLevelCoordinates,
   isIcechunkAsset,
   isZarrAsset,
   declaresMultiscales,
   openZarrRoot,
   resolveLevelPaths,
   spatialDimNames,
+  unreadableArrayOrder,
   unsupportedCodecs,
   unusableCrs,
   withMultiscalesLayout,
@@ -127,6 +130,27 @@ describe('coordinateSpacing', () => {
   it('rejects a repeated coordinate, whose step is zero', () => {
     expect(coordinateSpacing(Float64Array.from([3, 3, 3]))).toBeNull()
   })
+
+  // MUR SST stores its 0.01-degree latitude axis as float32. Near 90 degrees
+  // the gap between representable float32 values is about 7.6e-6, which is
+  // 0.08% of one cell — so the difference of the first two cells is the step
+  // plus up to that much error, and multiplying it out over 17,998 cells
+  // misses the last coordinate by ten whole cells. The axis is perfectly
+  // regular; only the arithmetic that measured it was not.
+  it('reads a float32 axis whose adjacent values are quantised', () => {
+    const lat = Float32Array.from({ length: 17999 }, (_, i) => -89.99 + i * 0.01)
+    const got = coordinateSpacing(lat)
+    expect(got).not.toBeNull()
+    expect(got.origin).toBeCloseTo(-89.99, 4)
+    expect(got.step).toBeCloseTo(0.01, 6)
+  })
+
+  it('rejects a float32 axis that is genuinely irregular', () => {
+    // Gaussian latitudes: the spacing narrows towards the poles, so no affine
+    // describes them however the step is measured.
+    const lat = Float32Array.from({ length: 101 }, (_, i) => 90 * Math.sin((i / 100 - 0.5) * Math.PI))
+    expect(coordinateSpacing(lat)).toBeNull()
+  })
 })
 
 describe('spatialDimNames', () => {
@@ -171,6 +195,118 @@ async function cfStore({
   })
   return { map, root }
 }
+
+/**
+ * An ndpyramid store: `multiscales` in the array spelling naming one group per
+ * level, nothing spatial on the root, and each level group holding its data
+ * array beside its own `y`, `x` and `spatial_ref` arrays. This is what
+ * CarbonPlan's climate pyramids are, and what the `ndpyramid` library writes.
+ *
+ * `levels` is coarsest first, as ndpyramid writes them: level `i` is
+ * `base * 2^i` cells across the same extent.
+ */
+async function ndPyramidStore({ variable = 'tavg', levels = 3, base = 4, extra = [] } = {}) {
+  const map = store()
+  const root = zarr.root(map)
+  const group = await zarr.create(root, {
+    attributes: {
+      multiscales: [{
+        datasets: Array.from({ length: levels }, (_, i) => ({ path: String(i), pixels_per_tile: base })),
+        type: 'reduce',
+      }],
+    },
+  })
+  for (let level = 0; level < levels; level++) {
+    const cells = base * 2 ** level
+    const at = root.resolve(`/${level}`)
+    await zarr.create(at)
+    await writeArray(at.resolve(variable), {
+      shape: [...extra.map(e => e.length), cells, cells],
+      chunkShape: [...extra.map(e => e.chunk), base, base],
+      dimensionNames: [...extra.map(e => e.name), 'y', 'x'],
+      attributes: { coordinates: 'spatial_ref' },
+    })
+    // The same extent at every level, which is what makes it a pyramid: a
+    // 180-degree square from (-90, 90) down and right.
+    await writeArray(at.resolve('y'), {
+      shape: [cells], chunkShape: [cells], values: descending(cells, 90, -180 / cells),
+    })
+    await writeArray(at.resolve('x'), {
+      shape: [cells], chunkShape: [cells], values: descending(cells, -90, 180 / cells),
+    })
+    await zarr.create(at.resolve('spatial_ref'), {
+      shape: [1], chunkShape: [1], dtype: 'float64', attributes: { crs_wkt: 'EPSG:3857-ish' },
+    })
+  }
+  return { map, root, group }
+}
+
+describe('geoZarrAttrsFromLevelCoordinates', () => {
+  it('describes an ndpyramid store from each level\'s own coordinates', async () => {
+    const { root, group } = await ndPyramidStore({ levels: 3, base: 4 })
+    const attrs = await geoZarrAttrsFromLevelCoordinates(
+      root, group, withMultiscalesLayout(group.attrs), { variable: 'tavg' },
+    )
+    expect(attrs).not.toBeNull()
+    // The levels come back finest first, which is the order the parser and
+    // every consumer of `meta.levels` reads them as.
+    expect(attrs.multiscales.layout.map(l => l.asset)).toEqual(['2/tavg', '1/tavg', '0/tavg'])
+    expect(attrs.multiscales.layout.map(l => l['spatial:shape'])).toEqual([[16, 16], [8, 8], [4, 4]])
+    // Every level covers the same extent, so each one's cell is twice the
+    // next's. The y step is negative because the axis runs north to south.
+    expect(attrs.multiscales.layout[0]['spatial:transform']).toEqual([11.25, 0, -90, 0, -11.25, 90])
+    expect(attrs.multiscales.layout[2]['spatial:transform']).toEqual([45, 0, -90, 0, -45, 90])
+    // The group takes the finest level's own description.
+    expect(attrs['spatial:shape']).toEqual([16, 16])
+    expect(attrs['spatial:dimensions']).toEqual(['y', 'x'])
+    expect(attrs['spatial:registration']).toBe('node')
+    expect(attrs['proj:wkt2']).toBe('EPSG:3857-ish')
+  })
+
+  it('parses into metadata the renderer can use', async () => {
+    const { root, group } = await ndPyramidStore({ levels: 3, base: 4 })
+    const attrs = await geoZarrAttrsFromLevelCoordinates(
+      root, group, withMultiscalesLayout(group.attrs), { variable: 'tavg' },
+    )
+    const meta = parseGeoZarrMetadata(attrs)
+    expect(meta.levels.map(l => l.path)).toEqual(['2/tavg', '1/tavg', '0/tavg'])
+    expect(meta.levels.map(l => l.arrayWidth)).toEqual([16, 8, 4])
+  })
+
+  it('describes a pyramid whose levels carry extra leading dimensions', async () => {
+    const { root, group } = await ndPyramidStore({
+      variable: 'climate', levels: 2, base: 4, extra: [{ name: 'band', length: 2, chunk: 2 }],
+    })
+    const attrs = await geoZarrAttrsFromLevelCoordinates(
+      root, group, withMultiscalesLayout(group.attrs), { variable: 'climate' },
+    )
+    expect(attrs.multiscales.layout.map(l => l.asset)).toEqual(['1/climate', '0/climate'])
+    expect(attrs['spatial:shape']).toEqual([8, 8])
+  })
+
+  it('returns null when a level has no coordinate arrays to describe it', async () => {
+    const map = store()
+    const root = zarr.root(map)
+    const group = await zarr.create(root, {
+      attributes: { multiscales: [{ datasets: [{ path: '0' }, { path: '1' }] }] },
+    })
+    for (const level of ['0', '1']) {
+      const at = root.resolve(`/${level}`)
+      await zarr.create(at)
+      await writeArray(at.resolve('tavg'), {
+        shape: [4, 4], chunkShape: [4, 4], dimensionNames: ['y', 'x'],
+      })
+    }
+    expect(await geoZarrAttrsFromLevelCoordinates(
+      root, group, withMultiscalesLayout(group.attrs), { variable: 'tavg' },
+    )).toBeNull()
+  })
+
+  it('returns null for attributes that declare no pyramid', async () => {
+    const { root } = await cfStore()
+    expect(await geoZarrAttrsFromLevelCoordinates(root, root, root.attrs, {})).toBeNull()
+  })
+})
 
 describe('geoZarrAttrsFromCoordinates', () => {
   it('returns null for an array whose dimensions are not spatial', async () => {
@@ -529,6 +665,89 @@ describe('unsupportedCodecs', () => {
     const array = { path: '/rgb', store: { get: async () => { throw new Error('offline') } } }
     expect(await unsupportedCodecs(array)).toEqual([])
   })
+
+  it('passes a v2 filter whose id already carries the numcodecs namespace', async () => {
+    // A v2 store may write the same filter either way. Namespacing an id that
+    // is already namespaced yields `numcodecs.numcodecs.fixedscaleoffset`,
+    // which is in no registry, so the store was refused for a codec zarrita
+    // implements.
+    const backing = v2Array({ filters: [{ id: 'numcodecs.fixedscaleoffset', scale: 10, offset: 0 }] })
+    const array = await zarr.open(zarr.root(backing).resolve('/tas'), { kind: 'array' })
+    expect(await unsupportedCodecs(array)).toEqual([])
+  })
+
+  it('passes a namespaced v2 compressor id without doubling the namespace', async () => {
+    const backing = v2Array({ compressor: { id: 'numcodecs.gribberish' } })
+    const array = await zarr.open(zarr.root(backing).resolve('/tas'), { kind: 'array' })
+    expect(await unsupportedCodecs(array)).toEqual(['numcodecs.gribberish'])
+  })
+
+  describe('unreadableArrayOrder', () => {
+    // zarrita decodes a column-major array correctly, and `zarr.get` then
+    // hands back a result whose stride is column-major too. The colormap loop
+    // walks the trailing two axes as rows of pixels, so it cannot index that
+    // — and the only thing that noticed was a console warning inside the tile
+    // loader, which left the layer switched on, the map blank and nothing
+    // said. Refused here, it becomes a notice.
+    it('refuses a v2 array stored in Fortran order', async () => {
+      const backing = v2Array({ order: 'F' })
+      const array = await zarr.open(zarr.root(backing).resolve('/tas'), { kind: 'array' })
+      expect(await unreadableArrayOrder(array)).toEqual({ kind: 'columnMajor' })
+    })
+
+    it('accepts a v2 array stored in C order', async () => {
+      const backing = v2Array({ order: 'C' })
+      const array = await zarr.open(zarr.root(backing).resolve('/tas'), { kind: 'array' })
+      expect(await unreadableArrayOrder(array)).toBeNull()
+    })
+
+    it('refuses a v3 array whose transpose codec reorders its axes', async () => {
+      const backing = {
+        get: async key => new Map([
+          ['/zarr.json', encode({ zarr_format: 3, node_type: 'group', attributes: {} })],
+          ['/tas/zarr.json', encode({
+            zarr_format: 3,
+            node_type: 'array',
+            shape: [4, 4],
+            data_type: 'float64',
+            chunk_grid: { name: 'regular', configuration: { chunk_shape: [4, 4] } },
+            chunk_key_encoding: { name: 'default' },
+            fill_value: 0,
+            attributes: {},
+            codecs: [{ name: 'transpose', configuration: { order: [1, 0] } }, { name: 'bytes' }],
+          })],
+        ]).get(key),
+      }
+      const array = await zarr.open(zarr.root(backing).resolve('/tas'), { kind: 'array' })
+      expect(await unreadableArrayOrder(array)).toEqual({ kind: 'transpose', order: '1, 0' })
+    })
+
+    it('accepts a v3 transpose codec that reorders nothing', async () => {
+      const backing = {
+        get: async key => new Map([
+          ['/zarr.json', encode({ zarr_format: 3, node_type: 'group', attributes: {} })],
+          ['/tas/zarr.json', encode({
+            zarr_format: 3,
+            node_type: 'array',
+            shape: [4, 4],
+            data_type: 'float64',
+            chunk_grid: { name: 'regular', configuration: { chunk_shape: [4, 4] } },
+            chunk_key_encoding: { name: 'default' },
+            fill_value: 0,
+            attributes: {},
+            codecs: [{ name: 'transpose', configuration: { order: [0, 1] } }, { name: 'bytes' }],
+          })],
+        ]).get(key),
+      }
+      const array = await zarr.open(zarr.root(backing).resolve('/tas'), { kind: 'array' })
+      expect(await unreadableArrayOrder(array)).toBeNull()
+    })
+
+    it('says nothing when the metadata cannot be read', async () => {
+      const array = { path: '/rgb', store: { get: async () => { throw new Error('offline') } } }
+      expect(await unreadableArrayOrder(array)).toBeNull()
+    })
+  })
 })
 
 describe('zarrMinZoom', () => {
@@ -783,6 +1002,33 @@ describe('withMultiscalesLayout, per-level metadata the convention leaves out', 
       .toEqual([[1024, 2048], [512, 1024], [256, 512]])
     expect(layout[2]['spatial:transform']).toEqual([40, 0, 500000, 0, -40, 5000000])
     expect(attrs.multiscales.resampling_method).toBe('average')
+  })
+
+  it('treats a level derived from nothing as the base level, scale stated or not', () => {
+    // The convention does not ask the base level to state a scale of 1 — it is
+    // the level the others are scaled from. A base with no `transform.scale`
+    // resolved to no scale at all, and because every other level's scale is
+    // the product along its `derived_from` chain, that no-scale poisoned the
+    // whole pyramid: nothing was derived, the attributes came back unchanged,
+    // and the store was refused as a pyramid the browser cannot read.
+    const attrs = withMultiscalesLayout({
+      'proj:code': 'EPSG:32632',
+      'spatial:dimensions': ['y', 'x'],
+      'spatial:transform': [10, 0, 500000, 0, -10, 5000000],
+      'spatial:shape': [1024, 2048],
+      multiscales: {
+        layout: [
+          { asset: '0' },
+          scaled('1', 2, '0'),
+          scaled('2', 2, '1'),
+        ],
+      },
+    })
+    const { layout } = attrs.multiscales
+    expect(layout.map(level => level['spatial:shape']))
+      .toEqual([[1024, 2048], [512, 1024], [256, 512]])
+    expect(layout[0]['spatial:transform']).toEqual([10, 0, 500000, 0, -10, 5000000])
+    expect(layout[2]['spatial:transform']).toEqual([40, 0, 500000, 0, -40, 5000000])
   })
 
   it('reads the level scale as relative to its source level', () => {

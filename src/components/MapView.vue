@@ -43,7 +43,7 @@ import { resolveStyles, loadStyleJson, extractLegend, extractStyleFields } from 
 import { VECTOR_NOTICE_REPROJECTION, VECTOR_NOTICE_TOO_BIG, VECTOR_NOTICE_TOO_LARGE } from '../utils/parquetShared.js';
 import {
   ZARR_NOTICE_CHUNK_SHAPE, ZARR_NOTICE_CODEC, ZARR_NOTICE_CRS, ZARR_NOTICE_NO_GEO,
-  ZARR_NOTICE_ZOOM_IN,
+  ZARR_NOTICE_ORDER, ZARR_NOTICE_ZOOM_IN,
 } from '../utils/zarrLayers.js';
 import { createLonLatTransform } from '../utils/crs.js';
 import proj4 from 'proj4';
@@ -168,6 +168,24 @@ export default {
         return this.$t('mapping.zarr.crs', {
           title: notice.title || '',
           projection: notice.projection,
+        });
+      }
+      if (notice.reason === ZARR_NOTICE_ORDER) {
+        // One reason, three faults, one message each: the names of the axes
+        // belong in a translated sentence, an English phrase does not.
+        if (notice.kind === 'transpose') {
+          return this.$t('mapping.zarr.orderTranspose', {
+            title: notice.title || '',
+            order: notice.order,
+          });
+        }
+        if (notice.kind === 'columnMajor') {
+          return this.$t('mapping.zarr.orderColumnMajor', { title: notice.title || '' });
+        }
+        return this.$t('mapping.zarr.orderAxes', {
+          title: notice.title || '',
+          y: notice.y,
+          x: notice.x,
         });
       }
       if (notice.reason === ZARR_NOTICE_NO_GEO) {

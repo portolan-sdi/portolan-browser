@@ -21,8 +21,9 @@
 // metadata and refuses the store when it is too wasteful to draw.
 
 import {
-  declaresMultiscales, geoZarrAttrsFromCoordinates, isIcechunkAsset, openZarrRoot,
-  resolveLevelPaths, unsupportedCodecs, unusableCrs, withMultiscalesLayout, zarrZoomGuard,
+  declaresMultiscales, geoZarrAttrsFromCoordinates, geoZarrAttrsFromLevelCoordinates,
+  isIcechunkAsset, openZarrRoot, resolveLevelPaths, spatialAxisFault, unreadableArrayOrder,
+  unsupportedCodecs, unusableCrs, withMultiscalesLayout, zarrZoomGuard,
 } from './zarrSource.js';
 import { assetBands, makeZarrRenderTileLoader, withAssetEmptiness } from './renders.js';
 
@@ -31,6 +32,7 @@ export const ZARR_NOTICE_CHUNK_SHAPE = 'zarr-chunk-shape';
 export const ZARR_NOTICE_NO_GEO = 'zarr-no-geo';
 export const ZARR_NOTICE_CODEC = 'zarr-codec';
 export const ZARR_NOTICE_CRS = 'zarr-crs';
+export const ZARR_NOTICE_ORDER = 'zarr-order';
 export const ZARR_NOTICE_ERROR = 'zarr-error';
 export const ZARR_NOTICE_ZOOM_IN = 'zarr-zoom-in';
 
@@ -378,6 +380,59 @@ function withNodataOf(render, source) {
 }
 
 /**
+ * How many band planes a tile of this array will carry.
+ *
+ * The band axis is read whole and every other axis is pinned to one index (see
+ * zarrSelection), so an array with no band axis carries one plane whatever
+ * else its shape says.
+ */
+export function zarrBandPlanes(dimensionNames, shape) {
+  const names = Array.isArray(dimensionNames) ? dimensionNames : [];
+  for (let i = 0; i < Math.max(0, names.length - 2); i++) {
+    if (isBandDim(names[i])) {return Math.max(1, shape?.[i] ?? 1);}
+  }
+  return 1;
+}
+
+/**
+ * A render narrowed to the bands the variable actually carries.
+ *
+ * `bidx` names bands inside one asset, and for a Zarr store an asset is a
+ * group of arrays while a layer is one of them. A collection that declares a
+ * true-colour composite over three single-band arrays — the EOPF Sentinel-2
+ * store does exactly that, with `bidx: [3, 2, 1]` — therefore asks each
+ * single-band variable for bands it has not got. The compositor answers with
+ * nothing, so the layer is switched on, the map is blank, and no notice says
+ * why: a render is not a guard, so nothing refused the store.
+ *
+ * Narrowed to the bands that exist, the variable draws as a ramp over the
+ * range the render stated, which is the most the render can mean here. It is
+ * still a mistake in the collection, so it is reported.
+ *
+ * @returns The render to use, the same object when it already fits.
+ */
+export function renderWithinPlanes(render, planes, label = 'this Zarr variable') {
+  const bidx = render?.bidx;
+  if (!Array.isArray(bidx)) {return render;}
+  const kept = bidx.filter(b => Number.isInteger(b) && b >= 1 && b <= planes);
+  if (kept.length === bidx.length) {return render;}
+  console.warn(
+    `The render for "${label}" names bands ${JSON.stringify(bidx)}, but the variable carries `
+    + `${planes}. Drawing band ${kept[0] ?? 1} instead. Declare a render per variable.`
+  );
+  const narrowed = { ...render, bidx: kept.length > 0 ? kept : [1] };
+  // A per-band stretch has one [min, max] pair per band composited, so a
+  // render narrowed to fewer bands keeps only as many pairs. Left at three,
+  // the rescale would read as a three-band composite all over again.
+  const rescale = narrowed.rescale;
+  if (Array.isArray(rescale) && rescale.every(Array.isArray)
+    && rescale.length > narrowed.bidx.length) {
+    narrowed.rescale = rescale.slice(0, narrowed.bidx.length);
+  }
+  return narrowed;
+}
+
+/**
  * A ramp stretched to a variable's declared statistics, for a variable with no
  * render of its own.
  */
@@ -617,6 +672,27 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
     }
   }
 
+  // A pyramid whose levels describe themselves and whose group describes
+  // nothing. An ndpyramid store — CarbonPlan's climate pyramids, and anything
+  // the `ndpyramid` library wrote — names a level per entry and puts the
+  // spatial description in each level's own coordinate arrays, so the two have
+  // to be joined before the parser sees either. See
+  // geoZarrAttrsFromLevelCoordinates.
+  //
+  // This runs only once the group's own attributes have failed to parse, so a
+  // store that describes its pyramid properly never pays for it.
+  if (!declared && declaresMultiscales(ownAttrs)) {
+    const fromLevels = await geoZarrAttrsFromLevelCoordinates(root, group, ownAttrs, {
+      variable: variable?.name,
+      crs: stacCrs(asset),
+    });
+    const parsed = fromLevels ? parse(fromLevels) : null;
+    if (parsed) {
+      declared = parsed;
+      inherited = fromLevels;
+    }
+  }
+
   const attrs = inherited ?? ownAttrs;
 
   // A store that declares a pyramid the parser cannot read must say so. The
@@ -634,6 +710,21 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
     throw new ZarrUnsuitableError(ZARR_NOTICE_NO_GEO, 'The Zarr store has no array to render');
   }
 
+  // The array's own axis order breaks the layer's contract. Reported here,
+  // before the metadata is resolved, because the coordinate route refuses such
+  // an array as having no coordinate arrays at all — which is not what is
+  // wrong with it. See spatialAxisFault.
+  const axisFault = spatialAxisFault(probe.dimensionNames);
+  if (axisFault) {
+    throw new ZarrUnsuitableError(
+      ZARR_NOTICE_ORDER,
+      `The Zarr array cannot be drawn: its spatial dimensions "${axisFault.y}" and `
+      + `"${axisFault.x}" are not the last two of [${probe.dimensionNames.join(', ')}], `
+      + 'and the browser cannot transpose an array',
+      axisFault,
+    );
+  }
+
   // An inherited description must fit the array it describes. A root that
   // describes a different grid would put every chunk in the wrong place, so
   // the coordinate arrays are the safer source then.
@@ -642,11 +733,26 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
     inherited = null;
   }
 
-  // `metadata` stays undefined for a store that describes itself, because then
-  // there is nothing to override. An inherited description is always passed,
-  // because the layer cannot read it off the array it is given.
+  // `metadata` stays undefined only for a store that describes itself and
+  // needed no normalising, because then the layer reading the node's own
+  // attributes gets exactly what was parsed here.
+  //
+  // Everything else has to be passed. An inherited description must be,
+  // because the layer cannot read it off the array it is given. So must a
+  // normalised one: `withMultiscalesLayout` rewrites the array spelling of
+  // `multiscales` into the object one, fills in the per-level shapes and
+  // transforms, and orders the levels finest first — and `ZarrLayer` maps a
+  // tile's zoom onto a level assuming that order. Left to read the raw
+  // attributes, the layer would put a world view on the *finest* level of a
+  // coarsest-first store, while the minimum zoom computed here came from the
+  // real coarsest level. That is a request flood, not a drawing fault.
+  //
+  // `withMultiscalesLayout` returns its input by identity when it changes
+  // nothing, which is what makes the comparison below the test of whether the
+  // layer needs to be told.
+  const normalised = ownAttrs !== group.attrs ? ownAttrs : undefined;
   const metadata = declared
-    ? inherited ?? undefined
+    ? inherited ?? normalised
     : await geoZarrAttrsFromCoordinates(root, probe, { crs: stacCrs(asset) });
   if (!declared && !metadata) {
     throw new ZarrUnsuitableError(
@@ -679,6 +785,23 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
       ZARR_NOTICE_CODEC,
       `The Zarr store uses codecs this browser cannot decode: ${missing.join(', ')}`,
       { codecs: missing.join(', ') },
+    );
+  }
+
+  // A column-major array decodes correctly and draws wrongly: the colormap
+  // loop walks the trailing two axes as rows of pixels. The stride guard in
+  // utils/renders.js catches it, but only from inside a tile load, where all
+  // it can do is warn the console and return nothing — layer on, map blank,
+  // no reason given. See unreadableArrayOrder.
+  const layout = await unreadableArrayOrder(probe);
+  if (layout) {
+    const what = layout.kind === 'transpose'
+      ? `a transpose codec reorders its axes to [${layout.order}]`
+      : 'it is stored in column-major (Fortran) order';
+    throw new ZarrUnsuitableError(
+      ZARR_NOTICE_ORDER,
+      `The Zarr array cannot be drawn: ${what}, and the browser cannot transpose an array`,
+      layout,
     );
   }
 
@@ -810,9 +933,37 @@ export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }
   // statement about coverage only. Taking it as the colour source would leave
   // the ramp on its default 0 to 1 range and skip the statistics that state
   // the real one, which is what a variable carrying both used to draw.
-  const base = statesColour(render)
-    ? render
-    : (synthesizeZarrRgbRender(probe, asset) ?? withNodataOf(renderFromStatistics(variable), render) ?? render);
+  //
+  // A render may state colour without stating a range. `colormap_name` alone
+  // names the ramp and leaves the stretch on its default 0 to 1, which
+  // saturates anything but a normalised variable to one flat colour — and the
+  // statistics that state the real range were right there, unread, because
+  // the render counted as a colour source. So the range is folded in when the
+  // render omits it.
+  const withStatisticsRange = (colour) => {
+    if (!colour || colour.rescale || colour.expression || colour.color_formula) {return colour;}
+    const stats = renderFromStatistics(variable);
+    return stats ? { ...colour, rescale: stats.rescale } : colour;
+  };
+
+  // A render that names bands the variable has not got draws nothing at all,
+  // so it is narrowed to the bands the tile will carry. See
+  // renderWithinPlanes.
+  const fitted = renderWithinPlanes(
+    render,
+    zarrBandPlanes(probe.dimensionNames, probe.shape),
+    descriptor.variable?.name ?? descriptor.title,
+  );
+
+  const base = statesColour(fitted)
+    ? withStatisticsRange(fitted)
+    // A synthesized true-colour render takes the variable's no-data value
+    // with it, the same way the statistics ramp does: the sentinel says where
+    // the picture holds nothing, and an uncovered pixel drawn as colour is
+    // what dropping it looks like.
+    : (withNodataOf(synthesizeZarrRgbRender(probe, asset), fitted)
+      ?? withNodataOf(renderFromStatistics(variable), fitted)
+      ?? fitted);
   const effective = withAssetEmptiness(base, asset)
     ?? reportMissingRender(descriptor, probe);
   const { getTileData, renderTile } = makeZarrRenderTileLoader(effective, { zarr });

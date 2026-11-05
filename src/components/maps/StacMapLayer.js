@@ -162,11 +162,17 @@ const COG_LAYER_CAP = 16;
 // dropping it would leave the map blank with a layer switched on. The rest
 // fill what is left of the cap in list order.
 //
+// The cap is shared with the COGs the picker already lists, not granted again:
+// one picker has one budget, and counting the variables against a cap of their
+// own listed sixteen of them beside sixteen COGs.
+//
+// @param listed How many entries the picker already holds.
 // @returns The descriptors to list, and how many were left out.
-function capZarrList(list) {
-  if (list.length <= COG_LAYER_CAP) {return { descriptors: list, overflow: 0 };}
+function capZarrList(list, listed = 0) {
+  const cap = Math.max(0, COG_LAYER_CAP - listed);
+  if (list.length <= cap) {return { descriptors: list, overflow: 0 };}
   const kept = [];
-  let budget = COG_LAYER_CAP - list.filter(d => d.visible).length;
+  let budget = cap - list.filter(d => d.visible).length;
   for (const descriptor of list) {
     if (descriptor.visible) {
       kept.push(descriptor);
@@ -253,6 +259,10 @@ export default class StacMapLayer {
     this._cogList = [];
     // COG assets the layer picker had to leave out (see COG_LAYER_CAP).
     this._cogOverflow = 0;
+    // The notice currently on the map, and whether a Zarr refusal is what put
+    // it there. See _postNotice.
+    this._activeNotice = null;
+    this._zarrRefusalShown = false;
     // COG id -> a promise of its COGLayer props. The promise, not the resolved
     // props, so two overlapping syncs share one header open: the second finds
     // the first's entry and awaits it instead of opening the COG again. An
@@ -496,7 +506,7 @@ export default class StacMapLayer {
     // described (e.g. after switching to a tile asset, or after a retry
     // succeeds). Skipped-by-signature calls above never reach this: their
     // previous successful run's notice still describes the current map.
-    this.options.onVectorNotice?.(null);
+    this._postNotice(null);
 
     this.assets = assets;
     this._removeCogLayers();
@@ -785,7 +795,7 @@ export default class StacMapLayer {
     }
 
     if (rendered === 0 && firstNotice && epoch === this._overlayEpoch) {
-      this.options.onVectorNotice?.(firstNotice);
+      this._postNotice(firstNotice);
     }
     return rendered > 0;
   }
@@ -1048,10 +1058,10 @@ export default class StacMapLayer {
 
   async _addCogAssets(assets, epoch) {
     const allCogs = this._collectCogAssets();
-    const { descriptors: zarrDescs, overflow: zarrOverflow } = this._buildZarrList(assets);
     if (allCogs.length === 0) {
-      this._cogList = zarrDescs;
-      this._cogOverflow = zarrOverflow;
+      const { descriptors, overflow } = this._buildZarrList(assets);
+      this._cogList = descriptors;
+      this._cogOverflow = overflow;
       await this._syncCogLayers(epoch);
       return;
     }
@@ -1078,7 +1088,12 @@ export default class StacMapLayer {
     // Rasters share one deck overlay and one layer picker, whatever format
     // they arrive in. Zarr layers follow the COGs, so a COG the item ships for
     // display stays the default view.
-    this._cogList = [...this._buildCogList(ordered, active, renders, preferred), ...zarrDescs];
+    // The COG list is built first, because the Zarr variables share the
+    // picker's cap with it rather than getting one of their own.
+    const cogList = this._buildCogList(ordered, active, renders, preferred);
+    const { descriptors: zarrDescs, overflow: zarrOverflow } =
+      this._buildZarrList(assets, cogList.length);
+    this._cogList = [...cogList, ...zarrDescs];
     // _buildCogList records the COGs it had to leave out; the Zarr list adds
     // the variables it had to leave out to the same count.
     this._cogOverflow += zarrOverflow;
@@ -1095,7 +1110,7 @@ export default class StacMapLayer {
   //
   // The list is capped the way the COG list is — see capZarrList — so the
   // return carries the descriptors and the count that did not fit.
-  _buildZarrList(assets) {
+  _buildZarrList(assets, listed = 0) {
     const zarrAssets = this._collectZarrAssets();
     if (zarrAssets.length === 0) {return { descriptors: [], overflow: 0 };}
     const renders = resolveRenders(this.stac);
@@ -1118,7 +1133,7 @@ export default class StacMapLayer {
         });
       }
     }
-    return capZarrList(list);
+    return capZarrList(list, listed);
   }
 
   // Build the capped, ordered list of COG descriptors. List order is preserved
@@ -1300,10 +1315,11 @@ export default class StacMapLayer {
         this._deckOverlay = null;
       }
       this._cogLayerCache.clear();
-      // Nothing is on the map, so nothing is held back below its zoom either.
-      // Switching the held layer off has to take its notice down with it, or
-      // the message stays on screen for a layer that is no longer there and
-      // the next zoom puts it back.
+      // Nothing is on the map, so nothing is held back below its zoom either,
+      // and nothing was refused. Switching the layer off has to take either
+      // message down with it, or it stays on screen for a layer that is no
+      // longer there and the next zoom puts it back.
+      this._clearZarrRefusal();
       this._noticeZarrZoom([]);
       return;
     }
@@ -1375,9 +1391,13 @@ export default class StacMapLayer {
         // with it, because a zoomend that still found the old list there would
         // replace this refusal with the zoom notice of a layer that is gone.
         this._zarrHeld = [];
-        this._zarrZoomNoticeShown = false;
-        this.options.onVectorNotice?.(zarrNotice);
+        this._postNotice(zarrNotice);
+        this._zarrRefusalShown = true;
       } else {
+        // Nothing was refused this time, so a refusal still on screen is
+        // about a layer that is no longer there — the user switched the
+        // refused variable off, or switched to one that draws.
+        this._clearZarrRefusal();
         this._noticeZarrZoom(built);
       }
 
@@ -1482,7 +1502,36 @@ export default class StacMapLayer {
   _clearZarrZoomNotice() {
     if (!this._zarrZoomNoticeShown) {return;}
     this._zarrZoomNoticeShown = false;
-    this.options.onVectorNotice?.(null);
+    this._postNotice(null);
+  }
+
+  // Take down a refusal notice this layer put up, and only that one. The flag
+  // is what says the notice on screen is ours; without it a clear would wipe
+  // whatever another format had put there.
+  _clearZarrRefusal() {
+    if (!this._zarrRefusalShown) {return;}
+    this._zarrRefusalShown = false;
+    this._postNotice(null);
+  }
+
+  // Every notice this layer puts on the map goes through here.
+  //
+  // There is one notice slot and three messages competing for it: a GeoParquet
+  // file too large to draw, a Zarr store that was refused, and a Zarr store
+  // held back below its minimum zoom. Only the last of those re-posts on its
+  // own — on every zoomend — so without a record of what is already on screen
+  // it overwrote the other two the moment the user zoomed. See
+  // _applyZarrZoomNotice, which is the one emission that defers.
+  //
+  // Posting also drops both Zarr flags, and the two emissions that own one set
+  // it again straight after. That is what keeps a flag meaning "this message
+  // of mine is the one on screen" rather than "I posted one once": a stale
+  // flag would have a later clear wipe whatever had replaced it.
+  _postNotice(notice) {
+    this._activeNotice = notice ?? null;
+    this._zarrRefusalShown = false;
+    this._zarrZoomNoticeShown = false;
+    this.options.onVectorNotice?.(notice ?? null);
   }
 
   _applyZarrZoomNotice() {
@@ -1501,13 +1550,17 @@ export default class StacMapLayer {
       this._clearZarrZoomNotice();
       return;
     }
-    this._zarrZoomNoticeShown = true;
-    this.options.onVectorNotice?.({
+    // Another format's message holds the slot. A GeoParquet file too large to
+    // draw is still too large at the next zoom, and this notice re-posts on
+    // every one of them, so it waits rather than replacing it.
+    if (this._activeNotice && this._activeNotice.format !== 'zarr') {return;}
+    this._postNotice({
       format: 'zarr',
       reason: ZARR_NOTICE_ZOOM_IN,
       minZoom: held.minZoom,
       hasOverviews: held.hasOverviews,
     });
+    this._zarrZoomNoticeShown = true;
   }
 
   fit(padding = { top: 160, bottom: 50, left: 50, right: 50 }) {

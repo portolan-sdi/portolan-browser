@@ -34,7 +34,8 @@ vi.mock('../../src/utils/zarrLayers.js', async (importOriginal) => {
 import StacMapLayer from '../../src/components/maps/StacMapLayer.js'
 import MapView from '../../src/components/MapView.vue'
 import {
-  ZARR_NOTICE_CHUNK_SHAPE, ZARR_NOTICE_ERROR, ZARR_NOTICE_ZOOM_IN, ZarrUnsuitableError,
+  ZARR_NOTICE_CHUNK_SHAPE, ZARR_NOTICE_ERROR, ZARR_NOTICE_ORDER, ZARR_NOTICE_ZOOM_IN,
+  ZarrUnsuitableError,
 } from '../../src/utils/zarrLayers.js'
 
 // A MapLibre double with the three things the Zarr zoom notice needs — a zoom,
@@ -235,6 +236,46 @@ describe('StacMapLayer Zarr layers', () => {
       map.fire('zoomend')
       expect(notices).toEqual([])
     })
+
+    it('leaves a GeoParquet notice alone when the user zooms', () => {
+      // One notice slot, two formats. A GeoParquet file too large to draw puts
+      // its message up; a Zarr variable held back below its zoom re-posts on
+      // every zoomend, and without knowing what is already on screen it
+      // replaced that message the moment the user zoomed.
+      notices.length = 0
+      layer._postNotice({ format: 'parquet', reason: 'vector-too-large' })
+      map.fire('zoomend')
+      expect(notices.at(-1)).toMatchObject({ format: 'parquet' })
+    })
+  })
+
+  describe('a refusal notice', () => {
+    beforeEach(async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      layer._makeZarrLayerProps = openAs({
+        A: { error: new ZarrUnsuitableError(ZARR_NOTICE_CHUNK_SHAPE, 'chunked for time series', { amplification: 1440 }) },
+        B: { minZoom: 0 },
+      })
+      const asset = zarrAsset(twoVariables)
+      layer.setStac(fakeStac([asset]))
+      await layer.setAssets([asset])
+      expect(notices.at(-1)).toMatchObject({ reason: ZARR_NOTICE_CHUNK_SHAPE })
+    })
+
+    it('comes down when the refused variable is switched off', async () => {
+      // Nothing is on the map any more, so a message about why a layer was
+      // refused is about nothing. Only the zoom notice had a teardown, so this
+      // one stayed on screen for a variable the user had turned off.
+      await layer.setCogVisible('zarr:zarr:A', false)
+      expect(notices.at(-1)).toBeNull()
+    })
+
+    it('comes down when the user switches to a variable that draws', async () => {
+      descriptorFor('A').visible = false
+      descriptorFor('B').visible = true
+      await layer._syncCogLayers()
+      expect(notices.at(-1)).toBeNull()
+    })
   })
 
   describe('a Zarr layer that fails to open', () => {
@@ -259,6 +300,50 @@ describe('StacMapLayer Zarr layers', () => {
         $t: key => key,
       })
       expect(text).toBe('mapping.zarr.loadError')
+    })
+
+    it('reads an axis-order refusal as its own message, not the generic one', () => {
+      // Without its own key this refusal fell through to the load error, which
+      // says the browser failed rather than what is wrong with the store. The
+      // axis names are passed as values, so the sentence around them can be
+      // translated.
+      const seen = []
+      const text = MapView.computed.zarrNoticeText.call({
+        vectorNotice: {
+          format: 'zarr',
+          reason: ZARR_NOTICE_ORDER,
+          title: 'Tessera global RGB mosaic',
+          kind: 'axes',
+          y: 'lat',
+          x: 'lon',
+        },
+        $t: (key, values) => { seen.push(values); return key },
+      })
+      expect(text).toBe('mapping.zarr.orderAxes')
+      expect(seen[0]).toEqual({ title: 'Tessera global RGB mosaic', y: 'lat', x: 'lon' })
+    })
+
+    it('reads a column-major refusal as its own message', () => {
+      const text = MapView.computed.zarrNoticeText.call({
+        vectorNotice: {
+          format: 'zarr', reason: ZARR_NOTICE_ORDER, title: 'A Fortran-order store', kind: 'columnMajor',
+        },
+        $t: key => key,
+      })
+      expect(text).toBe('mapping.zarr.orderColumnMajor')
+    })
+
+    it('reads a transpose-codec refusal as its own message', () => {
+      const seen = []
+      const text = MapView.computed.zarrNoticeText.call({
+        vectorNotice: {
+          format: 'zarr', reason: ZARR_NOTICE_ORDER, title: 'A transposed store',
+          kind: 'transpose', order: '1, 0',
+        },
+        $t: (key, values) => { seen.push(values); return key },
+      })
+      expect(text).toBe('mapping.zarr.orderTranspose')
+      expect(seen[0]).toMatchObject({ order: '1, 0' })
     })
   })
 
@@ -304,6 +389,33 @@ describe('StacMapLayer Zarr layers', () => {
       // says, because it is the one that draws.
       expect(layer._cogList.filter(d => d.visible).map(d => d.variable.name)).toEqual(['v0'])
       expect(layer._cogList[0].variable.name).toBe('v0')
+    })
+
+    it('shares the cap with the COGs already listed', async () => {
+      // One picker, one cap. A Zarr store counted against a budget of its own
+      // listed sixteen variables beside sixteen COGs, which is thirty-two
+      // entries in a picker that is meant to hold sixteen.
+      layer._makeZarrLayerProps = openAs({})
+      layer._makeCogLayerProps = async () => ({})
+      const cogs = Array.from({ length: 10 }, (unused, i) => ({
+        type: 'image/tiff; application=geotiff',
+        title: `Scene ${i}`,
+        roles: ['data'],
+        getKey: () => `cog${i}`,
+        getAbsoluteUrl: () => `https://example.com/scene${i}.tif`,
+        href: `https://example.com/scene${i}.tif`,
+      }))
+      const bands = Array.from({ length: 25 }, (unused, i) => ({
+        name: `v${i}`, description: `Variable ${i}`, nodata: -9,
+      }))
+      const asset = zarrAsset(bands)
+      layer.setStac(fakeStac([...cogs, asset]))
+      await layer.setAssets([asset])
+
+      expect(layer._cogList.length).toBeLessThanOrEqual(16)
+      // The variable the render was written for is listed whatever the cap
+      // says, because it is the one that draws.
+      expect(layer._cogList.some(d => d.variable?.name === 'v0')).toBe(true)
     })
 
     it('lists every variable of a store that fits', async () => {

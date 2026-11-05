@@ -514,6 +514,17 @@ describe('RGB renders', () => {
     expect(pixel(res, 0)).toEqual([253, 231, 37, 255])  // viridis at t=1
   })
 
+  // The same render, written with an explicit `bidx`. The bidx branch answered
+  // before the multi-asset check was reached, so these three single-band
+  // assets each tried to composite bands 1-3 of a one-band tile and drew
+  // nothing at all.
+  it('ramps a single-band asset of a multi-asset render that states bidx', async () => {
+    const render = { assets: ['B4', 'B3', 'B2'], bidx: [1, 2, 3], rescale: [[0, 100]] }
+    const res = await call(render, fakeImage(new Uint16Array([100]), 1, 1))
+    expect(res).not.toBeNull()
+    expect(pixel(res, 0)).toEqual([253, 231, 37, 255])  // viridis at t=1
+  })
+
   it('still composites for a render that names a single asset', async () => {
     const render = { assets: ['visual'], rescale: [[0, 100], [0, 100], [0, 100]] }
     const res = await call(render, rgbTile([100, 50, 0, 900]))
@@ -584,6 +595,18 @@ describe('RGB renders', () => {
     expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
   })
 
+  // A float coverage band holds a fraction from 0 to 1, not 0 to 255. Written
+  // straight into the alpha channel it draws alpha 1 of 255 — an invisible
+  // layer. The sample array's own type says which it is, which is a fact about
+  // the data rather than a claim the metadata may have omitted.
+  it('scales a float coverage band from a fraction to the alpha channel', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100]], alphaBand: 3 }
+    const res = await call(render, fakeImage(
+      new Float32Array([100, 50, 0, 0.5, 100, 50, 0, 1]), 2, 1))
+    expect(pixel(res, 0)[3]).toBe(128)
+    expect(pixel(res, 1)[3]).toBe(255)
+  })
+
   it('keeps the colormap path for a single-band bidx', async () => {
     const render = { colormap_name: 'viridis', bidx: [1], rescale: [[0, 1]] }
     const res = await call(render, fakeImage(new Float32Array([1]), 1, 1))
@@ -646,6 +669,11 @@ describe('a coverage band on the colormap path', () => {
 
   it('keeps a partial coverage value', async () => {
     const res = await call(masked, fakeImage(new Uint8Array([50, 128]), 1, 1))
+    expect(pixel(res, 0)[3]).toBe(128)
+  })
+
+  it('scales a float coverage band on the colormap path too', async () => {
+    const res = await call(masked, fakeImage(new Float32Array([50, 0.5]), 1, 1))
     expect(pixel(res, 0)[3]).toBe(128)
   })
 
@@ -801,13 +829,15 @@ describe('withAssetEmptiness', () => {
     expect(withAssetEmptiness({ rescale: [[0, 255]] }, { bands }).alphaBand).toBeUndefined()
   })
 
-  // A band of unknown type may be a float 0..1 coverage fraction, which written
-  // straight into the alpha channel draws alpha 1 of 255 and an invisible layer.
-  it('ignores an alpha band that declares no data type', () => {
+  // `data_type` is optional in the raster extension, so an ordinary RGBA COG
+  // often omits it. Requiring it lost the alpha band of every such file, and a
+  // collar composite then drew opaque black where the main picture was
+  // transparent. Whether the samples are a 0-255 mask or a 0..1 coverage
+  // fraction is settled at write time, from the sample array's own type.
+  it('names an alpha band that declares no data type', () => {
     const bands = [...rgba.slice(0, 3), { name: 'alpha' }]
     const got = withAssetEmptiness({ rescale: [[0, 255]] }, { bands })
-    expect(got.alphaBand).toBeUndefined()
-    expect(got.nodata).toEqual([0])  // the nodata inference runs instead
+    expect(got.alphaBand).toBe(3)
   })
 
   // A render reads the bands its `bidx` names. Bands 1-3's sentinels belong to
