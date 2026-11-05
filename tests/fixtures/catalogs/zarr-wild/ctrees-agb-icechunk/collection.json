@@ -1,0 +1,82 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+  ],
+  "id": "ctrees-agb-icechunk",
+  "title": "CTrees global aboveground biomass, 100 m annual (Icechunk)",
+  "description": "ctrees.org global annual aboveground biomass (AGB) at 100 m, 2000-2025, published as a bare Icechunk 2.x repository (a `repo` config object plus `chunks/`, `manifests/`, `snapshots/` prefixes -- confirmed by a 200 on the `repo` object; there is no `zarr.json`/`.zattrs` at this path because Icechunk stores its own metadata inside the repo, not as plain Zarr files). CORS confirmed (`Access-Control-Allow-Origin: *` on the S3 bucket). Per-array shapes/chunks/dtype were not independently inspected (that needs the Icechunk manifest format, not a plain HTTP GET), so none are declared here. bbox is estimated (global biomass coverage, excluding high latitudes where AGB is not mapped).\n\nLicense unknown; declared \"proprietary\" with a via link.\n\nExpected browser outcome: draws if the Icechunk client in this browser can open a bare-repo-object 2.x layout; otherwise refused with a notice.",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180,
+          -60,
+          180,
+          80
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2000-01-01T00:00:00Z",
+          "2025-12-31T23:59:59Z"
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://ctrees.org/",
+      "type": "application/json",
+      "title": "CTrees"
+    }
+  ],
+  "cube:dimensions": {
+    "time": {
+      "type": "temporal",
+      "extent": [
+        "2000-01-01T00:00:00Z",
+        "2025-12-31T23:59:59Z"
+      ],
+      "description": "Annual, 2000-2025 (26 years); not independently confirmed from the manifest."
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "reference_system": 4326
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "reference_system": 4326
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://ctrees-agb-100m-global.s3.us-west-2.amazonaws.com/agb_100m_global/",
+      "type": "application/x-icechunk",
+      "title": "CTrees AGB 100m global (Icechunk 2.x repository)",
+      "description": "Bare `repo` object confirmed reachable with CORS enabled; array-level metadata not independently inspected.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

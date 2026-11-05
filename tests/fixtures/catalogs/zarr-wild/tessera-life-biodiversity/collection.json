@@ -1,0 +1,190 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
+  ],
+  "id": "tessera-life-biodiversity",
+  "title": "LIFE: land-cover change impacts on future extinctions, v1.01",
+  "description": "Global 1 arc-minute (1/60 deg, EPSG:4326) maps of the change in expected number of extinctions per km2 of land converted to arable, or restored to natural habitat, under five persistence-habitat loss curves (Eyres et al. 2025, Phil. Trans. R. Soc. B). Zarr V3, consolidated, zarr-conventions multiscales v0.1 with 5 levels (0 finest 10800x21600 at 1/60 deg .. 4 coarsest 675x1350), zstd level-5 codec, float32. 12 data variables total: 5 \"score\" arrays per scenario (arable_0.1/0.25/0.5/1.0/gompertz, restore_0.1/0.25/0.5/1.0/gompertz) plus one area-changed array per scenario (arable_area_changed, restore_area_changed). Score arrays have a leading taxon dim of size 5 (all, AMPHIBIA, AVES, MAMMALIA, REPTILIA); area arrays are [lat, lon] only. Values are NaN where no land changes under the scenario.\n\nThe brief for this fixture assumed LIFE scores were \"proportions-like\" and suggested a [0,1] rescale; the store's own per-variable statistics show otherwise: arable_0.25 (taxon \"all\") ranges about [-0.37, 0.76] extinctions/km2 and restore_0.25 ranges about [-0.69, 0.12] -- a signed, roughly-symmetric-about-zero impact score, not a bounded proportion. The render below uses a diverging colormap and the arable_0.25 (the paper's main analysis) real range instead.\n\nTerms of reference prohibit commercial use and redistribution without permission from IBAT; license is declared \"proprietary\" with a link to the Zenodo record rather than a standard open license.\n\nExpected browser outcome: draws (diverging ramp on arable_0.25, taxon \"all\").",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180,
+          -90,
+          180,
+          90
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://zenodo.org/records/14945383",
+      "type": "application/json",
+      "title": "Zenodo record v1.01"
+    },
+    {
+      "rel": "via",
+      "href": "https://data.source.coop/tessera/life/v1.01/zarr.json",
+      "type": "application/json",
+      "title": "Source zarr.json"
+    }
+  ],
+  "cube:dimensions": {
+    "taxon": {
+      "type": "other",
+      "values": [
+        "all",
+        "AMPHIBIA",
+        "AVES",
+        "MAMMALIA",
+        "REPTILIA"
+      ]
+    },
+    "lat": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -90,
+        90
+      ],
+      "reference_system": 4326,
+      "unit": "degree_north"
+    },
+    "lon": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -180,
+        180
+      ],
+      "reference_system": 4326,
+      "unit": "degree_east"
+    }
+  },
+  "cube:variables": {
+    "arable_0.25": {
+      "dimensions": [
+        "taxon",
+        "lat",
+        "lon"
+      ],
+      "type": "data",
+      "chunks": [
+        1,
+        1024,
+        1024
+      ],
+      "dtype": "float32",
+      "unit": "extinctions km-2",
+      "long_name": "LIFE score, arable scenario, power-law persistence curve, exponent z = 0.25 (the paper's main analysis)",
+      "statistics": {
+        "minimum": -0.3735502362251282,
+        "maximum": 0.7603037357330322
+      }
+    },
+    "restore_0.25": {
+      "dimensions": [
+        "taxon",
+        "lat",
+        "lon"
+      ],
+      "type": "data",
+      "chunks": [
+        1,
+        1024,
+        1024
+      ],
+      "dtype": "float32",
+      "unit": "extinctions km-2",
+      "long_name": "LIFE score, restore scenario, power-law persistence curve, exponent z = 0.25 (the paper's main analysis)",
+      "statistics": {
+        "minimum": -0.6929922699928284,
+        "maximum": 0.12316499650478363
+      }
+    },
+    "arable_area_changed": {
+      "dimensions": [
+        "lat",
+        "lon"
+      ],
+      "type": "data",
+      "chunks": [
+        1024,
+        1024
+      ],
+      "dtype": "float32",
+      "unit": "m2",
+      "long_name": "area of land changed per pixel, arable scenario"
+    },
+    "restore_area_changed": {
+      "dimensions": [
+        "lat",
+        "lon"
+      ],
+      "type": "data",
+      "chunks": [
+        1024,
+        1024
+      ],
+      "dtype": "float32",
+      "unit": "m2",
+      "long_name": "area of land changed per pixel, restore scenario"
+    }
+  },
+  "renders": {
+    "arable-0.25": {
+      "title": "LIFE score, arable scenario, z=0.25, taxon 'all'",
+      "assets": [
+        "data"
+      ],
+      "bidx": [
+        1
+      ],
+      "rescale": [
+        [
+          -0.4,
+          0.8
+        ]
+      ],
+      "colormap_name": "rdbu_r"
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://data.source.coop/tessera/life/v1.01/",
+      "type": "application/vnd.zarr; version=3",
+      "title": "LIFE v1.01 (Zarr V3, consolidated, EPSG:4326, 1/60 deg)",
+      "description": "12 data variables under group \"0\" (finest level); groups \"1\"..\"4\" are coarser visualisation overviews (mean of finite values per 2x2 block).",
+      "roles": [
+        "data",
+        "cloud-optimized"
+      ]
+    }
+  }
+}

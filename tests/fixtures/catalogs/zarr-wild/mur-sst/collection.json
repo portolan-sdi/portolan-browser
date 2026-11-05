@@ -1,0 +1,163 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
+  ],
+  "id": "mur-sst",
+  "title": "MUR SST: multi-scale ultra-high resolution sea surface temperature",
+  "description": "JPL MUR-JPL-L4-GLOB-v04.1 daily SST, Zarr V2, consolidated, single level (no multiscales), global 0.01 deg, CF coordinates only (no spatial_ref/CRS array -- lat/lon are plain degree arrays, EPSG:4326 implied). `analysed_sst` is [time, lat, lon], chunks [5, 1799, 3600], int16, scale_factor 0.001, add_offset 298.15, fill -32768, blosc-lz4. Decoded physical range is roughly 271-305 K (-2 to 32 degC); if the browser does NOT apply scale/offset before rendering, the raw int16 values it actually reads span about [-27150, 6850] ((kelvin-298.15)/0.001 over 271-305K) -- the statistics below are declared in those RAW units, and the render rescale matches, since the store itself does not expose decoded values without a CF-aware reader.\n\nLicense is the store's own non-SPDX text: \"These data are available free of charge under data policy of JPL PO.DAAC.\"; declared \"proprietary\" with a via link.\n\nExpected browser outcome: draws (ramp on raw analysed_sst values).",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180,
+          -90,
+          180,
+          90
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2002-06-01T09:00:00Z",
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/.zattrs",
+      "type": "application/json",
+      "title": "Source root .zattrs"
+    }
+  ],
+  "cube:dimensions": {
+    "time": {
+      "type": "temporal",
+      "extent": [
+        "2002-06-01T09:00:00Z",
+        null
+      ],
+      "unit": "days since 2002-06-01 09:00:00"
+    },
+    "lat": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -90,
+        90
+      ],
+      "reference_system": 4326,
+      "unit": "degrees_north"
+    },
+    "lon": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -180,
+        180
+      ],
+      "reference_system": 4326,
+      "unit": "degrees_east"
+    }
+  },
+  "cube:variables": {
+    "analysed_sst": {
+      "dimensions": [
+        "time",
+        "lat",
+        "lon"
+      ],
+      "type": "data",
+      "chunks": [
+        5,
+        1799,
+        3600
+      ],
+      "dtype": "int16",
+      "nodata": -32768,
+      "long_name": "analysed sea surface temperature",
+      "description": "Raw int16; decode with scale_factor 0.001, add_offset 298.15 (kelvin) to get physical units. Statistics below are RAW values.",
+      "statistics": {
+        "minimum": -27150,
+        "maximum": 6850
+      }
+    },
+    "mask": {
+      "dimensions": [
+        "time",
+        "lat",
+        "lon"
+      ],
+      "type": "data",
+      "chunks": [
+        5,
+        1799,
+        3600
+      ],
+      "dtype": "int8",
+      "long_name": "sea/land field composite mask"
+    },
+    "sea_ice_fraction": {
+      "dimensions": [
+        "time",
+        "lat",
+        "lon"
+      ],
+      "type": "data",
+      "chunks": [
+        5,
+        1799,
+        3600
+      ],
+      "dtype": "int8",
+      "nodata": -128,
+      "long_name": "sea ice area fraction"
+    }
+  },
+  "renders": {
+    "sst": {
+      "title": "Analysed SST (raw int16, scale 0.001, offset 298.15 K)",
+      "assets": [
+        "data"
+      ],
+      "rescale": [
+        [
+          -27150,
+          6850
+        ]
+      ],
+      "colormap_name": "thermal",
+      "nodata": -32768
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://mur-sst.s3.us-west-2.amazonaws.com/zarr-v1/",
+      "type": "application/vnd.zarr",
+      "title": "MUR SST (Zarr V2, consolidated, global 0.01 deg)",
+      "description": "Single level, no multiscales. CF coordinates only, no explicit CRS array.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

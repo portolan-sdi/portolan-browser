@@ -1,0 +1,78 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+  ],
+  "id": "gmgsi-icechunk",
+  "title": "GMGSI global geostationary mosaic, hourly (Icechunk)",
+  "description": "NOAA Global Mosaic of Geostationary Satellite Imagery (GMGSI), a composite of GOES, Meteosat and Himawari imagery, published as an Icechunk 2.x repository at `gmgsi_v3.icechunk` on source.coop. Confirmed reachable (200 on the `repo` object, which is binary -- an Icechunk config/snapshot object, not a plain Zarr file) with CORS enabled (`access-control-allow-origin: *`). Note: an earlier probe path for this fixture (`bkr/gmgi/gmgsi.zarr/zarr.json`, without the `_v3.icechunk` suffix and as plain Zarr) 404s -- that path does not exist; the real store is the Icechunk repo at the URL below, which does. Per-array shapes/dtypes were not independently inspected; bbox is estimated for a global geostationary composite.\n\nLicense unknown; declared \"proprietary\" with a via link.\n\nExpected browser outcome: draws if the Icechunk client can open this 2.x layout; otherwise refused with a notice.",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180,
+          -70,
+          180,
+          70
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://data.source.coop/bkr/gmgi/gmgsi_v3.icechunk/repo",
+      "type": "application/json",
+      "title": "Icechunk repo object (binary, confirms the store exists)"
+    }
+  ],
+  "cube:dimensions": {
+    "time": {
+      "type": "temporal",
+      "description": "Hourly; not independently confirmed from the manifest."
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "reference_system": 4326
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "reference_system": 4326
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://data.source.coop/bkr/gmgi/gmgsi_v3.icechunk/",
+      "type": "application/x-icechunk",
+      "title": "GMGSI (Icechunk 2.x repository)",
+      "description": "Confirmed reachable with CORS enabled; array-level metadata not independently inspected.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

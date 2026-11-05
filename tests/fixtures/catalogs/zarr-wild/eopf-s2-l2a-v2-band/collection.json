@@ -1,0 +1,122 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+  ],
+  "id": "eopf-s2-l2a-v2-band",
+  "title": "EOPF Sentinel-2 L2A (unconsolidated Zarr V2), one pinned band group",
+  "description": "EOPF (ESA/EODC) Sentinel-2 L2A collection \"sentinel-2-l2a\" (Zarr V2, unconsolidated, no overviews -- the older, pre-GeoZarr EOPF layout, distinct from eopf-s2-l2a-zarr3's V3/multiscales collection). The collection rotates its items; this fixture pins a current one, S2C_MSIL2A_20261105T105221_N0513_R051_T33WWN_20261105T121505 (datetime 2026-11-05T10:52:21Z, UTM zone EPSG:32633), fetched from `/collections/sentinel-2-l2a/items?limit=1` on build. The `SR_10m` asset is the 10 m reflectance group itself (bands B02/B03/B04/B08), declared by the item with media type `application/vnd+zarr` exactly as published -- a non-standard but real value, kept as-is rather than corrected to `application/vnd.zarr`. No multiscales/overviews exist at this level, so the browser must read full-resolution native pixels at every zoom.\n\nLicense: ESA/Copernicus Sentinel Data Legal Notice; declared \"proprietary\".\n\nExpected browser outcome: refused or held back by the zoom/no-overviews guard -- there is no coarser level to fall back to, so either it is refused outright or held back to a high minimum zoom.",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          14.999563824910416,
+          64.8262656763221,
+          16.875271971487273,
+          65.73394402556501
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2026-11-05T10:52:21.025000Z",
+          "2026-11-05T10:52:21.025000Z"
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://stac.core.eopf.eodc.eu/collections/sentinel-2-l2a",
+      "type": "application/json",
+      "title": "EOPF STAC collection (items rotate)"
+    },
+    {
+      "rel": "via",
+      "href": "https://stac.core.eopf.eodc.eu/collections/sentinel-2-l2a/items/S2C_MSIL2A_20261105T105221_N0513_R051_T33WWN_20261105T121505",
+      "type": "application/json",
+      "title": "Pinned EOPF STAC item"
+    },
+    {
+      "rel": "license",
+      "href": "https://sentinel.esa.int/documents/247904/690755/Sentinel_Data_Legal_Notice",
+      "type": "application/pdf",
+      "title": "Legal notice on the use of Copernicus Sentinel Data and Service Information"
+    }
+  ],
+  "cube:dimensions": {
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "reference_system": 32633
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "reference_system": 32633
+    }
+  },
+  "cube:variables": {
+    "B02": {
+      "dimensions": [
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "description": "Blue, 490 nm, 10 m GSD, no overviews."
+    },
+    "B03": {
+      "dimensions": [
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "description": "Green, 560 nm, 10 m GSD, no overviews."
+    },
+    "B04": {
+      "dimensions": [
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "description": "Red, 665 nm, 10 m GSD, no overviews."
+    },
+    "B08": {
+      "dimensions": [
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "description": "NIR 1, 842 nm, 10 m GSD, no overviews."
+    }
+  },
+  "assets": {
+    "SR_10m": {
+      "href": "https://data.eodc.eu/collections/EOPF_ZARR/products/cpm_v270/S02MSIL2A/2026/11/05/S2C_MSIL2A_20261105T105221_N0513_R051_T33WWN_20261105T121505.zarr/measurements/reflectance/r10m",
+      "type": "application/vnd+zarr",
+      "title": "Surface Reflectance - 10m",
+      "description": "Zarr V2, unconsolidated, no multiscales/overviews. Media type copied verbatim from the EOPF item (non-standard application/vnd+zarr).",
+      "roles": [
+        "data",
+        "reflectance",
+        "dataset"
+      ]
+    }
+  }
+}

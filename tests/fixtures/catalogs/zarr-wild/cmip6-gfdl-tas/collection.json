@@ -1,0 +1,113 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+  ],
+  "id": "cmip6-gfdl-tas",
+  "title": "CMIP6 GFDL-ESM4 historical tas (monthly, 1850-2014)",
+  "description": "NOAA-GFDL GFDL-ESM4 historical, r1i1p1f1, Amon table, near-surface air temperature (`tas`), gr1 grid (regridded from the model's cubed-sphere to 180x288, ~100 km nominal resolution). Zarr V2, consolidated. `tas` is [time, lat, lon], shape [1980, 180, 288], chunks [600, 180, 288] -- confirmed directly from the store's own `.zarray` (matches this fixture's brief exactly). A single map tile needs one (lat, lon) pixel at one time step, but the chunk spans 600 of the 1980 time steps, so decoding one tile pulls roughly 600x the data actually needed.\n\nLicense confirmed from the store's own `.zattrs`: CC-BY-4.0.\n\nExpected browser outcome: refused by the chunk-amplification guard (~600x on the time axis).",
+  "license": "CC-BY-4.0",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180,
+          -90,
+          180,
+          90
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "1850-01-16T12:00:00Z",
+          "2014-12-16T12:00:00Z"
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://storage.googleapis.com/cmip6/CMIP6/CMIP/NOAA-GFDL/GFDL-ESM4/historical/r1i1p1f1/Amon/tas/gr1/v20190726/.zattrs",
+      "type": "application/json",
+      "title": "Source root .zattrs"
+    }
+  ],
+  "cube:dimensions": {
+    "time": {
+      "type": "temporal",
+      "extent": [
+        "1850-01-16T12:00:00Z",
+        "2014-12-16T12:00:00Z"
+      ],
+      "unit": "hours since 1850-01-16 12:00:00.000000",
+      "size": 1980
+    },
+    "lat": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -90,
+        90
+      ],
+      "reference_system": 4326,
+      "size": 180
+    },
+    "lon": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -180,
+        180
+      ],
+      "reference_system": 4326,
+      "size": 288
+    }
+  },
+  "cube:variables": {
+    "tas": {
+      "dimensions": [
+        "time",
+        "lat",
+        "lon"
+      ],
+      "type": "data",
+      "chunks": [
+        600,
+        180,
+        288
+      ],
+      "dtype": "float32",
+      "nodata": 100000002004087730000,
+      "unit": "K",
+      "long_name": "Near-Surface Air Temperature",
+      "standard_name": "air_temperature"
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://storage.googleapis.com/cmip6/CMIP6/CMIP/NOAA-GFDL/GFDL-ESM4/historical/r1i1p1f1/Amon/tas/gr1/v20190726/",
+      "type": "application/vnd.zarr",
+      "title": "CMIP6 GFDL-ESM4 historical tas (Zarr V2, consolidated)",
+      "description": "Single array, chunked [600,180,288] -- amplification guard should refuse.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

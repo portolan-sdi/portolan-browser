@@ -1,0 +1,110 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
+  ],
+  "id": "carbonplan-2d-tavg",
+  "title": "CarbonPlan 2D tavg demo (unconsolidated)",
+  "description": "Same CarbonPlan ndpyramid family as carbonplan-4d-climate, but a single-variable store: each level is a `<level>/tavg` array with dims [y, x] only (no band/month axes), same EPSG:3857 pyramid (GeoTransform/origin confirmed identical to the 4D store). The store has **no `.zmetadata`** (confirmed by a 404 on the consolidated-metadata request), so a reader must list each level group individually rather than opening consolidated metadata in one request.\n\nExpected browser outcome: draws (viridis ramp).",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -179.9,
+          -85.06,
+          179.9,
+          85.06
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://storage.googleapis.com/carbonplan-maps/v3/demo/2d/tavg/0/tavg/.zarray",
+      "type": "application/json",
+      "title": "Source .zarray, level 0"
+    }
+  ],
+  "cube:dimensions": {
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -20026376.39,
+        20026376.39
+      ],
+      "reference_system": 3857
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -20048966.1,
+        20048966.1
+      ],
+      "reference_system": 3857
+    }
+  },
+  "cube:variables": {
+    "tavg": {
+      "dimensions": [
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "description": "Per-level shape/chunks are equal (one chunk per level, ndpyramid style): level 0 is [128,128], growing by 2x per level.",
+      "dtype": "float32",
+      "nodata": 9.969209968386869e+36
+    }
+  },
+  "renders": {
+    "tavg": {
+      "title": "Mean monthly temperature (tavg), viridis",
+      "assets": [
+        "data"
+      ],
+      "rescale": [
+        [
+          -30,
+          30
+        ]
+      ],
+      "colormap_name": "viridis"
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://storage.googleapis.com/carbonplan-maps/v3/demo/2d/tavg/",
+      "type": "application/vnd.zarr",
+      "title": "CarbonPlan 2D demo tavg pyramid (Zarr V2, unconsolidated, EPSG:3857)",
+      "description": "ndpyramid multiscales, no consolidated metadata (.zmetadata is absent).",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

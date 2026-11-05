@@ -1,0 +1,139 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+  ],
+  "id": "noaa-gefs-analysis",
+  "title": "NOAA GEFS analysis (dynamical.org), v0.1.2",
+  "description": "NOAA Global Ensemble Forecast System (GEFS) analysis, processed by dynamical.org, global, 0.25 deg, 3-hourly, 2000-01-01 to present. Zarr V3, 27 data variables (confirmed by listing the consolidated metadata), all sharded [2880, 384, 384] outer / [1440, 32, 32] inner (blosc-zstd), confirmed directly from a representative variable's own metadata. One map tile needs 32x32 pixels at one time step; the inner chunk already covers 1440 time steps, so decoding one tile pulls about 1440x the time range actually needed.\n\nLicense confirmed from the store's own root attributes: CC-BY-4.0.\n\nExpected browser outcome: refused by the chunk-amplification guard (~1440x on the time axis).",
+  "license": "CC-BY-4.0",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180,
+          -90,
+          179.75,
+          90
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2000-01-01T00:00:00Z",
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://data.source.coop/dynamical/noaa-gefs-analysis/v0.1.2.zarr/zarr.json",
+      "type": "application/json",
+      "title": "Source root zarr.json"
+    }
+  ],
+  "cube:dimensions": {
+    "time": {
+      "type": "temporal",
+      "extent": [
+        "2000-01-01T00:00:00Z",
+        null
+      ],
+      "unit": "seconds since 1970-01-01"
+    },
+    "latitude": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -90,
+        90
+      ],
+      "reference_system": 4326,
+      "size": 721
+    },
+    "longitude": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -180,
+        179.75
+      ],
+      "reference_system": 4326,
+      "size": 1440
+    }
+  },
+  "cube:variables": {
+    "temperature_2m": {
+      "dimensions": [
+        "time",
+        "latitude",
+        "longitude"
+      ],
+      "type": "data",
+      "chunks": [
+        2880,
+        384,
+        384
+      ],
+      "shards": [
+        1440,
+        32,
+        32
+      ],
+      "dtype": "float32",
+      "unit": "degree_Celsius",
+      "long_name": "Temperature",
+      "standard_name": "air_temperature",
+      "short_name": "2t"
+    },
+    "precipitation_surface": {
+      "dimensions": [
+        "time",
+        "latitude",
+        "longitude"
+      ],
+      "type": "data",
+      "chunks": [
+        2880,
+        384,
+        384
+      ],
+      "shards": [
+        1440,
+        32,
+        32
+      ],
+      "dtype": "float32",
+      "unit": "kg m-2 s-1",
+      "long_name": "Precipitation rate",
+      "standard_name": "precipitation_flux"
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://data.source.coop/dynamical/noaa-gefs-analysis/v0.1.2.zarr/",
+      "type": "application/vnd.zarr; version=3",
+      "title": "NOAA GEFS analysis v0.1.2 (Zarr V3, sharded)",
+      "description": "27 variables, all sharded [2880,384,384] outer / [1440,32,32] inner -- amplification guard should refuse.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

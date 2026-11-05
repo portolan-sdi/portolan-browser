@@ -1,0 +1,78 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+  ],
+  "id": "nasa-rasi-icechunk-virtual",
+  "title": "NASA Water Insight RASI, historical (virtual Icechunk)",
+  "description": "A NASA Water Insight dataset (\"RASI\", historical) published as an Icechunk store with VIRTUAL chunk references into source NetCDF files rather than native Icechunk chunks. Unlike the 2.x bare-`repo`-object layout used by ctrees-agb-icechunk and gmgsi-icechunk, this store uses an older v1-style layout: a top-level `config.yaml` plus `chunks/` and `manifests/` prefixes (confirmed via a bucket listing; there is no `repo` object at this path -- a direct GET for one 404s). CORS confirmed on the bucket. CONUS bbox is estimated.\n\nLicense unknown; declared \"proprietary\" with a via link.\n\nExpected browser outcome: opens only if the Icechunk client in this browser supports this older v1-layout and virtual chunk refs; and even then, reading a chunk depends on the CORS/reachability of whatever NetCDF object the virtual ref points at, not just this store's own bucket.",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -125,
+          25,
+          -67,
+          53
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://nasa-waterinsight.s3.us-west-2.amazonaws.com/virtual-zarr-store/icechunk/RASI/HISTORICAL/config.yaml",
+      "type": "application/json",
+      "title": "Icechunk v1-layout config.yaml (confirms the store exists)"
+    }
+  ],
+  "cube:dimensions": {
+    "time": {
+      "type": "temporal",
+      "description": "Not independently confirmed from the manifest."
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "reference_system": 4326
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "reference_system": 4326
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://nasa-waterinsight.s3.us-west-2.amazonaws.com/virtual-zarr-store/icechunk/RASI/HISTORICAL/",
+      "type": "application/x-icechunk",
+      "title": "NASA Water Insight RASI, historical (virtual Icechunk, v1 layout)",
+      "description": "config.yaml + chunks/ + manifests/ layout (not the 2.x bare `repo` object); chunk refs point at source NetCDFs.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

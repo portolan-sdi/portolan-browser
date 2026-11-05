@@ -1,0 +1,106 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+  ],
+  "id": "tessera-global-rgb",
+  "title": "Tessera global RGB visualization mosaic",
+  "description": "A true-colour RGBA visualization mosaic derived from the Tessera geospatial embeddings (geoemb convention), global, EPSG:4326, 0.0001 deg (~10 m). Zarr V3, zarr-conventions multiscales v0.1, 10 levels (path \"0\" finest 1,800,000 x 3,600,000 .. \"9\" coarsest 3,000 x 7,827 -- actually shape[0] x shape[1]; see cube:dimensions), blosc/zstd with bitshuffle. Each level group holds an array `rgb` with shape [lat, lon, band(4)] uint8 (RGBA) plus a 4-element `band` coordinate -- **the band axis is last**, not leading as in most of the other fixtures in this catalog; a reader that assumes band-first will misread the array. The store is sparse near the poles (requests there 404; coverage follows the Tessera embeddings footprint, not a filled global grid).\n\nLicense for this GeoTessera-derived product is not published on the source.coop listing at the time of writing; declared \"proprietary\" with a via link.\n\nExpected browser outcome: draws (RGBA, no render block needed -- the asset is already 3/4-band uint8 colour).",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180,
+          -90,
+          180,
+          90
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://data.source.coop/tessera/tessera/zarr/v1/zarr.json",
+      "type": "application/json",
+      "title": "Source store root zarr.json"
+    }
+  ],
+  "cube:dimensions": {
+    "lat": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -90,
+        90
+      ],
+      "reference_system": 4326
+    },
+    "lon": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -180,
+        180
+      ],
+      "reference_system": 4326
+    },
+    "band": {
+      "type": "other",
+      "size": 4,
+      "description": "RGBA, trailing axis: array shape is [lat, lon, band], not [band, lat, lon]."
+    }
+  },
+  "cube:variables": {
+    "rgb": {
+      "dimensions": [
+        "lat",
+        "lon",
+        "band"
+      ],
+      "type": "data",
+      "chunks": [
+        512,
+        512,
+        4
+      ],
+      "dtype": "uint8",
+      "description": "Level 0 (finest); shape [1800000, 3600000, 4]. Band is the LAST axis."
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://data.source.coop/tessera/tessera/zarr/v1/global_rgb/",
+      "type": "application/vnd.zarr; version=3",
+      "title": "Tessera global RGB mosaic (Zarr V3, EPSG:4326, ~10 m)",
+      "description": "10-level multiscales pyramid, group-per-level, trailing band axis, blosc-zstd-bitshuffle codec. Sparse coverage: tiles near the poles return 404.",
+      "roles": [
+        "data",
+        "cloud-optimized",
+        "visual"
+      ]
+    }
+  }
+}
