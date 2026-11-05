@@ -48,6 +48,21 @@ describe('zarrSamples', () => {
     const chunk = { data: new Float32Array(20), shape: [5, 4] }
     expect(zarrSamples(chunk)).toMatchObject({ w: 4, h: 5 })
   })
+
+  // `zarr.get` honours a v2 `order: "F"` array and a v3 transpose codec, so the
+  // result is not always row-major. The compositing code walks the trailing
+  // axes as rows of pixels, so a column-major chunk would draw transposed.
+  it('rejects a chunk whose spatial axes are not row-major', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(zarrSamples({ data: new Float32Array(6), shape: [2, 3], stride: [1, 2] })).toBeNull()
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('accepts a row-major chunk that reports its stride', () => {
+    const chunk = { data: new Uint8Array(12), shape: [3, 2, 2], stride: [4, 2, 1] }
+    expect(zarrSamples(chunk)).toMatchObject({ planeStride: 4, planes: 3 })
+  })
 })
 
 describe('makeZarrRenderTileLoader, one band', () => {
@@ -116,6 +131,33 @@ describe('makeZarrRenderTileLoader, one band', () => {
     expect(result).toBeNull()
   })
 
+  // A plane the chunk does not carry indexes past the buffer, and `undefined`
+  // written through the ramp draws an opaque garbage image.
+  it('draws nothing for a bidx the chunk has no plane for', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const chunk = { data: Float32Array.from([1, 2, 3, 4]), shape: [2, 1, 2] }
+    const banded = { ...render, bidx: [5] }
+    const { getTileData } = makeZarrRenderTileLoader(banded, { zarr: fakeZarr(chunk) })
+    const result = await getTileData({}, { sliceSpec: [null, null, null], width: 2, height: 1 })
+    expect(result).toBeNull()
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('builds the colour table once per layer, not once per chunk', async () => {
+    let reads = 0
+    const counted = { rescale: [[0, 100]] }
+    Object.defineProperty(counted, 'colormap', { get() { reads++; return undefined } })
+    const chunk = { data: Float32Array.from([1]), shape: [1, 1] }
+    const { getTileData } = makeZarrRenderTileLoader(counted, { zarr: fakeZarr(chunk) })
+    expect(reads).toBeGreaterThan(0)
+    const atConstruction = reads
+    const opts = { sliceSpec: [0, null, null], width: 1, height: 1 }
+    await getTileData({}, opts)
+    await getTileData({}, opts)
+    expect(reads).toBe(atConstruction)
+  })
+
   it('returns null for a chunk it cannot shape', async () => {
     const { getTileData } = makeZarrRenderTileLoader(render, {
       zarr: fakeZarr({ data: Float32Array.from([1]), shape: [1] }),
@@ -160,6 +202,18 @@ describe('makeZarrRenderTileLoader, true colour', () => {
     const chunk = { data: Uint8Array.from([1, 2, 3, 4]), shape: [2, 2] }
     const { getTileData } = makeZarrRenderTileLoader(render, { zarr: fakeZarr(chunk) })
     expect(await getTileData({}, { sliceSpec: [0, null, null], width: 2, height: 2 })).toBeNull()
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  // A plane the chunk does not carry indexes past the buffer, and `undefined`
+  // is written opaque, so the tile draws a garbage image.
+  it('draws nothing when the chunk carries fewer planes than bidx names', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const chunk = { data: Uint8Array.from([10, 20]), shape: [2, 1, 1] }
+    const { getTileData } = makeZarrRenderTileLoader(render, { zarr: fakeZarr(chunk) })
+    const result = await getTileData({}, { sliceSpec: [null, null, null], width: 1, height: 1 })
+    expect(result).toBeNull()
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
   })
