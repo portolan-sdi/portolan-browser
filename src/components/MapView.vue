@@ -202,6 +202,11 @@ export default {
         if (!this.$refs.map) {return;}
 
         await this.createMap(this.$refs.map, this.stac, this.onfocusOnly);
+        // Defence in depth. createMap waits for the first style to load, and
+        // maplibre's Map.remove() never fires that event, so an unmount inside
+        // that window leaves the await pending and nothing here runs at all.
+        // This guard only matters if that promise ever settles after teardown.
+        if (!this.map) {return;}
         this._addExpandControl();
         // A style switches ramps and layers by zoom, so the legend describes
         // whichever of them the map draws now. Bound per map: showStacLayer
@@ -218,26 +223,32 @@ export default {
     },
 
     async addStacLayer() {
-      this.stacLayer = markRaw(new StacMapLayer(this.map, {
+      // Held in a local: an asset load takes as long as the download, and
+      // beforeUnmount or another showStacLayer can replace or null
+      // `this.stacLayer` while it runs. Every step past an await below first
+      // checks that this layer is still the current one, so a user who leaves
+      // the page mid-load gets no work on a torn-down layer and no throw.
+      const layer = markRaw(new StacMapLayer(this.map, {
         ...this.stacLayerOptions,
         onVectorNotice: (notice) => { this.vectorNotice = notice; },
       }));
+      this.stacLayer = layer;
 
-      this.stacLayer.setStac(this.stac);
+      layer.setStac(this.stac);
 
       if (this.children) {
-        this.stacLayer.setChildren(this.children);
+        layer.setChildren(this.children);
       }
 
       if (this.hideFootprint) {
-        this.stacLayer.setFootprintVisible(false);
+        layer.setFootprintVisible(false);
       }
 
       // Fit before awaiting the asset load: fit() only reads the STAC
       // bounding box, which setStac made available synchronously above, so
       // the map zooms to the footprint immediately instead of sitting at
       // world view for the whole download (e.g. a multi-MB GeoParquet).
-      this.stacLayer.fit();
+      layer.fit();
 
       // A GeoParquet asset rendered directly is read with its attribute
       // columns pruned, and the set to keep is whatever the styles reference;
@@ -247,18 +258,31 @@ export default {
       // concurrently with the assets: only the parquet path waits, so a
       // tile- or COG-backed collection never pays for a style fetch it will
       // not consult, and a slow style host delays styling, never data.
-      this.stacLayer.expectStyleFields();
+      layer.expectStyleFields();
       const stylesReady = this.loadStyles();
 
       if (this.assets && this.assets.length > 0) {
-        await this.stacLayer.setAssets(this.assets);
+        await layer.setAssets(this.assets);
       } else {
-        await this.stacLayer.autoLoadVisualAssets(this.stac);
+        await layer.autoLoadVisualAssets(this.stac);
+      }
+
+      // The layer is gone or superseded: its state says nothing about what the
+      // component shows now, and the map it drew into may be removed already.
+      // The identity test holds only because the layer is markRaw: `stacLayer`
+      // is reactive data, so without it Vue would hand back a proxy and every
+      // comparison below would be true, which would disable this method
+      // outright. loadStyles leans on the same invariant.
+      if (this.stacLayer !== layer) {
+        // Nothing awaits the style load now. Keep it from ever surfacing as an
+        // unhandled rejection if a later refactor lets loadStyles throw.
+        stylesReady.catch(() => {});
+        return;
       }
 
       // isEmpty() reads asset-backed state (_cogList, _overlayLayerIds), so
       // it must wait for the load above.
-      this.empty = this.stacLayer.isEmpty();
+      this.empty = layer.isEmpty();
 
       this.$emit('changed', this.getShownData());
 
@@ -267,6 +291,7 @@ export default {
       }
 
       await stylesReady;
+      if (this.stacLayer !== layer) {return;}
       // The picker is live for the whole asset load, so by now the user may
       // already have chosen a style. Auto-applying the default here regardless
       // would snap their selection back and repaint the map — apply it only if
