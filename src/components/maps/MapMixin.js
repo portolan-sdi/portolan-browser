@@ -60,6 +60,10 @@ export default {
         }
       });
 
+      // The component can unmount while the first style loads, which removes
+      // the map and nulls it out. Do not load a basemap into a dead map.
+      if (!this.map) {return;}
+
       if (this.basemaps.length > 0) {
         this._loadBasemapAsync(this.basemaps[0]);
       }

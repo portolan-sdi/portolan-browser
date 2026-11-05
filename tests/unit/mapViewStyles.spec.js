@@ -269,6 +269,55 @@ describe('MapView style orchestration', () => {
     })
   })
 
+  describe('leaving the entity while its assets load', () => {
+    // An asset load takes as long as the download. A user who clicks into a
+    // collection and goes straight back unmounts the component inside that
+    // window, which nulls the layer and the map out. Everything past the await
+    // has to notice, or it reads a layer that is not there (issue #73).
+    const parquetCollection = () => collection({
+      'style-main': styleAsset({ href: './styles/main.json' }),
+      data: { href: './d.parquet', roles: ['data'] },
+    })
+
+    it('stops after the asset load when the component was torn down', async () => {
+      const view = createView({
+        stac: parquetCollection(),
+        assets: [{ href: 'https://example.com/d.parquet' }],
+      })
+
+      const pending = view.addStacLayer()
+      // beforeUnmount, while the parquet read is still in flight.
+      view.stacLayer = null
+      view.map = null
+
+      await expect(pending).resolves.toBeUndefined()
+      expect(view.emitted.map(e => e[0])).not.toContain('changed')
+      expect(view.empty).toBe(false)
+    })
+
+    it('does not touch a layer that replaced the one it loaded', async () => {
+      const view = createView({
+        stac: parquetCollection(),
+        assets: [{ href: 'https://example.com/d.parquet' }],
+      })
+
+      const pending = view.addStacLayer()
+      const first = layerCalls.instances[0]
+      // A second showStacLayer, for the entity the user moved to.
+      const second = new first.constructor({}, {})
+      view.stacLayer = second
+
+      await pending
+
+      // `changed` carries the data the component shows. The abandoned layer's
+      // assets are not it, and the new layer reports for itself.
+      expect(view.emitted.map(e => e[0])).not.toContain('changed')
+      expect(second.calls).toEqual([])
+      expect(first.applied).toEqual([])
+      expect(view.styleApplied).toBe(false)
+    })
+  })
+
   describe('styles declared on an item', () => {
     // A partitioned collection tunes each partition's style to that
     // partition's own data, so the style that draws year=2000 is an asset of

@@ -51,6 +51,9 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ### Fixed
 
+- Leaving a collection while its map still loads no longer throws `Cannot read properties
+  of null (reading 'isEmpty')`. The map now checks, after every await, that the layer it
+  loaded is still the one on screen, so a torn-down or superseded layer is left alone
 - The data preview and the map skip a Parquet asset whose href is a glob, such as the
   `./country=*/*.parquet` asset that portolan-cli adds to a partitioned collection. The
   preview loads the next Parquet asset instead of failing with `fetch head failed 404`
