@@ -1,2 +1,0 @@
-const s=["application/vnd.apache.parquet","application/x-parquet"],a=1e4,E=1e4,_=52428800,c="tooLarge",O="tooBig",T="error",i="reprojection";function o(t){return/\*|%2a/i.test(t||"")}function R(t){const n=t.type||"",e=t.getAbsoluteUrl?.()||t.href||"";return o(t.href)||o(e)?!1:s.some(r=>n.includes(r))||e.endsWith(".parquet")}export{a as M,T as V,E as a,c as b,_ as c,O as d,i as e,R as i};
-//# sourceMappingURL=parquetShared-DKrhMMlT.js.map
