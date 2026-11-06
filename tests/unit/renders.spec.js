@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   makeRenderTileLoader, resolveRenders, renderFromClassification,
   classificationClasses, discreteLegend, assetBands, synthesizeRgbRender, canInheritRender,
+  withAssetEmptiness,
 } from '../../src/utils/renders.js'
 
 // Build a fake deck.gl-geotiff COGLayer `image` whose fetchTile returns one
@@ -491,6 +492,58 @@ describe('RGB renders', () => {
     expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
   })
 
+  // `bidx` is optional in the render extension. A render that gives one
+  // rescale pair per band states how many bands it composites, so three pairs
+  // name a true-colour composite as plainly as `bidx` does. The italy-aerial
+  // catalog declares exactly this, and it drew as a viridis ramp of the red
+  // band before the rescale length was read.
+  it('composites three bands for three rescale pairs without bidx', async () => {
+    const render = { rescale: [[0, 100], [0, 100], [0, 100]] }
+    const res = await call(render, rgbTile([100, 50, 0, 900]))
+    expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
+  })
+
+  // The extension's own multi-asset composite names one single-band asset per
+  // channel. Each of those assets matches the render on its own, so the three
+  // pairs describe the three assets, not three bands of one file. Reading them
+  // as bands 1-3 blanked the layer: a one-band tile carries no band 2.
+  it('ramps a single-band asset of a multi-asset render instead of compositing', async () => {
+    const render = { assets: ['B4', 'B3', 'B2'], rescale: [[0, 100], [0, 100], [0, 100]] }
+    const res = await call(render, fakeImage(new Uint16Array([100]), 1, 1))
+    expect(res).not.toBeNull()
+    expect(pixel(res, 0)).toEqual([253, 231, 37, 255])  // viridis at t=1
+  })
+
+  // The same render, written with an explicit `bidx`. The bidx branch answered
+  // before the multi-asset check was reached, so these three single-band
+  // assets each tried to composite bands 1-3 of a one-band tile and drew
+  // nothing at all.
+  it('ramps a single-band asset of a multi-asset render that states bidx', async () => {
+    const render = { assets: ['B4', 'B3', 'B2'], bidx: [1, 2, 3], rescale: [[0, 100]] }
+    const res = await call(render, fakeImage(new Uint16Array([100]), 1, 1))
+    expect(res).not.toBeNull()
+    expect(pixel(res, 0)).toEqual([253, 231, 37, 255])  // viridis at t=1
+  })
+
+  it('still composites for a render that names a single asset', async () => {
+    const render = { assets: ['visual'], rescale: [[0, 100], [0, 100], [0, 100]] }
+    const res = await call(render, rgbTile([100, 50, 0, 900]))
+    expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
+  })
+
+  // A flat [min, max, ...] rescale is one titiler-style range, not three bands.
+  it('does not read three loose numbers as three bands', async () => {
+    const res = await call({ rescale: [0, 255, 100] }, rgbTile([100, 50, 0, 900]))
+    expect(pixel(res, 0)).toEqual([253, 231, 37, 255])  // band 1 through the ramp
+  })
+
+  it('keeps the colormap path when a colormap names three rescale pairs', async () => {
+    const render = { colormap_name: 'viridis', rescale: [[0, 100], [0, 100], [0, 100]] }
+    const res = await call(render, rgbTile([100, 50, 0, 900]))
+    // A viridis ramp of band 1, not a composite of bands 1-3.
+    expect(pixel(res, 0)).not.toEqual([255, 128, 0, 255])
+  })
+
   it('reads the bands bidx names, in the order it names them', async () => {
     // Band 4 (NIR) first makes a false-colour composite, which is a legitimate
     // thing for a publisher to ask for.
@@ -517,6 +570,41 @@ describe('RGB renders', () => {
     const render = { bidx: [1, 2, 3] }
     const res = await call(render, rgbTile([255, 128, 0, 0]))
     expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
+  })
+
+  // A coverage mask states which pixels the data covers. A nodata value only
+  // guesses it from the colour, so it punches out a black roof with the sea.
+  it('takes alpha from the coverage band the render names', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100]], alphaBand: 3 }
+    const res = await call(render, rgbTile([100, 50, 0, 0], [100, 50, 0, 255]))
+    expect(pixel(res, 0)[3]).toBe(0)
+    expect(pixel(res, 1)).toEqual([255, 128, 0, 255])
+  })
+
+  it('keeps a partial value from the coverage band', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100]], alphaBand: 3 }
+    const res = await call(render, rgbTile([100, 50, 0, 128]))
+    expect(pixel(res, 0)).toEqual([255, 128, 0, 128])
+  })
+
+  // A coverage band the tile does not carry would read the next pixel's red
+  // channel as alpha, which perforates the scene at random.
+  it('ignores a coverage band the tile does not carry', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100]], alphaBand: 9 }
+    const res = await call(render, rgbTile([100, 50, 0, 0]))
+    expect(pixel(res, 0)).toEqual([255, 128, 0, 255])
+  })
+
+  // A float coverage band holds a fraction from 0 to 1, not 0 to 255. Written
+  // straight into the alpha channel it draws alpha 1 of 255 — an invisible
+  // layer. The sample array's own type says which it is, which is a fact about
+  // the data rather than a claim the metadata may have omitted.
+  it('scales a float coverage band from a fraction to the alpha channel', async () => {
+    const render = { bidx: [1, 2, 3], rescale: [[0, 100]], alphaBand: 3 }
+    const res = await call(render, fakeImage(
+      new Float32Array([100, 50, 0, 0.5, 100, 50, 0, 1]), 2, 1))
+    expect(pixel(res, 0)[3]).toBe(128)
+    expect(pixel(res, 1)[3]).toBe(255)
   })
 
   it('keeps the colormap path for a single-band bidx', async () => {
@@ -565,6 +653,46 @@ describe('RGB renders', () => {
   })
 })
 
+// A masked single-band product is a real shape: one measurement band and one
+// coverage band. The mask states which pixels the data covers, so the colormap
+// path has to honour it too. Ignoring it drew the ramp's low end over every
+// uncovered pixel, opaque.
+describe('a coverage band on the colormap path', () => {
+  const masked = { colormap_name: 'viridis', rescale: [[0, 100]], bidx: [1], alphaBand: 1 }
+
+  it('takes alpha from the coverage band the render names', async () => {
+    // 2 px of 2 interleaved bands: covered 0, then covered 255.
+    const res = await call(masked, fakeImage(new Uint8Array([50, 0, 50, 255]), 2, 1))
+    expect(pixel(res, 0)[3]).toBe(0)
+    expect(pixel(res, 1)[3]).toBe(255)
+  })
+
+  it('keeps a partial coverage value', async () => {
+    const res = await call(masked, fakeImage(new Uint8Array([50, 128]), 1, 1))
+    expect(pixel(res, 0)[3]).toBe(128)
+  })
+
+  it('scales a float coverage band on the colormap path too', async () => {
+    const res = await call(masked, fakeImage(new Float32Array([50, 0.5]), 1, 1))
+    expect(pixel(res, 0)[3]).toBe(128)
+  })
+
+  // A coverage band the tile does not carry would read the next pixel's value
+  // as alpha, which perforates the layer at random.
+  it('ignores a coverage band the tile does not carry', async () => {
+    const render = { ...masked, alphaBand: 9 }
+    const res = await call(render, fakeImage(new Uint8Array([50]), 1, 1))
+    expect(pixel(res, 0)[3]).toBe(255)
+  })
+
+  it('keeps a transparent colormap entry transparent under full coverage', async () => {
+    const render = { colormap: { 1: [255, 0, 0, 0], 2: [0, 0, 255, 255] }, alphaBand: 1 }
+    const res = await call(render, fakeImage(new Uint8Array([1, 255, 2, 255]), 2, 1))
+    expect(pixel(res, 0)[3]).toBe(0)
+    expect(pixel(res, 1)).toEqual([0, 0, 255, 255])
+  })
+})
+
 describe('tile loader plumbing', () => {
   it('hands deck\'s decoder pool to fetchTile', async () => {
     const seen = []
@@ -594,6 +722,35 @@ describe('tile loader plumbing', () => {
     const res = await call(render, fakeImage(new Float32Array([0.5]), 1, 1))
     expect(res.colorImage.data[3]).toBe(255)
   })
+
+  // The colour table and the value sampler describe the layer, not the tile.
+  // Building them per tile paid for the whole table on every chunk.
+  it('builds the colour table once per layer, not once per tile', async () => {
+    let reads = 0
+    const render = { rescale: [[0, 1]], bidx: [1] }
+    Object.defineProperty(render, 'colormap', { get() { reads++; return undefined } })
+    const { getTileData } = makeRenderTileLoader(render)
+    expect(reads).toBeGreaterThan(0)
+    const atConstruction = reads
+    const opts = { x: 0, y: 0, signal: undefined }
+    await getTileData(fakeImage(new Float32Array([0.5]), 1, 1), opts)
+    await getTileData(fakeImage(new Float32Array([0.5]), 1, 1), opts)
+    expect(reads).toBe(atConstruction)
+  })
+
+  // The render extension's unreleased name-based selectors write band names in
+  // `bidx`. Index arithmetic turns a name into NaN, which read past the buffer
+  // and drew band 1's low end as if the render had asked for it.
+  it('ignores a bidx that names bands instead of indexing them', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const bidx of [['red', 'green', 'blue'], [['red', 'green', 'blue']], ['red']]) {
+      const render = { colormap_name: 'viridis', rescale: [[0, 1]], bidx }
+      const res = await call(render, fakeImage(new Float32Array([1]), 1, 1))
+      expect(pixel(res, 0)).toEqual([253, 231, 37, 255])  // band 1 at t=1
+    }
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
 })
 
 describe('assetBands', () => {
@@ -621,6 +778,91 @@ describe('synthesizeRgbRender', () => {
     expect(synthesizeRgbRender({ bands: [band(0, 1), band(0, 1), {}] })).toBeNull()
     expect(synthesizeRgbRender({ bands: [band(0, 1), band(0, 1), band(5, 5)] })).toBeNull()
     expect(synthesizeRgbRender({})).toBeNull()
+  })
+})
+
+describe('withAssetEmptiness', () => {
+  const rgba = [
+    { name: 'red', nodata: 0 },
+    { name: 'green', nodata: 0 },
+    { name: 'blue', nodata: 0 },
+    { name: 'alpha', data_type: 'uint8' },
+  ]
+
+  it('names the alpha band of an asset that carries one', () => {
+    const render = { rescale: [[0, 255], [0, 255], [0, 255]] }
+    expect(withAssetEmptiness(render, { bands: rgba })).toEqual({ ...render, alphaBand: 3 })
+  })
+
+  // The italy-aerial mosaic declares a render with no `nodata` and an asset
+  // whose bands say 0 means "no imagery". The render says nothing about
+  // coverage, so it must not erase what the asset says. Before this the
+  // mosaic drew opaque over the sea.
+  it('keeps the band nodata of a render that declares none', () => {
+    const render = { rescale: [[0, 255]] }
+    const bands = rgba.slice(0, 3)
+    expect(withAssetEmptiness(render, { bands })).toEqual({ ...render, nodata: [0] })
+  })
+
+  it('leaves the nodata a render declares for itself', () => {
+    const render = { rescale: [[0, 255]], nodata: 255 }
+    expect(withAssetEmptiness(render, { bands: rgba.slice(0, 3) })).toEqual(render)
+  })
+
+  it('reads the bands of an asset that uses the raster extension', () => {
+    const render = { rescale: [[0, 255]] }
+    const got = withAssetEmptiness(render, { 'raster:bands': rgba })
+    expect(got.alphaBand).toBe(3)
+  })
+
+  it('leaves a render alone when the asset says nothing about emptiness', () => {
+    const render = { rescale: [[0, 255]] }
+    expect(withAssetEmptiness(render, { bands: [{ name: 'red' }] })).toEqual(render)
+    expect(withAssetEmptiness(render, {})).toEqual(render)
+  })
+
+  // An alpha band of a wider type does not hold 0-255, so writing it straight
+  // into the alpha channel would clamp every covered pixel to opaque or make
+  // a partial value meaningless.
+  it('ignores an alpha band that is not 8-bit', () => {
+    const bands = [...rgba.slice(0, 3), { name: 'alpha', data_type: 'uint16' }]
+    expect(withAssetEmptiness({ rescale: [[0, 255]] }, { bands }).alphaBand).toBeUndefined()
+  })
+
+  // `data_type` is optional in the raster extension, so an ordinary RGBA COG
+  // often omits it. Requiring it lost the alpha band of every such file, and a
+  // collar composite then drew opaque black where the main picture was
+  // transparent. Whether the samples are a 0-255 mask or a 0..1 coverage
+  // fraction is settled at write time, from the sample array's own type.
+  it('names an alpha band that declares no data type', () => {
+    const bands = [...rgba.slice(0, 3), { name: 'alpha' }]
+    const got = withAssetEmptiness({ rescale: [[0, 255]] }, { bands })
+    expect(got.alphaBand).toBe(3)
+  })
+
+  // A render reads the bands its `bidx` names. Bands 1-3's sentinels belong to
+  // the picture, not to a derived count band, where 0 is real data: inheriting
+  // them punched holes in the layer.
+  it('harvests nodata from the bands the render reads', () => {
+    const bands = [...rgba.slice(0, 3), { name: 'count', nodata: -1 }]
+    expect(withAssetEmptiness({ bidx: [4], rescale: [[0, 50]] }, { bands }).nodata)
+      .toEqual([-1])
+  })
+
+  it('leaves a render alone when the band it reads declares no nodata', () => {
+    const bands = [{ name: 'red', nodata: 0 }, { name: 'count' }]
+    const render = { bidx: [2], rescale: [[0, 50]] }
+    expect(withAssetEmptiness(render, { bands })).toEqual(render)
+  })
+
+  it('reads the first three bands for a bidx it cannot resolve', () => {
+    const render = { bidx: ['count'], rescale: [[0, 50]] }
+    const got = withAssetEmptiness(render, { bands: rgba.slice(0, 3) })
+    expect(got.nodata).toEqual([0])
+  })
+
+  it('passes a null render through', () => {
+    expect(withAssetEmptiness(null, { bands: rgba })).toBeNull()
   })
 })
 

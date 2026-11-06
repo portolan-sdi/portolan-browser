@@ -1,0 +1,111 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
+  ],
+  "id": "s2-planting-harvest-composites-zarr-zarr-test",
+  "title": "FTW global composites, with a render declared",
+  "description": "The FTW Sentinel-2 planting/harvest median composites as a single global **Zarr mosaic** (Zarr V3, EPSG:4326, ~10 m), with a `time` dimension covering 2024 and 2025. **This is the same data as the per-tile COG collections** ([COGs 2024](https://source.coop/ftw/global-data/features/2024), [COGs 2025](https://source.coop/ftw/global-data/features/2025)) — choose COGs for tile/window access, or this Zarr for analysis-ready, chunked array access stackable with the [prediction Zarr](https://source.coop/ftw/global-data/predictions/zarr). Bands B02/B03/B04/B08 + N_VALID_PIXELS; the model-input features for the [field-boundary predictions](https://source.coop/ftw/global-data/predictions). Note: a GeoZarr that does not yet implement multiscales, so it is not yet directly web-tileable (in progress).\n\nLocal test collection built from https://data.source.coop/ftw/global-data/features/zarr/collection.json by tests/fixtures/catalogs/zarr/build.mjs. Expected browser outcome: draws in true colour from zoom 11.",
+  "license": "CC-BY-4.0",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180,
+          -57.830146,
+          180,
+          83.748345
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2024-01-01T00:00:00Z",
+          "2025-12-31T23:59:59Z"
+        ]
+      ]
+    }
+  },
+  "cube:dimensions": {
+    "time": {
+      "type": "temporal",
+      "extent": [
+        "2024-01-01T00:00:00Z",
+        "2025-12-31T23:59:59Z"
+      ]
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -180,
+        180
+      ],
+      "reference_system": 4326
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -57.830146,
+        83.748345
+      ],
+      "reference_system": 4326
+    }
+  },
+  "cube:variables": {},
+  "renders": {
+    "true-colour": {
+      "title": "Sentinel-2 true colour, harvest composite",
+      "assets": [
+        "data"
+      ],
+      "bidx": [
+        3,
+        2,
+        1
+      ],
+      "rescale": [
+        [
+          0,
+          3000
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Zarr rendering test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://data.source.coop/ftw/global-data/features/zarr/collection.json",
+      "type": "application/json",
+      "title": "Source collection"
+    }
+  ],
+  "assets": {
+    "data": {
+      "href": "https://data.source.coop/ftw/global-data/features/zarr/alpha/global.zarr",
+      "type": "application/vnd.zarr; version=3",
+      "title": "Global Sentinel-2 composite mosaic (Zarr V3, EPSG:4326, ~10 m)",
+      "description": "Dims (time, band, y, x). Open with xarray: xr.open_zarr(href).pipe(rasterix.assign_index).",
+      "roles": [
+        "data",
+        "cloud-optimized"
+      ]
+    }
+  }
+}

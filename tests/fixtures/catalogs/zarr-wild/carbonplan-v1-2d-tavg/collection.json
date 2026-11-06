@@ -1,0 +1,122 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
+  ],
+  "id": "carbonplan-v1-2d-tavg",
+  "title": "CarbonPlan 2D tavg demo, v1 prefix (a pyramid that declares one level)",
+  "description": "The oldest of the CarbonPlan ndpyramid demos, `v1/demo/2d/tavg`, kept here for the thing its metadata does that none of the others do: six level groups exist on the bucket (`0`..`5`), but the root `.zattrs` `multiscales` names **one dataset, `{\"path\": \"5\"}`** -- the finest. A reader that trusts the declaration sees a single-level store at 4096x4096 and nothing coarser to fall back on, which is the right answer: a level nobody declared is a level nobody promised. Confirmed from `.zattrs` and from `5/tavg/.zarray` ([4096, 4096], chunk 128x128, float32, zlib). `5/spatial_ref` and `5/x` both return 200.\n\nLicense is unclear for this GCS demo bucket; linked via the CarbonPlan maps project.\n\nExpected browser outcome: draws (viridis ramp) from zoom level 3. One declared level of 32 chunks across the world is past the per-view request budget at a world view, so the browser shows the no-overviews zoom notice until then.",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -179.9,
+          -85.06,
+          179.9,
+          85.06
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://storage.googleapis.com/carbonplan-maps/v1/demo/2d/tavg/.zattrs",
+      "type": "application/json",
+      "title": "Source .zattrs (declares one level)"
+    }
+  ],
+  "cube:dimensions": {
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -20026376.39,
+        20026376.39
+      ],
+      "reference_system": 3857
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -20048966.1,
+        20048966.1
+      ],
+      "reference_system": 3857
+    }
+  },
+  "cube:variables": {
+    "tavg": {
+      "dimensions": [
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        128,
+        128
+      ],
+      "dtype": "float32",
+      "nodata": 9.969209968386869e+36,
+      "long_name": "Mean monthly temperature",
+      "description": "The one declared level, path \"5\": [4096, 4096], chunk 128x128.",
+      "statistics": {
+        "minimum": -30,
+        "maximum": 30
+      }
+    }
+  },
+  "renders": {
+    "tavg": {
+      "title": "Mean monthly temperature (tavg), viridis",
+      "assets": [
+        "data"
+      ],
+      "bidx": [
+        1
+      ],
+      "rescale": [
+        [
+          -30,
+          30
+        ]
+      ],
+      "colormap_name": "viridis"
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://storage.googleapis.com/carbonplan-maps/v1/demo/2d/tavg/",
+      "type": "application/vnd.zarr",
+      "title": "CarbonPlan 2D demo tavg, v1 prefix (Zarr V2, EPSG:3857)",
+      "description": "ndpyramid multiscales declaring one dataset, path \"5\", although levels 0-4 also exist on the bucket.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

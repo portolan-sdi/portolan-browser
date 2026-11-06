@@ -5,6 +5,10 @@ Portolan Browser decodes Cloud-Optimized GeoTIFF assets in the browser through
 file and the map, so the colour of every pixel is decided from the STAC metadata alone. This page
 records where that colour comes from.
 
+The same colouring rules apply to a Zarr store, which the browser draws through
+[deck.gl-zarr](https://developmentseed.org/deck.gl-raster/api/deck-gl-zarr/). See
+[Zarr on the map](./zarr.md) for what a Zarr store needs beyond its colours.
+
 ## Table of contents <!-- omit in toc -->
 
 - [Precedence](#precedence)

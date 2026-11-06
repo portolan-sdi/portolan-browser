@@ -1,0 +1,138 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
+  ],
+  "id": "carbonplan-4d-climate",
+  "title": "CarbonPlan 4D climate demo (tavg/prec monthly climatology)",
+  "description": "CarbonPlan ndpyramid demo: a Zarr V2, consolidated, carbonplan/ndpyramid \"multiscales\" (reduce-type) pyramid of 6 levels (path \"0\" coarsest 128x128 .. \"5\" finest 4096x4096), each level a `<level>/climate` array with dims [band, month, y, x] in EPSG:3857 (WGS 84 / Pseudo-Mercator), zlib-compressed float32, fill value 9.969209968386869e+36. The `band` coordinate is a 2-element string array; decoding the level-0 chunk confirms the order is `[\"tavg\", \"prec\"]` (band 0 = mean monthly temperature, band 1 = monthly precipitation) -- this is a demo/example dataset with no documented units, so the render below assumes tavg is already in degrees Celsius, the common CarbonPlan demo convention. License is unclear for this GCS demo bucket; linked via the CarbonPlan maps project.\n\nCORRECTION (browser run, 2026-11): every level is chunked `[2, 12, n, n]`, so one chunk holds all 12 months. The map draws one month, so a tile read fetches 12 times the data it draws -- past the browser's amplification limit of 8. The store is chunked for a monthly animation, not for a map.\n\nExpected browser outcome: refused by the chunk-amplification guard (12x on the month axis), with the chunk-shape notice.",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -179.9,
+          -85.06,
+          179.9,
+          85.06
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://storage.googleapis.com/carbonplan-maps/v2/demo/4d/tavg-prec-month/.zattrs",
+      "type": "application/json",
+      "title": "Source .zattrs (ndpyramid multiscales)"
+    }
+  ],
+  "cube:dimensions": {
+    "band": {
+      "type": "other",
+      "values": [
+        "tavg",
+        "prec"
+      ],
+      "description": "band 0 = tavg (mean monthly temperature), band 1 = prec (monthly precipitation), read from the band coordinate array"
+    },
+    "month": {
+      "type": "other",
+      "extent": [
+        1,
+        12
+      ],
+      "unit": "month of year"
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -20026376.39,
+        20026376.39
+      ],
+      "reference_system": 3857
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -20048966.1,
+        20048966.1
+      ],
+      "reference_system": 3857
+    }
+  },
+  "cube:variables": {
+    "climate": {
+      "dimensions": [
+        "band",
+        "month",
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        2,
+        12,
+        4096,
+        4096
+      ],
+      "description": "Finest level (path \"5\"); chunks equal the full array at each level (one chunk per level, ndpyramid style). Coarser levels 0-4 have shape/chunks [2,12,128*2^n,128*2^n].",
+      "dtype": "float32",
+      "nodata": 9.969209968386869e+36
+    }
+  },
+  "renders": {
+    "tavg": {
+      "title": "Mean monthly temperature (tavg), viridis",
+      "assets": [
+        "data"
+      ],
+      "bidx": [
+        1
+      ],
+      "rescale": [
+        [
+          -30,
+          30
+        ]
+      ],
+      "colormap_name": "viridis"
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://storage.googleapis.com/carbonplan-maps/v2/demo/4d/tavg-prec-month/",
+      "type": "application/vnd.zarr",
+      "title": "CarbonPlan 4D demo climate pyramid (Zarr V2, consolidated, EPSG:3857)",
+      "description": "ndpyramid \"reduce\" multiscales, levels \"0\"..\"5\" (6 levels), each level a single `<level>/climate` array covering the full Web Mercator extent at increasing resolution.",
+      "roles": [
+        "data",
+        "cloud-optimized"
+      ]
+    }
+  }
+}

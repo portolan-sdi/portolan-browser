@@ -7,3 +7,10 @@ allowBuilds:
 # Upstream pins rollup: 4.63.0 breaks tree-shaking (radiantearth/stac-browser#1002)
 overrides:
   rollup: 4.62.5
+  # pnpm resolves these transitive peers of the @developmentseed packages to
+  # 9.3.3, which mixes two deck.gl minors in one layer graph. The app runs
+  # @deck.gl/core 9.4.1, and the raster layers import TileLayer from
+  # geo-layers, so every deck.gl package must sit on the same minor.
+  '@deck.gl/geo-layers': 9.4.1
+  '@deck.gl/mesh-layers': 9.4.1
+  '@deck.gl/extensions': 9.4.1

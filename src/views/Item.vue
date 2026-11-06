@@ -127,6 +127,13 @@ export default defineComponent({
       top: 150px;
     }
 
+    // The notice sits at the top left of the map, which the site header
+    // covers in the hero layout. Push it down by the same offset, or the
+    // reason a layer does not draw never reaches the screen.
+    .map-textcontrol {
+      top: 160px;
+    }
+
     // The hero map is pulled up underneath the site header (z-index 10),
     // which would otherwise cover the map/thumbnails tab pills and block
     // clicks on them. Push the pills below the header, mirroring the

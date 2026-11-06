@@ -1,0 +1,123 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
+  ],
+  "id": "carbonplan-v2-2d-tavg",
+  "title": "CarbonPlan 2D tavg demo, v2 bucket prefix (ndpyramid)",
+  "description": "The `v2/demo/2d/tavg` sibling of carbonplan-2d-tavg: the same CarbonPlan ndpyramid shape under the older bucket prefix. 6 levels (`0` coarsest 128x128 .. `5` finest 4096x4096), each level a group holding `<level>/tavg` [y, x] float32 beside its own `x`, `y` and `spatial_ref` arrays. Chunk is 128x128 at every level, so the coarsest level is one chunk and the finest is 32 chunks across. Level and chunk shapes confirmed from `5/tavg/.zarray` and `0/tavg/.zarray`; CRS confirmed from `0/spatial_ref/.zattrs` (`crs_wkt`, EPSG:3857 with a PROJ4 extension). `multiscales` is the array spelling and carries nothing but a path and `pixels_per_tile` per level -- no transform, no shape, no CRS -- so the only description of the grid is in the levels' own coordinate arrays. CORS confirmed (`access-control-allow-origin: *`).\n\nLicense is unclear for this GCS demo bucket; linked via the CarbonPlan maps project.\n\nExpected browser outcome: draws (viridis ramp), at a world view -- the coarsest level is one chunk.",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -179.9,
+          -85.06,
+          179.9,
+          85.06
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://storage.googleapis.com/carbonplan-maps/v2/demo/2d/tavg/.zattrs",
+      "type": "application/json",
+      "title": "Source .zattrs (ndpyramid multiscales)"
+    }
+  ],
+  "cube:dimensions": {
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -20026376.39,
+        20026376.39
+      ],
+      "reference_system": 3857
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -20048966.1,
+        20048966.1
+      ],
+      "reference_system": 3857
+    }
+  },
+  "cube:variables": {
+    "tavg": {
+      "dimensions": [
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        128,
+        128
+      ],
+      "dtype": "float32",
+      "nodata": 9.969209968386869e+36,
+      "long_name": "Mean monthly temperature",
+      "description": "Finest level (path \"5\") is [4096, 4096]; level n is [128 * 2^n, 128 * 2^n]. Chunk is 128x128 at every level.",
+      "statistics": {
+        "minimum": -30,
+        "maximum": 30
+      }
+    }
+  },
+  "renders": {
+    "tavg": {
+      "title": "Mean monthly temperature (tavg), viridis",
+      "assets": [
+        "data"
+      ],
+      "bidx": [
+        1
+      ],
+      "rescale": [
+        [
+          -30,
+          30
+        ]
+      ],
+      "colormap_name": "viridis"
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://storage.googleapis.com/carbonplan-maps/v2/demo/2d/tavg/",
+      "type": "application/vnd.zarr",
+      "title": "CarbonPlan 2D demo tavg pyramid, v2 prefix (Zarr V2, EPSG:3857)",
+      "description": "ndpyramid \"reduce\" multiscales, levels \"0\"..\"5\", each a group holding `tavg`, `x`, `y` and `spatial_ref`.",
+      "roles": [
+        "data",
+        "cloud-optimized"
+      ]
+    }
+  }
+}

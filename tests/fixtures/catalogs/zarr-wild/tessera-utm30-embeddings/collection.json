@@ -1,0 +1,110 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+  ],
+  "id": "tessera-utm30-embeddings",
+  "title": "Tessera UTM zone 30 geospatial embeddings",
+  "description": "Tessera (geoemb convention) 128-band geospatial embeddings for UTM zone 30N, Zarr V3, single level, EPSG:32630, 10 m GSD. `embeddings` is [time(9), band(128), y(1011712), x(69632)], int8, sharded: the shard (\"chunk_grid\" chunk_shape) is [1, 128, 4096, 4096] -- 128 x 4096 x 4096 x 1 byte = 2,147,483,648 bytes (2 GiB) per shard, uncompressed -- considerably larger than this fixture's brief estimated (\"shard 390MB\"); the real on-disk shard is about 5x that estimate. The inner chunk within each shard is [1, 128, 32, 32] (blosc-zstd-bitshuffle).\n\nLicense for this GeoTessera-derived product is not published on the source.coop listing; declared \"proprietary\".\n\nExpected browser outcome: guards must prevent any large fetch -- whether via the amplification guard (the shard holds all 128 bands and a 4096x4096 spatial footprint for one request) or a dedicated shard-size guard, no client should ever pull a 2 GiB shard to render one tile.",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -6,
+          -19.5,
+          0,
+          71.7
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://data.source.coop/tessera/tessera/zarr/v1/zarr.json",
+      "type": "application/json",
+      "title": "Source store root zarr.json"
+    }
+  ],
+  "cube:dimensions": {
+    "time": {
+      "type": "temporal",
+      "size": 9
+    },
+    "band": {
+      "type": "other",
+      "size": 128,
+      "description": "128-band int8 embedding vector per pixel."
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "reference_system": 32630,
+      "size": 1011712
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "reference_system": 32630,
+      "size": 69632
+    }
+  },
+  "cube:variables": {
+    "embeddings": {
+      "dimensions": [
+        "time",
+        "band",
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        1,
+        128,
+        4096,
+        4096
+      ],
+      "shards": [
+        1,
+        128,
+        32,
+        32
+      ],
+      "dtype": "int8",
+      "description": "Shard (outer chunk) is [1,128,4096,4096] = 2 GiB uncompressed per shard, far larger than a single map tile needs."
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://data.source.coop/tessera/tessera/zarr/v1/utm30/embeddings",
+      "type": "application/vnd.zarr; version=3",
+      "title": "Tessera UTM30 embeddings (Zarr V3, sharded, EPSG:32630)",
+      "description": "2 GiB shards -- any guard must refuse before fetching one.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

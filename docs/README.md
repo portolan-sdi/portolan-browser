@@ -12,3 +12,4 @@
 - [Release process](./release.md)
 - [Styling & Theming](./styling.md)
 - [Widgets](./widgets.md)
+- [Zarr on the map](./zarr.md)

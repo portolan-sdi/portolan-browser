@@ -42,6 +42,15 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
   collection's first partition and shows that file, with a note that names the partition.
   The row counts measure the whole collection, from `table:row_count` or from the
   item mirror, and fall back to the partition's own count when neither settles the total
+- A Zarr or Icechunk asset draws on the map. The browser reads the chunks from object
+  storage, reprojects them and colours them from the `renders` the catalog declares. No
+  tile server takes part. A Zarr asset becomes one layer per variable, and the browser
+  opens the store only when the user switches a layer on
+- The map refuses a Zarr store that it cannot draw well, and the notice names the
+  property of the store that stopped it. Five guards read the store metadata before the
+  browser fetches a chunk: the chunk amplification, the request and pixel cost of the
+  view, an unsupported codec, a CRS that proj4 cannot build a transform for, and a
+  missing spatial reference. [docs/zarr.md](docs/zarr.md) states the rules for a publisher
 
 ### Changed
 
@@ -55,6 +64,9 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ### Fixed
 
+- A COG whose west edge lies west of -180, such as a 0.5° grid with its origin at -180.3125,
+  draws at its georeferenced position. Before, the whole raster drew shifted and stretched, and
+  the console reported that the mesh refinement did not converge
 - The map skips a Parquet asset whose href is a glob, such as the `./country=*/*.parquet`
   asset that portolan-cli adds to a partitioned collection. The map downloads one file,
   and a glob names many, so the asset no longer fails with `fetch head failed 404`
