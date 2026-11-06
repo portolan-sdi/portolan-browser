@@ -7,6 +7,7 @@ import {
 } from '../../utils/renders.js';
 import { orderedRenderLayers } from '../../utils/renderOrder.js';
 import { openCog } from '../../utils/cogSource.js';
+import { allowWebMercatorOverflow } from '../../utils/cogProjection.js';
 // Import the @developmentseed/geotiff decode worker via Vite's `?worker` suffix
 // (not a side-effect `import`): the library declares `sideEffects: false`, so a
 // bare re-export gets tree-shaken to an empty worker in production builds. The
@@ -1147,6 +1148,9 @@ export default class StacMapLayer {
       import('@developmentseed/deck.gl-geotiff'),
       import('@developmentseed/geotiff'),
     ]);
+    // COGLayer reads the EPSG:3857 definition when it opens a COG. See
+    // utils/cogProjection for the grids west of -180 that need this.
+    allowWebMercatorOverflow();
     return { MapboxOverlay, COGLayer, DecoderPool, GeoTIFF };
   }
 
