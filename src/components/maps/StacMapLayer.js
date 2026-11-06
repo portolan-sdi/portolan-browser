@@ -13,6 +13,7 @@ import {
   makeZarrLayerProps, zarrDescriptors, ZARR_NOTICE_ERROR, ZARR_NOTICE_ZOOM_IN,
 } from '../../utils/zarrLayers.js';
 import { openCog } from '../../utils/cogSource.js';
+import { allowWebMercatorOverflow } from '../../utils/cogProjection.js';
 // Import the @developmentseed/geotiff decode worker via Vite's `?worker` suffix
 // (not a side-effect `import`): the library declares `sideEffects: false`, so a
 // bare re-export gets tree-shaken to an empty worker in production builds. The
@@ -1264,6 +1265,9 @@ export default class StacMapLayer {
     // has to exist before that, or a geostationary grid fails inside the
     // layer. vite.config.js dedupes proj4, so this is the layer's instance.
     registerGeostationary(proj4);
+    // COGLayer reads the EPSG:3857 definition when it opens a COG. See
+    // utils/cogProjection for the grids west of -180 that need this.
+    allowWebMercatorOverflow();
     return { MapboxOverlay, COGLayer, DecoderPool, GeoTIFF };
   }
 

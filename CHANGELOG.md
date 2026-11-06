@@ -51,6 +51,12 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ### Fixed
 
+- A COG whose west edge lies west of -180, such as a 0.5° grid with its origin at -180.3125,
+  draws at its georeferenced position. Before, the whole raster drew shifted and stretched, and
+  the console reported that the mesh refinement did not converge
+- The data preview and the map skip a Parquet asset whose href is a glob, such as the
+  `./country=*/*.parquet` asset that portolan-cli adds to a partitioned collection. The
+  preview loads the next Parquet asset instead of failing with `fetch head failed 404`
 - A raster layer no longer paints over the map controls: the layer picker, the style
   picker and the map notices stayed clickable but became invisible behind an enabled COG
 - Band statistics are read from `raster:bands` as well as `bands`, so a raster-extension
