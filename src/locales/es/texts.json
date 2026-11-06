@@ -126,6 +126,13 @@
     "installDependencies": "Instala las dependencias:"
   },
   "externalInfo": "Este {type} es proporcionado por una fuente de datos externa.",
+  "externalRecovery": {
+    "cancelled": "Se ha cancelado la redirección. Usa el enlace anterior para abrir el catálogo.",
+    "dataHost": "El servidor {host} ofrece un sitio web, no datos. Los datos de esta ruta están en {dataHost}.",
+    "found": "No se ha podido cargar la URL solicitada, pero se ha encontrado un catálogo aquí:",
+    "options": "No se ha podido cargar la URL solicitada. Se ha encontrado un catálogo en más de una URL. Por favor, elige la que buscabas:",
+    "redirect": "Redirigiendo en {seconds} segundo... | Redirigiendo en {seconds} segundos..."
+  },
   "favorites": {
     "add": "Añadir a favoritos",
     "empty": "Todavía no se ha añadido ningún favorito. Para añadir favoritos, use el botón de 'Favorito' en la página de un catálogo, colección, o artículo.",

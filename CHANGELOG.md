@@ -21,6 +21,10 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ### Added
 
+- An external URL that fails to load now offers a way out. A `source.coop` URL redirects to
+  `data.source.coop`, which serves the data. Otherwise the browser probes `catalog.json` and
+  `collection.json` beside the URL and beside its parent. One hit redirects after a countdown
+  that the user can cancel, and several hits list the choices on the error page
 - A search box on the start page filters the registry list. Every word of the query must appear
   in the catalog title, its registry id, or its URL. The catalog URL field no longer filters the list
 - A categorical COG takes its colours from the `color_hint` values of its own `classification:classes`,

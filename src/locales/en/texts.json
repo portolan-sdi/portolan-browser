@@ -126,6 +126,13 @@
     "installDependencies": "Install dependencies:"
   },
   "externalInfo": "This {type} is provided by an external data source.",
+  "externalRecovery": {
+    "cancelled": "The redirect was cancelled. Use the link above to open the catalog.",
+    "dataHost": "The host {host} serves a website, not data. The data for this path is served by {dataHost}.",
+    "found": "The requested URL could not be loaded, but a catalog was found here:",
+    "options": "The requested URL could not be loaded. A catalog was found at more than one URL. Please pick the one you meant:",
+    "redirect": "Redirecting in {seconds} second... | Redirecting in {seconds} seconds..."
+  },
   "favorites": {
     "add": "Add to favorites",
     "empty": "No favorites have been added yet. To add favorites, use the 'Favorite' button on the page of a catalog, collection, or item.",
