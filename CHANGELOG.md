@@ -64,6 +64,15 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ### Fixed
 
+- The data preview of a wide Parquet file loads. Naming its columns made hyparquet fetch every
+  column chunk on its own, all at once: a 470-column file with 57 row groups sent thousands of
+  parallel range requests for a few hundred bytes each, and a CDN answered part of the burst with
+  503, which the preview reported as a cross-origin or network error. Reads now keep at most 16
+  requests in flight and merge ranges that follow each other in the file (gaps up to 64 KiB,
+  fetches up to 8 MiB): the same 1,000 rows take 20 fetches instead of 8,892
+- The table preview reads up to 1,000 rows, ten pages of the table, instead of 10,000. It reads
+  every column, so on a wide file each row costs far more than on the map, which keeps its
+  10,000-feature cap
 - A COG whose west edge lies west of -180, such as a 0.5° grid with its origin at -180.3125,
   draws at its georeferenced position. Before, the whole raster drew shifted and stretched, and
   the console reported that the mesh refinement did not converge
