@@ -202,10 +202,10 @@ files too, not only on the store itself.
 
 ### Put the spatial axes last, in y then x order
 
-`ZarrLayer` requires the two spatial dimensions to be the last two axes of the
-array, in that order, and nothing in the stack transposes an array. A store
-that names them anywhere else cannot be drawn however it is coloured, and the
-browser refuses it with a notice naming the axes.
+`ZarrLayer` reads the last two axes of the array as y then x. No part of the
+stack transposes an array. A store that puts its spatial dimensions on other
+axes does not draw, whatever colour rule applies. The browser refuses such a
+store, and the notice states the axis order that the renderer needs.
 
 Tessera's global RGB mosaic is the case to know about: its array is
 `[lat, lon, band]`, so the band axis sits where the renderer looks for the x
@@ -220,10 +220,11 @@ what the renderer can index, not about what the reader can decode.
 
 ### Describe the grid with 1-D coordinate arrays, or with a transform
 
-A store that carries no `spatial:transform` is described from its coordinate
-arrays, and that route reads one 1-D array per spatial axis (see
-`geoZarrAttrsFromCoordinates`). Three cell centres settle a regular axis, so it
-costs three small reads per axis rather than the whole axis.
+A store without a `spatial:transform` is described from its coordinate arrays.
+That route reads one 1-D array per spatial axis (see
+`geoZarrAttrsFromCoordinates`). It reads the first, the second and the last
+cell centre of the axis. A regular axis needs no more than those samples, so
+each axis costs three small reads rather than a read of the whole array.
 
 A curvilinear or swath grid writes its coordinates as 2-D arrays instead, one
 value per cell, and no affine describes it. The browser cannot place such a
@@ -244,12 +245,12 @@ The `multiscales` convention lets a level state its own `spatial:transform` and
 `spatial:shape`, and the browser derives the ones a level leaves out from the
 group's transform and the level's scale (see `withMultiscalesLayout`).
 
-An `ndpyramid` store states none of it. Its `multiscales` is the array spelling
-and holds nothing but a path and a `pixels_per_tile` per level; the root group
-carries no transform, no shape and no CRS at all. Each level is a group holding
-its data array beside its own `x`, `y` and `spatial_ref` arrays, CF style — so
-the pyramid and the spatial description are both real and simply live in
-different places. `geoZarrAttrsFromLevelCoordinates` joins them by reading each
+An `ndpyramid` store states none of it. Its `multiscales` uses the array
+spelling, and each level entry gives a path and a `pixels_per_tile`. The root
+group omits the transform, the shape and the CRS. Each level is a group that
+stores its data array beside its own `x`, `y` and `spatial_ref` arrays, in CF
+style. The pyramid and the spatial description are both present in the store.
+They live in different places. `geoZarrAttrsFromLevelCoordinates` joins them by reading each
 level's own coordinates. CarbonPlan's climate pyramids are this shape, and four
 of them are in `tests/fixtures/catalogs/zarr-wild`.
 
@@ -270,14 +271,24 @@ There are two local catalogs.
 above, one per rule.
 
 `tests/fixtures/catalogs/zarr-wild` holds 22 collections over real public
-stores that nobody wrote for a demo: operational weather models, research
-datacubes, satellite archives, visualization mosaics and three Icechunk
-repositories. Every collection's description ends with an "Expected browser
-outcome", and a few of them end with a `CORRECTION` paragraph: what the first
-browser run showed that the metadata research had got wrong. Its collections
-fall in three tiers — stores that must draw, stores that must be held back or
-refused with a named notice and without a large fetch, and stores that must
-fail cleanly.
+stores. No publisher wrote any of them for a demo. The sources are:
+
+- Operational weather models.
+- Research datacubes.
+- Visualization mosaics.
+- Satellite archives.
+- Icechunk repositories.
+
+A collection description in this catalog ends with an "Expected browser
+outcome". Some descriptions also end with a `CORRECTION` paragraph, which
+records where the first browser run disagreed with the metadata research.
+
+The catalog sorts its collections into three tiers:
+
+- A store that the browser must draw.
+- A store that a guard must refuse. The notice must state the reason, and the
+  browser must not fetch the bulk data.
+- A store that must fail cleanly.
 
 Serve either with:
 

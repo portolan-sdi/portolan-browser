@@ -38,6 +38,15 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
   each band by its own `rescale`, instead of ramping the first band through a colormap
 - The layer picker says how many raster assets it could not list, instead of quietly
   showing a shorter list
+- A Zarr or Icechunk asset draws on the map. The browser reads the chunks from object
+  storage, reprojects them and colours them from the `renders` the catalog declares. No
+  tile server takes part. A Zarr asset becomes one layer per variable, and the browser
+  opens the store only when the user switches a layer on
+- The map refuses a Zarr store that it cannot draw well, and the notice names the
+  property of the store that stopped it. Five guards read the store metadata before the
+  browser fetches a chunk: the chunk amplification, the request and pixel cost of the
+  view, an unsupported codec, a CRS that proj4 cannot build a transform for, and a
+  missing spatial reference. [docs/zarr.md](docs/zarr.md) states the rules for a publisher
 
 ### Changed
 
