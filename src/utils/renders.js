@@ -249,6 +249,22 @@ export function assetBands(asset) {
 }
 
 /**
+ * The zero-based band indexes a render's `bidx` names, or null when it names
+ * none this code can resolve.
+ *
+ * `bidx` is a list of 1-based band indexes. The render extension's unreleased
+ * name-based selectors write band names there instead, which no index
+ * arithmetic resolves: `"red" - 1` is NaN, which reads past the buffer and
+ * draws whatever is there. Such a `bidx` is ignored rather than guessed at.
+ */
+function bidxIndexes(render) {
+  const bidx = render?.bidx;
+  if (!Array.isArray(bidx) || bidx.length === 0) {return null;}
+  if (!bidx.every(b => Number.isInteger(b) && b >= 1)) {return null;}
+  return bidx.map(b => b - 1);
+}
+
+/**
  * A true-colour render synthesized from an asset's own band metadata, for an
  * asset no render covers. Three bands of statistics say both "this is a
  * picture" and how to stretch it. Without a render deck.gl's default GPU path
@@ -267,6 +283,65 @@ export function synthesizeRgbRender(asset) {
   return { bidx: [1, 2, 3], rescale, nodata };
 }
 
+// Integer types wider than 8 bits. An alpha band of one of these does not hold
+// 0 to 255, so writing it straight into the channel would clamp every covered
+// pixel to opaque; a float band does hold a scalable fraction, so it is not
+// listed here. See alphaScale.
+const WIDE_ALPHA_TYPES = new Set([
+  'uint16', 'int16', 'uint32', 'int32', 'uint64', 'int64',
+]);
+
+/**
+ * The zero-based index of an asset's alpha band, or null when it has none.
+ *
+ * An alpha band is named `alpha`. A band that declares a wider integer type
+ * does not hold 0 to 255, so writing it straight into an 8-bit alpha channel
+ * would clamp every covered pixel to opaque and make a partial value
+ * meaningless; such a band is not read as a mask and the nodata inference
+ * takes over.
+ *
+ * A band that declares no `data_type` at all is read as a mask. `data_type` is
+ * optional in the raster extension and an ordinary RGBA COG often omits it, so
+ * requiring it lost the alpha band of every such file — and a collar composite
+ * then drew opaque black where the main picture was transparent. What the
+ * samples hold, a 0-255 mask or a 0..1 coverage fraction, is settled where the
+ * samples are: see alphaScale.
+ */
+export function alphaBandIndex(asset) {
+  const bands = assetBands(asset);
+  const index = bands.findIndex(
+    b => typeof b?.name === 'string' && b.name.toLowerCase() === 'alpha');
+  if (index === -1) {return null;}
+  return WIDE_ALPHA_TYPES.has(bands[index].data_type) ? null : index;
+}
+
+/**
+ * A render with what the asset says about its own emptiness folded in.
+ *
+ * A render describes colour. An asset's bands describe the data: which value
+ * means "nothing here", and which band is a coverage mask. A render that says
+ * nothing about `nodata` does not state that the asset covers every pixel, so
+ * the asset keeps its say. A render that names its own `nodata` wins, because
+ * the publisher wrote that for this picture.
+ *
+ * A coverage band outranks a nodata value. A nodata value infers emptiness
+ * from the colour, so it punches out a black roof together with the sea. A
+ * coverage band states which pixels the data covers.
+ */
+export function withAssetEmptiness(render, asset) {
+  if (!render) {return render;}
+  const alphaBand = alphaBandIndex(asset);
+  if (alphaBand != null) {return { ...render, alphaBand };}
+  if (render.nodata != null) {return render;}
+  const bands = assetBands(asset);
+  // A render reads the bands its `bidx` names. Bands 1-3's sentinels belong to
+  // the picture, so a render of band 4 must not inherit them: 0 in a derived
+  // count band is real data, and punching it out perforates the layer.
+  const read = bidxIndexes(render)?.map(i => bands[i]) ?? bands.slice(0, 3);
+  const nodata = [...new Set(read.map(b => b?.nodata).filter(v => v != null))];
+  return nodata.length > 0 ? { ...render, nodata } : render;
+}
+
 /**
  * Whether an asset may inherit the item's first render for want of one of its
  * own: only when its band metadata describes exactly one band. A colormap is a
@@ -277,12 +352,59 @@ export function canInheritRender(asset) {
   return assetBands(asset).length === 1;
 }
 
-/** The zero-based band indexes of an RGB render, or null when it is not one. */
+/**
+ * The zero-based band a single-band render reads: the first band its `bidx`
+ * names, or band 1 where it names none.
+ *
+ * Called once per layer, so the warning fires once for a render this code
+ * cannot read: the layer then draws a band the publisher did not ask for.
+ */
+function singleBand(render) {
+  if (render?.bidx == null) {return 0;}
+  const bands = bidxIndexes(render);
+  if (bands) {return bands[0];}
+  console.warn(
+    `render bidx ${JSON.stringify(render.bidx)} does not name band indexes; reading band 1`);
+  return 0;
+}
+
+/**
+ * The zero-based band indexes of an RGB render, or null when it is not one.
+ *
+ * `bidx` names the bands outright. It is optional in the render extension,
+ * though, and a render that omits it can say the same thing through `rescale`:
+ * the extension gives one [min, max] pair per band composited, so three pairs
+ * describe a three-band composite of the first three bands. A render that
+ * also names a colormap is a ramp, because a colormap is a function of one
+ * band, and `colormap_name` wins everywhere else in this file.
+ *
+ * That inference holds only where the three pairs can be three bands of one
+ * file. A render that lists several assets is the extension's own multi-asset
+ * composite: each of those single-band assets matches the render on its own,
+ * so the pairs count the assets, not the bands, and each asset keeps its ramp.
+ * Reading them as bands drew nothing at all, because a one-band tile carries
+ * no band 2.
+ */
 function rgbBands(render) {
-  const bidx = render?.bidx;
-  if (!Array.isArray(bidx) || bidx.length !== 3) {return null;}
-  if (!bidx.every(b => Number.isInteger(b) && b >= 1)) {return null;}
-  return bidx.map(b => b - 1);
+  // The multi-asset composite is settled first, because it is a fact about the
+  // render rather than about how it spells its bands. A render that names
+  // several assets names one single-band asset per channel, and each of them
+  // matches the render on its own — so compositing bands 1-3 of a one-band
+  // tile draws nothing at all, whether the render states `bidx` or leaves it
+  // to the rescale pairs. Checking it only on the rescale path left the
+  // explicit `bidx: [1, 2, 3]` spelling blanking every asset.
+  if (Array.isArray(render?.assets) && render.assets.length > 1) {return null;}
+  if (Array.isArray(render?.bidx)) {
+    const bands = bidxIndexes(render);
+    return bands && bands.length === 3 ? bands : null;
+  }
+  if (render?.colormap_name || render?.colormap) {return null;}
+  const rescale = render?.rescale;
+  if (!Array.isArray(rescale) || rescale.length !== 3) {return null;}
+  // Only a [min, max] pair per band states a per-band stretch. A flat
+  // [0, 255, 100] is one titiler-style range, malformed, not three bands.
+  if (!rescale.every(Array.isArray)) {return null;}
+  return [0, 1, 2];
 }
 
 /** One [min, max] pair from a render's `rescale`, or the default. */
@@ -353,59 +475,108 @@ function stretch(v, min, span) {
   return t * 255 + 0.5 | 0;
 }
 
-/** COGLayer callbacks that composite three bands into true colour. */
-function makeRgbTileLoader(render, bands) {
+// --- Compositing samples into pixels ----------------------------------------
+//
+// Below this point nothing knows which file format the samples came from. A
+// reader hands over a `samples` view — `{ data, w, h, npix, offsetOf }`, where
+// `offsetOf(band, i)` is the index in `data` of pixel `i` of that band — and
+// these functions turn it into an ImageData. The COG reader produces
+// interleaved samples and the Zarr reader produces one plane per band, which
+// is the whole of the difference between them.
+
+// `planes` is how many bands the tile carries. The compositor checks a band
+// index against it, because a band the tile does not have reads the next
+// pixel's samples as if they were data.
+
+/** Samples over an interleaved buffer: pixel `i` of band `b` at `i * stride + b`. */
+export function interleavedSamples({ data, w, h, npix, stride }) {
+  return { data, w, h, npix, planes: stride, offsetOf: (band, i) => i * stride + band };
+}
+
+/** Samples over band planes: pixel `i` of band `b` at `b * planeStride + i`. */
+export function planarSamples({ data, w, h, npix, planeStride, planes = 1 }) {
+  return { data, w, h, npix, planes, offsetOf: (band, i) => band * planeStride + i };
+}
+
+// A coverage band states the alpha of every pixel, so it replaces the guess
+// that the nodata sentinels make. One the tile does not carry is dropped,
+// because it would read the next pixel's samples as alpha.
+function coverageBand(render, planes) {
+  const band = render.alphaBand;
+  return Number.isInteger(band) && band >= 0 && band < planes ? band : null;
+}
+
+// What to multiply a coverage sample by to get an 8-bit alpha value.
+//
+// A coverage band is written both ways. An integer mask holds 0 to 255, which
+// the channel takes as it is. A float band holds a coverage fraction from 0 to
+// 1, and writing that straight into the channel gives alpha 1 of 255 — an
+// invisible layer.
+//
+// The sample array's own type settles it, which is a fact about the data
+// rather than a claim in the metadata: `data_type` is optional in the raster
+// extension, so a band that omits it would otherwise have to be guessed at.
+function alphaScale(data) {
+  return (data instanceof Float32Array || data instanceof Float64Array) ? 255 : 1;
+}
+
+/** Composite three bands of `samples` into true colour. */
+function compositeRgb(render, bands, samples) {
   const [[m0, s0], [m1, s1], [m2, s2]] = rgbStretches(render);
   const nodataSet = nodataSetOf(render);
   const hasNodata = nodataSet.size > 0;
   const [b0, b1, b2] = bands;
+  const { data, w, h, npix, planes, offsetOf } = samples;
+  const alphaBand = coverageBand(render, planes);
+  const aScale = alphaScale(data);
 
-  const getTileData = async (image, opts) => {
-    const tile = await readTile(image, opts.x, opts.y, opts, bands);
-    if (!tile) {return null;}
-    const { data, w, h, npix, stride } = tile;
-    const out = new Uint8ClampedArray(npix * 4);
-    for (let i = 0, base = 0, o = 0; i < npix; i++, base += stride, o += 4) {
-      const r = data[base + b0];
-      const g = data[base + b1];
-      const b = data[base + b2];
-      // A pixel is empty only where every channel reads as empty: a single
-      // channel that happens to equal the sentinel is real data, and punching
-      // it out would perforate the scene.
-      if (hasNodata) {
-        if ((nodataSet.has(r) || Number.isNaN(r)) && (nodataSet.has(g) || Number.isNaN(g))
-          && (nodataSet.has(b) || Number.isNaN(b))) {continue;} // alpha stays 0
-      }
-      else if (Number.isNaN(r) && Number.isNaN(g) && Number.isNaN(b)) {continue;}
+  const out = new Uint8ClampedArray(npix * 4);
+  for (let i = 0, o = 0; i < npix; i++, o += 4) {
+    const r = data[offsetOf(b0, i)];
+    const g = data[offsetOf(b1, i)];
+    const b = data[offsetOf(b2, i)];
+    if (alphaBand != null) {
+      const a = data[offsetOf(alphaBand, i)] * aScale;
+      if (!(a > 0)) {continue;} // alpha stays 0
       out[o] = stretch(r, m0, s0);
       out[o + 1] = stretch(g, m1, s1);
       out[o + 2] = stretch(b, m2, s2);
-      out[o + 3] = 255;
+      out[o + 3] = a;
+      continue;
     }
-    return { colorImage: new ImageData(out, w, h), width: w, height: h, byteLength: out.byteLength };
-  };
-
-  const renderTile = (data) => (data ? { image: data.colorImage } : null);
-  return { getTileData, renderTile };
+    // A pixel is empty only where every channel reads as empty: a single
+    // channel that happens to equal the sentinel is real data, and punching
+    // it out would perforate the scene.
+    if (hasNodata) {
+      if ((nodataSet.has(r) || Number.isNaN(r)) && (nodataSet.has(g) || Number.isNaN(g))
+        && (nodataSet.has(b) || Number.isNaN(b))) {continue;} // alpha stays 0
+    }
+    else if (Number.isNaN(r) && Number.isNaN(g) && Number.isNaN(b)) {continue;}
+    out[o] = stretch(r, m0, s0);
+    out[o + 1] = stretch(g, m1, s1);
+    out[o + 2] = stretch(b, m2, s2);
+    out[o + 3] = 255;
+  }
+  return { colorImage: new ImageData(out, w, h), width: w, height: h, byteLength: out.byteLength };
 }
 
-export function makeRenderTileLoader(render) {
-  // A `bidx` triple is a true-colour composite, which no colormap of any form
-  // can express, so it settles the path before either of them is consulted.
-  const rgb = rgbBands(render);
-  if (rgb) {return makeRgbTileLoader(render, rgb);}
-  // A discrete or interval colormap colours by pixel value, so it bypasses the
-  // rescaled ramp entirely. `colormap_name` still wins, as it always did.
+/**
+ * The per-pixel colour function for a single-band render, chosen once outside
+ * the pixel loop.
+ *
+ * A discrete or interval colormap colours by pixel value, so it bypasses the
+ * rescaled ramp entirely. `colormap_name` still wins, as it always did. A
+ * value the colormap does not cover leaves alpha at 0, which is the same
+ * "draw nothing" the nodata list gives — the only sane result for a class
+ * mask with an unlabelled value.
+ */
+function bandPixelWriter(render) {
   const sampler = builtinStops(render.colormap_name) ? null : buildValueSampler(render.colormap);
   const lut = sampler ? null : buildLut(render);
   const [min, max] = rescalePair(render.rescale?.[0], [0, 1]);
   const span = (max - min) || 1;
-  const band = ((render.bidx && render.bidx[0]) || 1) - 1; // 1-based -> 0-based
   const nodataSet = nodataSetOf(render);
 
-  // Chosen once, outside the per-pixel loop. A value the colormap does not
-  // cover leaves alpha at 0, which is the same "draw nothing" the nodata list
-  // gives — the only sane result for a class mask with an unlabelled value.
   const writePixel = sampler
     ? (v, out, o) => {
       const c = sampler(v);
@@ -425,26 +596,180 @@ export function makeRenderTileLoader(render) {
       out[o + 2] = lut[idx + 2];
       out[o + 3] = lut[idx + 3];
     };
+  return { writePixel, nodataSet };
+}
 
-  // deck.gl-geotiff 0.7 COGLayer callbacks. The default GPU pipeline only supports
+/**
+ * Colour one band of `samples` through a render's colormap. `writer` is the
+ * per-pixel colour function the layer built once, from bandPixelWriter.
+ */
+function colormapBand(render, writer, band, samples) {
+  const { writePixel, nodataSet } = writer;
+  const { data, w, h, npix, planes, offsetOf } = samples;
+  // A masked single-band product is a real shape: one measurement band and one
+  // coverage band. The mask states which pixels the data covers, so the ramp
+  // honours it the same way a composite does.
+  const alphaBand = coverageBand(render, planes);
+  const aScale = alphaScale(data);
+  const out = new Uint8ClampedArray(npix * 4);
+  for (let i = 0, o = 0; i < npix; i++, o += 4) {
+    const v = data[offsetOf(band, i)];
+    if (nodataSet.has(v) || Number.isNaN(v)) { continue; } // alpha stays 0
+    if (alphaBand != null) {
+      const a = data[offsetOf(alphaBand, i)] * aScale;
+      if (!(a > 0)) {continue;} // alpha stays 0
+      writePixel(v, out, o);
+      // A coverage band says how much of the pixel the data covers, and a
+      // discrete colormap entry carries an alpha of its own. The pixel is as
+      // opaque as both of them allow.
+      out[o + 3] = out[o + 3] * a / 255;
+      continue;
+    }
+    writePixel(v, out, o);
+  }
+  return { colorImage: new ImageData(out, w, h), width: w, height: h, byteLength: out.byteLength };
+}
+
+/** COGLayer callbacks that composite three bands into true colour. */
+function makeRgbTileLoader(render, bands) {
+  const getTileData = async (image, opts) => {
+    const tile = await readTile(image, opts.x, opts.y, opts, bands);
+    if (!tile) {return null;}
+    return compositeRgb(render, bands, interleavedSamples(tile));
+  };
+
+  const renderTile = (data) => (data ? { image: data.colorImage } : null);
+  return { getTileData, renderTile };
+}
+
+export function makeRenderTileLoader(render) {
+  // A `bidx` triple is a true-colour composite, which no colormap of any form
+  // can express, so it settles the path before either of them is consulted.
+  const rgb = rgbBands(render);
+  if (rgb) {return makeRgbTileLoader(render, rgb);}
+  const band = singleBand(render);
+  // The colour table and the value sampler describe the layer, not the tile,
+  // so they are built here, once, rather than on every tile.
+  const writer = bandPixelWriter(render);
+
+  // deck.gl-geotiff COGLayer callbacks. The default GPU pipeline only supports
   // unsigned-integer COGs, so for float (and to apply a colormap) we read the tile
   // ourselves and CPU-colormap a single band into an ImageData, returned via the
   // RenderTileResult `image` field (which accepts any TextureSource).
   const getTileData = async (image, opts) => {
     const tile = await readTile(image, opts.x, opts.y, opts, [band]);
     if (!tile) {return null;}
-    const { data, w, h, npix, stride } = tile;
-    const out = new Uint8ClampedArray(npix * 4);
-    for (let i = 0; i < npix; i++) {
-      const v = data[i * stride + band];
-      if (nodataSet.has(v) || Number.isNaN(v)) { continue; } // alpha stays 0
-      writePixel(v, out, i * 4);
-    }
-    return { colorImage: new ImageData(out, w, h), width: w, height: h, byteLength: out.byteLength };
+    return colormapBand(render, writer, band, interleavedSamples(tile));
   };
 
   const renderTile = (data) => (data ? { image: data.colorImage } : null);
   return { getTileData, renderTile };
+}
+
+// --- Zarr -------------------------------------------------------------------
+//
+// `ZarrLayer` splits reading from rendering the same way `COGLayer` does, but
+// hands the callback an opened zarrita array and a slice spec instead of a
+// GeoTIFF image. `zarr.get` answers with a strided view in C order, so a
+// multi-band selection arrives as one plane per band rather than interleaved.
+// That is the only difference the colormap code sees; everything below reuses
+// the compositing above.
+
+/**
+ * Shape a `zarr.get` result into the sample view the compositing functions
+ * take, or null when the chunk is degenerate or too big to loop over on the
+ * main thread.
+ *
+ * The result's trailing two axes are the spatial ones — `ZarrLayer` validates
+ * that — so the pixel count is their product, and any leading axis is the band
+ * axis whose planes follow one another in the buffer.
+ */
+export function zarrSamples(chunk, bandAxis = null) {
+  const data = chunk?.data;
+  const shape = chunk?.shape;
+  if (!data || !Array.isArray(shape) || shape.length < 2) {return null;}
+  const h = shape[shape.length - 2];
+  const w = shape[shape.length - 1];
+  const npix = w * h;
+  if (!(w > 0) || !(h > 0) || npix > MAX_TILE_PIXELS) {
+    if (npix > MAX_TILE_PIXELS) {
+      console.warn(`Zarr chunk ${w}x${h} exceeds the colormap budget; skipping`);
+    }
+    return null;
+  }
+  // The compositing functions walk the trailing two axes as rows of pixels,
+  // one sample after another. `zarr.get` honours a v2 `order: "F"` array and a
+  // v3 transpose codec, so the result is not always row-major, and a
+  // column-major one would draw the tile transposed. Reject what this code
+  // cannot index. A chunk that reports no stride cannot be checked, and
+  // row-major is the overwhelming default.
+  const stride = chunk.stride;
+  if (Array.isArray(stride)
+    && (stride[stride.length - 1] !== 1 || stride[stride.length - 2] !== w)) {
+    console.warn('Zarr chunk is not row-major in its spatial axes; skipping');
+    return null;
+  }
+  // A leading axis is the band axis, and the distance between its planes is
+  // taken from the result's own stride rather than assumed: zarrita reports
+  // one, and for a C-ordered result it is the pixel count, which is what the
+  // arithmetic would otherwise have to guess.
+  const axis = bandAxis ?? 0;
+  const leading = shape.slice(0, shape.length - 2);
+  const banded = leading.length > 0 && leading[axis] > 1;
+  const planeStride = banded ? (chunk.stride?.[axis] ?? npix) : 0;
+  return { data, w, h, npix, planeStride, planes: banded ? leading[axis] : 1 };
+}
+
+// Whether a chunk carries every plane the render asks for. It mirrors the
+// band check readTile makes on a COG tile: a plane the chunk does not have
+// indexes past the buffer, and `undefined` written through the colour table
+// draws an opaque garbage image rather than nothing.
+function withinPlanes(bands, planes) {
+  if (bands.every(b => b < planes)) {return true;}
+  console.warn(
+    `render asks for band ${Math.max(...bands) + 1} of a ${planes}-plane Zarr chunk; skipping`);
+  return false;
+}
+
+/**
+ * Add a step to a tile's spatial slices so the samples it returns stay inside
+ * the per-tile budget.
+ *
+ * A Zarr chunk is whatever size its author chose, and a chunk far larger than
+ * a screen is a real choice: the FTW global composites are chunked 4096 by
+ * 4096, which is 16.7 million samples and a 67 MB image for one tile. The
+ * colormap loop runs on the main thread, so a handful of those on screen
+ * freezes the tab.
+ *
+ * Reading every nth sample instead costs nothing extra over the wire — the
+ * chunk is fetched and decompressed whole either way — and bounds the work
+ * that happens per tile after it arrives. The tile covers the same ground at
+ * a lower resolution, which is the right trade at a zoom where one chunk
+ * already spans more than the window.
+ *
+ * @param sliceSpec The slice spec the layer built, one entry per dimension.
+ * @param zarr The zarrita module, for building the replacement slices.
+ * @param budget The most samples one tile may return.
+ * @returns The spec to read with, unchanged when it is already within budget.
+ */
+export function decimateSliceSpec(sliceSpec, zarr, budget = MAX_TILE_PIXELS) {
+  if (!Array.isArray(sliceSpec) || sliceSpec.length < 2) {return sliceSpec;}
+  const spatial = sliceSpec.slice(-2);
+  const lengths = spatial.map(sel => {
+    if (!sel || typeof sel !== 'object') {return null;}
+    const { start, stop, step } = sel;
+    if (typeof start !== 'number' || typeof stop !== 'number') {return null;}
+    return Math.max(0, Math.ceil((stop - start) / (step || 1)));
+  });
+  if (lengths.some(len => len === null)) {return sliceSpec;}
+  const pixels = lengths[0] * lengths[1];
+  if (!(pixels > budget)) {return sliceSpec;}
+  // One step for both axes keeps the tile's aspect ratio, so the image still
+  // covers the tile's bounds without stretching.
+  const step = Math.ceil(Math.sqrt(pixels / budget));
+  const decimated = spatial.map((sel) =>
+    zarr.slice(sel.start, sel.stop, (sel.step || 1) * step));
+  return [...sliceSpec.slice(0, -2), ...decimated];
 }
 
 // --- Classification-derived renders -----------------------------------------
@@ -565,4 +890,48 @@ export function discreteLegend(render, classes = []) {
     .filter(iv => iv.rgba[3] > 0)
     .slice(0, MAX_LEGEND_ROWS)
     .map(iv => ({ color: cssColor(iv.rgba), label: `${iv.min}-${iv.max}` }));
+}
+
+/**
+ * `ZarrLayer` `getTileData`/`renderTile` callbacks that colormap one band, or
+ * composite three, per a STAC render definition.
+ *
+ * @param render The render definition.
+ * @param options.zarr The zarrita module, injected so this module stays free
+ *   of a static import of it and tests can supply a double.
+ * @param options.bandAxis The index of the band axis in the result, or null
+ *   when the selection pins the band and the result is two-dimensional.
+ */
+export function makeZarrRenderTileLoader(render, { zarr, bandAxis = null } = {}) {
+  const rgb = rgbBands(render);
+  const band = rgb ? null : singleBand(render);
+  // Built once per layer, like the COG loader does. See makeRenderTileLoader.
+  const writer = rgb ? null : bandPixelWriter(render);
+
+  const getTileData = async (arr, opts) => {
+    // A chunk larger than the per-tile budget is read every nth sample, so a
+    // store chunked far coarser than a screen still draws. See
+    // decimateSliceSpec.
+    const sliceSpec = decimateSliceSpec(opts.sliceSpec, zarr);
+    const chunk = await zarr.get(arr, sliceSpec, { signal: opts.signal });
+    if (opts.signal?.aborted) {return null;}
+    const samples = zarrSamples(chunk, bandAxis);
+    if (!samples) {return null;}
+    if (rgb) {
+      if (!samples.planeStride) {
+        console.warn('An RGB Zarr render needs a band axis in the selection; skipping');
+        return null;
+      }
+      if (!withinPlanes(rgb, samples.planes)) {return null;}
+      return compositeRgb(render, rgb, planarSamples(samples));
+    }
+    // With the band axis pinned by the selection there is one plane, so the
+    // band index of the render is already spent and reads as plane 0.
+    const plane = samples.planeStride ? band : 0;
+    if (!withinPlanes([plane], samples.planes)) {return null;}
+    return colormapBand(render, writer, plane, planarSamples(samples));
+  };
+
+  const renderTile = (data) => (data ? { image: data.colorImage } : null);
+  return { getTileData, renderTile };
 }

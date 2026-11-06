@@ -1,0 +1,104 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+  ],
+  "id": "its-live-velocity",
+  "title": "ITS_LIVE ice velocity datacube, N60W140 (polar stereographic)",
+  "description": "ITS_LIVE (NASA MEaSUREs) image-pair ice velocity datacube for tile N60W140, Zarr V2, consolidated. `v` (velocity magnitude) is [mid_date, y, x], shape [16314, 834, 833], chunks [16315, 10, 10] -- the time chunk (16315) covers the entire mid_date axis (16314 image pairs) in a single chunk, confirmed from the store's own `.zarray`. Grid is EPSG:3413 (NSIDC Sea Ice Polar Stereographic North), with the CRS carried as `crs_wkt` on a non-dimension coordinate variable named `mapping` (not `spatial_ref`). bbox is estimated from the store's `geo_polygon` attribute (northern Yukon/Alaska border area).\n\nLicense not stated in the store's own metadata; declared \"proprietary\" with a via link to the ITS_LIVE project.\n\nExpected browser outcome: refused by the chunk-amplification guard (~16000x: one tile needs one time step, the chunk holds all 16314).",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -142.8,
+          68.9,
+          -140,
+          69.8
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://its-live-data.s3.amazonaws.com/datacubes/v2/N60W140/ITS_LIVE_vel_EPSG3413_G0120_X-2250000_Y250000.zarr/.zattrs",
+      "type": "application/json",
+      "title": "Source root .zattrs"
+    },
+    {
+      "rel": "via",
+      "href": "https://its-live.jpl.nasa.gov/",
+      "type": "application/json",
+      "title": "ITS_LIVE project"
+    }
+  ],
+  "cube:dimensions": {
+    "mid_date": {
+      "type": "temporal",
+      "size": 16314
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "reference_system": 3413
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "reference_system": 3413
+    }
+  },
+  "cube:variables": {
+    "v": {
+      "dimensions": [
+        "mid_date",
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        16315,
+        10,
+        10
+      ],
+      "dtype": "int16",
+      "nodata": -32767,
+      "unit": "meter/year",
+      "long_name": "velocity magnitude",
+      "standard_name": "land_ice_surface_velocity"
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://its-live-data.s3.amazonaws.com/datacubes/v2/N60W140/ITS_LIVE_vel_EPSG3413_G0120_X-2250000_Y250000.zarr/",
+      "type": "application/vnd.zarr",
+      "title": "ITS_LIVE velocity datacube N60W140 (Zarr V2, consolidated, EPSG:3413)",
+      "description": "Chunked [16315,10,10] -- amplification guard should refuse.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

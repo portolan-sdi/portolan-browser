@@ -1,0 +1,95 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+  ],
+  "id": "nwm-streamflow",
+  "title": "NOAA National Water Model retrospective streamflow (CONUS reach network)",
+  "description": "NOAA NWM Retrospective v2.1, `chrtout.zarr`: streamflow at every NHDPlusV2 reach (plus arbitrary reach IDs outside CONUS), 1979-02-01 hourly onward. `streamflow` is [time, feature_id], shape [367439, 2776738] -- confirmed from the store's own `.zarray` -- chunked [672, 30000]. This is a 1-D, per-feature time series over a river-network graph, not a 2-D raster: there is no x/y/lat-lon grid to read a tile from at all (feature_id indexes a reach, not a pixel), and a lat/lon-looking `latitude`/`longitude` pair exists only as per-feature point coordinates (`coordinates: lat lon` on the variable), not an affine grid.\n\nLicense: NOAA operational model output, public domain (US government work).\n\nExpected browser outcome: refused cleanly as not a raster; must never attempt to fetch an 80MB-class chunk ([672,30000] int32 = ~80MB) just to probe shape.",
+  "license": "public-domain",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180,
+          -90,
+          180,
+          90
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "1979-02-01T01:00:00Z",
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://noaa-nwm-retrospective-2-1-zarr-pds.s3.amazonaws.com/chrtout.zarr/.zattrs",
+      "type": "application/json",
+      "title": "Source root .zattrs"
+    }
+  ],
+  "cube:dimensions": {
+    "time": {
+      "type": "temporal",
+      "extent": [
+        "1979-02-01T01:00:00Z",
+        null
+      ],
+      "unit": "hours since 1979-02-01T01:00:00"
+    },
+    "feature_id": {
+      "type": "other",
+      "size": 2776738,
+      "description": "NHDPlusV2 ComID (reach identifier), not a spatial grid axis."
+    }
+  },
+  "cube:variables": {
+    "streamflow": {
+      "dimensions": [
+        "time",
+        "feature_id"
+      ],
+      "type": "data",
+      "chunks": [
+        672,
+        30000
+      ],
+      "dtype": "int32",
+      "nodata": -999900,
+      "unit": "m3 s-1",
+      "long_name": "River Flow",
+      "description": "Per-reach time series, not a raster. coordinates: latitude longitude (point locations per feature, not a grid)."
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://noaa-nwm-retrospective-2-1-zarr-pds.s3.amazonaws.com/chrtout.zarr/",
+      "type": "application/vnd.zarr",
+      "title": "NWM retrospective v2.1 CHRTOUT (Zarr V2, consolidated)",
+      "description": "1-D feature_id network, not a 2-D grid -- not renderable as a raster tile.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

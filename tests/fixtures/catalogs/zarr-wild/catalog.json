@@ -1,0 +1,147 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.1.0",
+  "id": "zarr-wild-test-catalog",
+  "title": "Wild Zarr/Icechunk test catalog",
+  "description": "Local Portolan catalog of real-world public Zarr and Icechunk stores, gathered to stress the Zarr map rendering work against data nobody built for a demo: production operational models, research datacubes, satellite archives and visualization mosaics. Each collection names the outcome the browser is expected to produce: draw, hold back, refuse, or error. Facts in each collection (shapes, dtypes, chunks, codecs, CRS, extents) were read from the store's own metadata or an upstream STAC item; anything not independently confirmed is marked \"estimated\" in its description. Run `node tests/fixtures/catalogs/zarr-wild/build.mjs` to rebuild. See docs/zarr.md.",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "child",
+      "href": "./carbonplan-4d-climate/collection.json",
+      "type": "application/json",
+      "title": "CarbonPlan 4D climate demo (tavg/prec monthly climatology)"
+    },
+    {
+      "rel": "child",
+      "href": "./carbonplan-2d-tavg/collection.json",
+      "type": "application/json",
+      "title": "CarbonPlan 2D tavg demo (unconsolidated)"
+    },
+    {
+      "rel": "child",
+      "href": "./tessera-life-biodiversity/collection.json",
+      "type": "application/json",
+      "title": "LIFE: land-cover change impacts on future extinctions, v1.01"
+    },
+    {
+      "rel": "child",
+      "href": "./tessera-global-rgb/collection.json",
+      "type": "application/json",
+      "title": "Tessera global RGB visualization mosaic"
+    },
+    {
+      "rel": "child",
+      "href": "./wsf-tracker/collection.json",
+      "type": "application/json",
+      "title": "WSF Tracker: built-up area emergence index, 2016-2026"
+    },
+    {
+      "rel": "child",
+      "href": "./eopf-s2-l2a-zarr3/collection.json",
+      "type": "application/json",
+      "title": "EOPF Sentinel-2 L2A (GeoZarr, Zarr V3), one pinned item"
+    },
+    {
+      "rel": "child",
+      "href": "./mur-sst/collection.json",
+      "type": "application/json",
+      "title": "MUR SST: multi-scale ultra-high resolution sea surface temperature"
+    },
+    {
+      "rel": "child",
+      "href": "./cbofs-ssh/collection.json",
+      "type": "application/json",
+      "title": "CBOFS sea surface height (ROMS curvilinear, kerchunk-indexed)"
+    },
+    {
+      "rel": "child",
+      "href": "./ctrees-agb-icechunk/collection.json",
+      "type": "application/json",
+      "title": "CTrees global aboveground biomass, 100 m annual (Icechunk)"
+    },
+    {
+      "rel": "child",
+      "href": "./gmgsi-icechunk/collection.json",
+      "type": "application/json",
+      "title": "GMGSI global geostationary mosaic, hourly (Icechunk)"
+    },
+    {
+      "rel": "child",
+      "href": "./nasa-rasi-icechunk-virtual/collection.json",
+      "type": "application/json",
+      "title": "NASA Water Insight RASI, historical (virtual Icechunk)"
+    },
+    {
+      "rel": "child",
+      "href": "./cmip6-gfdl-tas/collection.json",
+      "type": "application/json",
+      "title": "CMIP6 GFDL-ESM4 historical tas (monthly, 1850-2014)"
+    },
+    {
+      "rel": "child",
+      "href": "./its-live-velocity/collection.json",
+      "type": "application/json",
+      "title": "ITS_LIVE ice velocity datacube, N60W140 (polar stereographic)"
+    },
+    {
+      "rel": "child",
+      "href": "./noaa-gefs-analysis/collection.json",
+      "type": "application/json",
+      "title": "NOAA GEFS analysis (dynamical.org), v0.1.2"
+    },
+    {
+      "rel": "child",
+      "href": "./eopf-s2-l2a-v2-band/collection.json",
+      "type": "application/json",
+      "title": "EOPF Sentinel-2 L2A (unconsolidated Zarr V2), one pinned band group"
+    },
+    {
+      "rel": "child",
+      "href": "./nwm-streamflow/collection.json",
+      "type": "application/json",
+      "title": "NOAA National Water Model retrospective streamflow (CONUS reach network)"
+    },
+    {
+      "rel": "child",
+      "href": "./era5-arco-no-cors/collection.json",
+      "type": "application/json",
+      "title": "ERA5 ARCO (Google/ECMWF), no CORS"
+    },
+    {
+      "rel": "child",
+      "href": "./tessera-utm30-embeddings/collection.json",
+      "type": "application/json",
+      "title": "Tessera UTM zone 30 geospatial embeddings"
+    },
+    {
+      "rel": "child",
+      "href": "./carbonplan-v2-2d-tavg/collection.json",
+      "type": "application/json",
+      "title": "CarbonPlan 2D tavg demo, v2 bucket prefix (ndpyramid)"
+    },
+    {
+      "rel": "child",
+      "href": "./carbonplan-3d-tavg-prec/collection.json",
+      "type": "application/json",
+      "title": "CarbonPlan 3D tavg/prec demo (band axis, no month axis)"
+    },
+    {
+      "rel": "child",
+      "href": "./carbonplan-v1-2d-tavg/collection.json",
+      "type": "application/json",
+      "title": "CarbonPlan 2D tavg demo, v1 prefix (a pyramid that declares one level)"
+    },
+    {
+      "rel": "child",
+      "href": "./ftw-predictions-zarr/collection.json",
+      "type": "application/json",
+      "title": "Fields of The World: global field prediction probabilities (Zarr V3, 14 levels)"
+    }
+  ]
+}

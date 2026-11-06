@@ -1,0 +1,123 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json"
+  ],
+  "id": "gmgsi-icechunk",
+  "title": "GMGSI global geostationary mosaic, hourly (Icechunk)",
+  "description": "NOAA Global Mosaic of Geostationary Satellite Imagery (GMGSI), a composite of GOES, Meteosat and Himawari imagery, published as an Icechunk 2.x repository at `gmgsi_v3.icechunk` on source.coop. Confirmed reachable (200 on the `repo` object, which is binary -- an Icechunk config/snapshot object, not a plain Zarr file) with CORS enabled (`access-control-allow-origin: *`). Note: an earlier probe path for this fixture (`bkr/gmgi/gmgsi.zarr/zarr.json`, without the `_v3.icechunk` suffix and as plain Zarr) 404s -- that path does not exist; the real store is the Icechunk repo at the URL below, which does. bbox is estimated for a global geostationary composite.\n\nCORRECTION (browser run, 2026-11): the arrays WERE inspected, by opening the repository with `icechunk-js` 0.6.1 in node, which reads this 2.x layout without trouble (spec version 2). The blocker is not the client: this store carries `latitude` and `longitude` as **2-D** arrays of [y, x] = [3000, 5000] float32, the way a curvilinear or swath grid is written, with no affine transform and no grid-mapping variable. The browser derives a transform only from 1-D coordinate arrays (see cbofs-ssh, which is refused for the same reason), so there is nothing here it can place on the map.\n\nLicense unknown; declared \"proprietary\" with a via link.\n\nExpected browser outcome: refused with the no-spatial-reference notice -- 2-D (non-1-D) spatial coordinates, which this browser's Zarr map support does not handle.",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180,
+          -70,
+          180,
+          70
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://data.source.coop/bkr/gmgi/gmgsi_v3.icechunk/repo",
+      "type": "application/json",
+      "title": "Icechunk repo object (binary, confirms the store exists)"
+    }
+  ],
+  "cube:dimensions": {
+    "time": {
+      "type": "temporal",
+      "description": "Hourly; 11,969 steps, confirmed from the array shape."
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "reference_system": 4326,
+      "description": "Index axis only: the longitudes are a 2-D [y, x] array, not a 1-D coordinate."
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "reference_system": 4326,
+      "description": "Index axis only: the latitudes are a 2-D [y, x] array, not a 1-D coordinate."
+    }
+  },
+  "cube:variables": {
+    "visible": {
+      "dimensions": [
+        "time",
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        1,
+        375,
+        1250
+      ],
+      "dtype": "uint8",
+      "unit": "K",
+      "long_name": "0-255 brightness temperature, visible",
+      "description": "Shape [11969, 3000, 5000]. Its `coordinates` attribute names `latitude longitude`, both 2-D [3000, 5000] float32 arrays.",
+      "statistics": {
+        "minimum": 0,
+        "maximum": 255
+      }
+    },
+    "longwave_infrared": {
+      "dimensions": [
+        "time",
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        1,
+        375,
+        1250
+      ],
+      "dtype": "uint8",
+      "unit": "K",
+      "long_name": "0-255 brightness temperature, longwave infrared",
+      "statistics": {
+        "minimum": 0,
+        "maximum": 255
+      }
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://data.source.coop/bkr/gmgi/gmgsi_v3.icechunk/",
+      "type": "application/x-icechunk",
+      "title": "GMGSI (Icechunk 2.x repository)",
+      "description": "Icechunk spec version 2, opened with icechunk-js 0.6.1. Grid described by 2-D latitude/longitude arrays, which this browser cannot turn into an affine transform.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

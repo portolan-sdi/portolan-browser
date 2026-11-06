@@ -1,0 +1,125 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
+  ],
+  "id": "wsf-tracker",
+  "title": "WSF Tracker: built-up area emergence index, 2016-2026",
+  "description": "World Settlement Footprint (WSF) Tracker, mindearth: a categorical int8 index encoding the earliest biannual epoch at which built-up area was first detected per pixel (0 = none/nodata, 1 = 2016-07-01 ... 20 = 2026-01-01, stepping 6 months). Zarr V3, consolidated, zarr-conventions multiscales v1, 13 levels (0 finest 1,536,433 x 4,007,502 .. 12 coarsest 375 x 978), `sharding_indexed` codec (shard 8192x8192, inner chunk 256x256, blosc/zstd, crc32c index), EPSG:4326, bbox [-180.00001, -60.0101, 180.00001, 78.0101]. License confirmed from the source.coop listing: CC BY 3.0 IGO.\n\nExpected browser outcome: draws (categorical ramp, nodata=0, values 1-20).",
+  "license": "CC-BY-3.0-IGO",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180.00001,
+          -60.0101,
+          180.00001,
+          78.0101
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2016-07-01T00:00:00Z",
+          "2026-01-01T00:00:00Z"
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://data.source.coop/mindearth/wsf/World_WSF_20160701-20260101.zarr/zarr.json",
+      "type": "application/json",
+      "title": "Source store root zarr.json"
+    }
+  ],
+  "cube:dimensions": {
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -60.0101,
+        78.0100585990529
+      ],
+      "reference_system": 4326
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -180.00001488697754,
+        180.0000148869776
+      ],
+      "reference_system": 4326
+    }
+  },
+  "cube:variables": {
+    "wsf_tracker": {
+      "dimensions": [
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        8192,
+        8192
+      ],
+      "shards": [
+        256,
+        256
+      ],
+      "dtype": "int8",
+      "nodata": 0,
+      "long_name": "WSF Tracker built-up emergence index",
+      "description": "0 = no detected built-up area / nodata. Values 1-20 correspond to biannual WSF epochs (1 = 2016-07-01 .. 20 = 2026-01-01).",
+      "statistics": {
+        "minimum": 1,
+        "maximum": 20
+      }
+    }
+  },
+  "renders": {
+    "wsf-epoch": {
+      "title": "WSF built-up emergence epoch",
+      "assets": [
+        "data"
+      ],
+      "rescale": [
+        [
+          1,
+          20
+        ]
+      ],
+      "colormap_name": "plasma",
+      "nodata": 0
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://data.source.coop/mindearth/wsf/World_WSF_20160701-20260101.zarr/",
+      "type": "application/vnd.zarr; version=3",
+      "title": "WSF Tracker (Zarr V3, consolidated, EPSG:4326)",
+      "description": "13-level multiscales pyramid (min-aggregation overviews), sharded, int8.",
+      "roles": [
+        "data",
+        "cloud-optimized"
+      ]
+    }
+  }
+}

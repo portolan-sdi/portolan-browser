@@ -1,0 +1,111 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
+  ],
+  "id": "cbofs-ssh",
+  "title": "CBOFS sea surface height (ROMS curvilinear, kerchunk-indexed)",
+  "description": "NOAA/NOS Chesapeake Bay Operational Forecast System (CBOFS), published via NODD's rolling kerchunk Zarr V3 index. The pointer at `zarr3/cbofs/refs/main.json` names the current publication's `zarr_uri`; resolved at build time to publication `20261105T194935Z-a52a` (**this URL rotates on every model cycle** -- it will not be the same tomorrow). The store is ROMS/TOMS output, SGRID-0.3 convention: a 2-D curvilinear grid (`lat_rho`/`lon_rho`, each [eta_rho, xi_rho], float64, no CRS/grid_mapping variable at all) rather than a regular or affine-mapped grid. `zeta` (free-surface / sea surface height) is [ocean_time, eta_rho, xi_rho], shape [769, 291, 332], chunks [14, 73, 166], zstd. bbox is an estimate for Chesapeake Bay (the actual footprint requires reading the full lat_rho/lon_rho arrays, not just their metadata).\n\nLicense: NOAA operational model output, public domain (US government work).\n\nExpected browser outcome: refused with a clear notice -- no affine transform and 2-D (non-1-D) spatial coordinates, which this browser's Zarr map support does not handle.",
+  "license": "public-domain",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -77.2,
+          36,
+          -75,
+          40.5
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2026-11-05T18:00:00Z",
+          "2026-11-05T18:00:00Z"
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://noaa-nodd-kerchunk-pds.s3.amazonaws.com/zarr3/cbofs/refs/main.json",
+      "type": "application/json",
+      "title": "Rolling publication pointer (resolved at build time)"
+    }
+  ],
+  "cube:dimensions": {
+    "ocean_time": {
+      "type": "temporal",
+      "unit": "seconds since 2016-01-01"
+    },
+    "eta_rho": {
+      "type": "other",
+      "size": 291
+    },
+    "xi_rho": {
+      "type": "other",
+      "size": 332
+    }
+  },
+  "cube:variables": {
+    "zeta": {
+      "dimensions": [
+        "ocean_time",
+        "eta_rho",
+        "xi_rho"
+      ],
+      "type": "data",
+      "chunks": [
+        14,
+        73,
+        166
+      ],
+      "dtype": "float32",
+      "unit": "meter",
+      "long_name": "free-surface",
+      "description": "Curvilinear grid: no affine transform, coordinates are 2-D lat_rho/lon_rho arrays, not 1-D axes."
+    }
+  },
+  "renders": {
+    "ssh": {
+      "title": "Sea surface height (zeta)",
+      "assets": [
+        "data"
+      ],
+      "rescale": [
+        [
+          -1,
+          1
+        ]
+      ],
+      "colormap_name": "rdbu"
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://noaa-nodd-kerchunk-pds.s3.amazonaws.com/zarr3/cbofs/versions/20261105T194935Z-a52a/data.zarr",
+      "type": "application/vnd.zarr; version=3",
+      "title": "CBOFS fields (Zarr V3, resolved publication, rotates)",
+      "description": "ROMS curvilinear grid, zstd codec. The href above was correct when this fixture was built; refetch refs/main.json for the current publication.",
+      "roles": [
+        "data"
+      ]
+    }
+  }
+}

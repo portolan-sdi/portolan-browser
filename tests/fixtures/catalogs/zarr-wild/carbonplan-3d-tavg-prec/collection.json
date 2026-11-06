@@ -1,0 +1,132 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
+  ],
+  "id": "carbonplan-3d-tavg-prec",
+  "title": "CarbonPlan 3D tavg/prec demo (band axis, no month axis)",
+  "description": "The CarbonPlan ndpyramid demo with a band axis and no time axis: `v2/demo/3d/tavg-prec`, 6 levels, each a group holding `<level>/climate` with dims [band, y, x] float32 and chunks `[2, 128, 128]` -- confirmed from `5/climate/.zarray` ([2, 4096, 4096]) and `0/climate/.zarray`. This is the counterpart to carbonplan-4d-climate, which the amplification guard refuses: there the chunk also spans all 12 months, so a tile read wastes 12x, while here the only non-spatial axis is the band axis the renderer reads whole, so the read wastes nothing.\n\nThe `band` coordinate is a 2-element `<U4` string array; the band order is taken from the 4D store of the same family, where it was confirmed to be `[\"tavg\", \"prec\"]` -- estimated here rather than decoded, since zarrita does not read a `<U4` coordinate.\n\nLicense is unclear for this GCS demo bucket; linked via the CarbonPlan maps project.\n\nExpected browser outcome: draws (viridis ramp on band 1, tavg) at a world view.",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -179.9,
+          -85.06,
+          179.9,
+          85.06
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://storage.googleapis.com/carbonplan-maps/v2/demo/3d/tavg-prec/.zattrs",
+      "type": "application/json",
+      "title": "Source .zattrs (ndpyramid multiscales)"
+    }
+  ],
+  "cube:dimensions": {
+    "band": {
+      "type": "other",
+      "values": [
+        "tavg",
+        "prec"
+      ],
+      "description": "band 0 = tavg, band 1 = prec; order estimated from the 4D store of the same family."
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -20026376.39,
+        20026376.39
+      ],
+      "reference_system": 3857
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -20048966.1,
+        20048966.1
+      ],
+      "reference_system": 3857
+    }
+  },
+  "cube:variables": {
+    "climate": {
+      "dimensions": [
+        "band",
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        2,
+        128,
+        128
+      ],
+      "dtype": "float32",
+      "nodata": 9.969209968386869e+36,
+      "description": "Finest level (path \"5\") is [2, 4096, 4096]; level n is [2, 128 * 2^n, 128 * 2^n].",
+      "statistics": {
+        "minimum": -30,
+        "maximum": 30
+      }
+    }
+  },
+  "renders": {
+    "tavg": {
+      "title": "Mean monthly temperature (tavg band), viridis",
+      "assets": [
+        "data"
+      ],
+      "bidx": [
+        1
+      ],
+      "rescale": [
+        [
+          -30,
+          30
+        ]
+      ],
+      "colormap_name": "viridis"
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://storage.googleapis.com/carbonplan-maps/v2/demo/3d/tavg-prec/",
+      "type": "application/vnd.zarr",
+      "title": "CarbonPlan 3D demo climate pyramid (Zarr V2, EPSG:3857)",
+      "description": "ndpyramid \"reduce\" multiscales, levels \"0\"..\"5\", each a group holding `climate`, `band`, `x`, `y` and `spatial_ref`.",
+      "roles": [
+        "data",
+        "cloud-optimized"
+      ]
+    }
+  }
+}

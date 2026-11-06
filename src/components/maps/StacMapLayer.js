@@ -4,8 +4,14 @@ import { pmtilesProtocol } from './MapMixin.js';
 import {
   resolveRenders, makeRenderTileLoader, renderFromClassification,
   classificationClasses, discreteLegend, assetBands, synthesizeRgbRender, canInheritRender,
+  withAssetEmptiness,
 } from '../../utils/renders.js';
 import { orderedRenderLayers } from '../../utils/renderOrder.js';
+import { isHttpZarrHref, isZarrAsset } from '../../utils/zarrSource.js';
+import { registerGeostationary } from '../../utils/projGeostationary.js';
+import {
+  makeZarrLayerProps, zarrDescriptors, ZARR_NOTICE_ERROR, ZARR_NOTICE_ZOOM_IN,
+} from '../../utils/zarrLayers.js';
 import { openCog } from '../../utils/cogSource.js';
 import { allowWebMercatorOverflow } from '../../utils/cogProjection.js';
 // Import the @developmentseed/geotiff decode worker via Vite's `?worker` suffix
@@ -144,6 +150,41 @@ function cogKey(asset) {
 // are counted (see getCogOverflowCount).
 const COG_LAYER_CAP = 16;
 
+// The same cap over a store's variables.
+//
+// A Zarr store names one variable per measurement, and a weather archive names
+// twenty-five of them. Listing them all is cheap, but the picker stops being
+// readable and every entry switched on costs a 64 MB tile cache and sixteen
+// requests in flight, so the Zarr variables are counted against the COG cap
+// too.
+//
+// A visible descriptor is kept whatever the cap says: it is either the
+// variable the user selected or the one the render was written for, and
+// dropping it would leave the map blank with a layer switched on. The rest
+// fill what is left of the cap in list order.
+//
+// The cap is shared with the COGs the picker already lists, not granted again:
+// one picker has one budget, and counting the variables against a cap of their
+// own listed sixteen of them beside sixteen COGs.
+//
+// @param listed How many entries the picker already holds.
+// @returns The descriptors to list, and how many were left out.
+function capZarrList(list, listed = 0) {
+  const cap = Math.max(0, COG_LAYER_CAP - listed);
+  if (list.length <= cap) {return { descriptors: list, overflow: 0 };}
+  const kept = [];
+  let budget = cap - list.filter(d => d.visible).length;
+  for (const descriptor of list) {
+    if (descriptor.visible) {
+      kept.push(descriptor);
+    } else if (budget > 0) {
+      kept.push(descriptor);
+      budget--;
+    }
+  }
+  return { descriptors: kept, overflow: list.length - kept.length };
+}
+
 // Normalize a PMTiles source URL for comparison. Strips the `pmtiles://`
 // prefix and resolves relative URLs to absolute so that a style source URL
 // can be matched against a loaded source's URL regardless of form.
@@ -219,6 +260,10 @@ export default class StacMapLayer {
     this._cogList = [];
     // COG assets the layer picker had to leave out (see COG_LAYER_CAP).
     this._cogOverflow = 0;
+    // The notice currently on the map, and whether a Zarr refusal is what put
+    // it there. See _postNotice.
+    this._activeNotice = null;
+    this._zarrRefusalShown = false;
     // COG id -> a promise of its COGLayer props. The promise, not the resolved
     // props, so two overlapping syncs share one header open: the second finds
     // the first's entry and awaits it instead of opening the COG again. An
@@ -232,6 +277,11 @@ export default class StacMapLayer {
     // True when the last sync failed to open at least one visible COG. setAssets
     // reads it, so a failed run does not record its signature as a success.
     this._cogSyncFailed = false;
+    // Zarr layers held back below their minimum zoom, and the one map listener
+    // that re-checks them as the user zooms. See _noticeZarrZoom.
+    this._zarrHeld = [];
+    this._zarrZoomHandler = null;
+    this._zarrZoomNoticeShown = false;
     this._assetsSig = null;
     this._deckOverlay = null;
     this._overlayLayerIds = [];
@@ -457,7 +507,7 @@ export default class StacMapLayer {
     // described (e.g. after switching to a tile asset, or after a retry
     // succeeds). Skipped-by-signature calls above never reach this: their
     // previous successful run's notice still describes the current map.
-    this.options.onVectorNotice?.(null);
+    this._postNotice(null);
 
     this.assets = assets;
     this._removeCogLayers();
@@ -746,7 +796,7 @@ export default class StacMapLayer {
     }
 
     if (rendered === 0 && firstNotice && epoch === this._overlayEpoch) {
-      this.options.onVectorNotice?.(firstNotice);
+      this._postNotice(firstNotice);
     }
     return rendered > 0;
   }
@@ -997,11 +1047,22 @@ export default class StacMapLayer {
     return all.filter(isCogAsset);
   }
 
+  // Zarr assets of the current item that the browser can read. An `s3://`
+  // store is listed by many catalogs beside its https twin; the browser cannot
+  // read it, so it is left out rather than listed as a layer that fails.
+  _collectZarrAssets() {
+    const all = typeof this.stac?.getAssets === 'function'
+      ? this.stac.getAssets()
+      : (this.assets || []);
+    return all.filter(a => isZarrAsset(a) && isHttpZarrHref(a.getAbsoluteUrl?.() || a.href || ''));
+  }
+
   async _addCogAssets(assets, epoch) {
     const allCogs = this._collectCogAssets();
     if (allCogs.length === 0) {
-      this._cogList = [];
-      this._cogOverflow = 0;
+      const { descriptors, overflow } = this._buildZarrList(assets);
+      this._cogList = descriptors;
+      this._cogOverflow = overflow;
       await this._syncCogLayers(epoch);
       return;
     }
@@ -1025,8 +1086,55 @@ export default class StacMapLayer {
     // a scene listed after it would otherwise cover it.
     const ordered = [...stacked, ...rest.filter(a => !isOverlayAsset(a)), ...rest.filter(isOverlayAsset)];
     const preferred = new Map(stack.map(l => [cogKey(l.asset), l]));
-    this._cogList = this._buildCogList(ordered, active, renders, preferred);
+    // Rasters share one deck overlay and one layer picker, whatever format
+    // they arrive in. Zarr layers follow the COGs, so a COG the item ships for
+    // display stays the default view.
+    // The COG list is built first, because the Zarr variables share the
+    // picker's cap with it rather than getting one of their own.
+    const cogList = this._buildCogList(ordered, active, renders, preferred);
+    const { descriptors: zarrDescs, overflow: zarrOverflow } =
+      this._buildZarrList(assets, cogList.length);
+    this._cogList = [...cogList, ...zarrDescs];
+    // _buildCogList records the COGs it had to leave out; the Zarr list adds
+    // the variables it had to leave out to the same count.
+    this._cogOverflow += zarrOverflow;
     await this._syncCogLayers(epoch);
+  }
+
+  // Descriptors for the item's Zarr assets: one per variable of each store.
+  // No store is opened here — see zarrDescriptors — so listing twenty-five
+  // variables of a weather archive costs nothing until one is switched on.
+  //
+  // `assets` carries the user's "show on map" selection. A Zarr variable is
+  // visible when its asset was selected, or, with nothing selected, when it is
+  // the variable the asset's render was written for (see defaultVariable).
+  //
+  // The list is capped the way the COG list is — see capZarrList — so the
+  // return carries the descriptors and the count that did not fit.
+  _buildZarrList(assets, listed = 0) {
+    const zarrAssets = this._collectZarrAssets();
+    if (zarrAssets.length === 0) {return { descriptors: [], overflow: 0 };}
+    const renders = resolveRenders(this.stac);
+    const entries = Object.entries(renders).filter(([, r]) => r && typeof r === 'object');
+    const selectedKeys = new Set((assets || []).filter(isZarrAsset).map(a => cogKey(a)));
+    const anySelected = selectedKeys.size > 0;
+
+    const list = [];
+    for (const asset of zarrAssets) {
+      const key = cogKey(asset);
+      const render = entries.find(([, r]) =>
+        Array.isArray(r.assets) && r.assets.includes(key))?.[1] ?? null;
+      for (const descriptor of zarrDescriptors(asset, this.stac, render)) {
+        list.push({
+          ...descriptor,
+          legend: discreteLegend(descriptor.render, []),
+          visible: anySelected
+            ? selectedKeys.has(key) && descriptor.preferred !== false
+            : Boolean(descriptor.preferred ?? true),
+        });
+      }
+    }
+    return capZarrList(list, listed);
   }
 
   // Build the capped, ordered list of COG descriptors. List order is preserved
@@ -1112,7 +1220,10 @@ export default class StacMapLayer {
     }
 
     if (direct) {
-      return { asset, render: direct[1], title: direct[1].title || direct[0] };
+      // A declared render states colour, not coverage. The asset's bands keep
+      // their say about where it holds no data. See withAssetEmptiness.
+      const render = withAssetEmptiness(direct[1], asset);
+      return { asset, render, title: direct[1].title || direct[0] };
     }
     const rgb = synthesizeRgbRender(asset);
     if (rgb) {
@@ -1143,15 +1254,37 @@ export default class StacMapLayer {
   // out as an overridable seam so unit tests can inject a test double and
   // exercise the reconciliation below without WebGL.
   async _loadDeckDeps() {
-    const [{ MapboxOverlay }, { COGLayer }, { DecoderPool, GeoTIFF }] = await Promise.all([
-      import('@deck.gl/mapbox'),
-      import('@developmentseed/deck.gl-geotiff'),
-      import('@developmentseed/geotiff'),
-    ]);
+    const [{ MapboxOverlay }, { COGLayer }, { DecoderPool, GeoTIFF }, { default: proj4 }] =
+      await Promise.all([
+        import('@deck.gl/mapbox'),
+        import('@developmentseed/deck.gl-geotiff'),
+        import('@developmentseed/geotiff'),
+        import('proj4'),
+      ]);
+    // A layer builds its own proj4 transform from the asset's CRS. The alias
+    // has to exist before that, or a geostationary grid fails inside the
+    // layer. vite.config.js dedupes proj4, so this is the layer's instance.
+    registerGeostationary(proj4);
     // COGLayer reads the EPSG:3857 definition when it opens a COG. See
     // utils/cogProjection for the grids west of -180 that need this.
     allowWebMercatorOverflow();
     return { MapboxOverlay, COGLayer, DecoderPool, GeoTIFF };
+  }
+
+  // The Zarr backend, loaded only when a Zarr layer is actually switched on.
+  // zarrita and the GeoZarr parser are a separate chunk from the COG reader,
+  // so an item with no Zarr asset never downloads them. Split out as an
+  // overridable seam, like _loadDeckDeps.
+  async _loadZarrDeps() {
+    const [{ ZarrLayer }, zarr, { default: proj4 }] = await Promise.all([
+      import('@developmentseed/deck.gl-zarr'),
+      import('zarrita'),
+      import('proj4'),
+    ]);
+    // See the note in _loadDeckDeps. ZarrLayer reprojects every chunk, so it
+    // needs the geostationary alias before it reads the store's CRS.
+    registerGeostationary(proj4);
+    return { ZarrLayer, zarr };
   }
 
   // Reconcile the deck.gl overlay with `_cogList`: one COGLayer per visible
@@ -1186,6 +1319,12 @@ export default class StacMapLayer {
         this._deckOverlay = null;
       }
       this._cogLayerCache.clear();
+      // Nothing is on the map, so nothing is held back below its zoom either,
+      // and nothing was refused. Switching the layer off has to take either
+      // message down with it, or it stays on screen for a layer that is no
+      // longer there and the next zoom puts it back.
+      this._clearZarrRefusal();
+      this._noticeZarrZoom([]);
       return;
     }
 
@@ -1210,6 +1349,7 @@ export default class StacMapLayer {
       // descriptors are opened in parallel. One COG that fails to open is
       // dropped on its own and leaves the others on the map.
       let failed = false;
+      let zarrNotice = null;
       const built = await Promise.all(visible.map(async d => {
         // The entry goes in before the await, so a sync that starts while this
         // open is in flight joins it. Two opens of one COG would read the
@@ -1217,24 +1357,55 @@ export default class StacMapLayer {
         // discard the layer's decoded tiles.
         let pending = this._cogLayerCache.get(d.id);
         if (!pending) {
-          pending = this._makeCogLayerProps(d, DecoderPool, GeoTIFF);
+          pending = d.kind === 'zarr'
+            ? this._makeZarrLayerProps(d)
+            : this._makeCogLayerProps(d, DecoderPool, GeoTIFF)
+              .then(props => ({ Layer: COGLayer, props }));
           this._cogLayerCache.set(d.id, pending);
         }
         try {
-          return { id: d.id, props: await pending };
+          return { id: d.id, ...await pending };
         } catch (err) {
-          console.warn(`Failed to open COG "${d.id}"`, err);
+          const label = d.kind === 'zarr' ? 'Zarr' : 'COG';
+          console.warn(`Failed to open ${label} "${d.id}"`, err);
           // Drop the failed open so an identical retry opens it again. Only
           // this attempt's own entry: a later sync may have replaced it.
           if (this._cogLayerCache.get(d.id) === pending) {this._cogLayerCache.delete(d.id);}
           failed = true;
+          // A Zarr layer that failed to open says why. A refusal carries the
+          // reason it was refused for — the store's chunking, its projection,
+          // its missing spatial metadata — and anything else falls back to the
+          // generic reason, because a layer switched on that draws nothing and
+          // says nothing reads as a bug in the browser.
+          if (d.kind === 'zarr' && !zarrNotice) {
+            zarrNotice = {
+              format: 'zarr',
+              reason: err?.reason ?? ZARR_NOTICE_ERROR,
+              title: d.title,
+              ...err?.detail,
+            };
+          }
           return null;
         }
       }));
       if (stale()) {return;}
       this._cogSyncFailed = failed;
+      if (zarrNotice) {
+        // The refusal takes the one notice slot. The held-back list is dropped
+        // with it, because a zoomend that still found the old list there would
+        // replace this refusal with the zoom notice of a layer that is gone.
+        this._zarrHeld = [];
+        this._postNotice(zarrNotice);
+        this._zarrRefusalShown = true;
+      } else {
+        // Nothing was refused this time, so a refusal still on screen is
+        // about a layer that is no longer there — the user switched the
+        // refused variable off, or switched to one that draws.
+        this._clearZarrRefusal();
+        this._noticeZarrZoom(built);
+      }
 
-      const layers = built.filter(Boolean).map(entry => new COGLayer(entry.props));
+      const layers = built.filter(Boolean).map(entry => new entry.Layer(entry.props));
       // Every visible COG failed to open, so there is nothing to draw. Empty
       // the overlay rather than leave an earlier sync's rasters on the map,
       // which the picker would no longer list. The next sync rebuilds it.
@@ -1287,6 +1458,115 @@ export default class StacMapLayer {
     return props;
   }
 
+  // Open a Zarr descriptor's store and build its layer. Unlike a COG, which
+  // is one picture whose header says how to draw it, a Zarr store has to be
+  // inspected before the browser knows whether it can be drawn at all — see
+  // makeZarrLayerProps, which throws a ZarrUnsuitableError when it cannot.
+  async _makeZarrLayerProps(descriptor) {
+    // The bounding box is read before the await. Loading the Zarr backend is a
+    // chunk download, and the item can be navigated away from while it is in
+    // flight: `this.stac` is then null, and a missing box would widen the zoom
+    // guard from the item's own extent to the whole world. See issue #73.
+    const bbox = this.stac?.getBoundingBox?.();
+    const { ZarrLayer, zarr } = await this._loadZarrDeps();
+    const { props, minZoom, hasOverviews } = await makeZarrLayerProps(descriptor, { zarr, bbox });
+    return { Layer: ZarrLayer, props, minZoom, hasOverviews };
+  }
+
+  // Tell the user why a Zarr layer that loaded fine is drawing nothing.
+  //
+  // A store with no overviews is held back below the zoom where its one level
+  // is affordable (see zarrMinZoom), and deck.gl's answer to a viewport below
+  // a layer's `minZoom` is an empty tile list. That is correct but silent, and
+  // a blank map with a layer switched on reads as a bug.
+  //
+  // The message has to follow the viewport, so the held-back layers are kept
+  // and re-checked on every zoom: the notice clears itself once the user
+  // zooms in far enough for the data to draw.
+  _noticeZarrZoom(built) {
+    this._zarrHeld = built.filter(entry => entry && entry.minZoom > 0);
+    if (this._zarrHeld.length === 0) {
+      // Nothing is held back any more: the held layer was switched off, or the
+      // user switched to a variable that draws at this zoom. Either way a zoom
+      // notice this layer put up is now about nothing, so it comes down here
+      // rather than waiting for a zoom that may never happen.
+      this._clearZarrZoomNotice();
+      return;
+    }
+    if (!this._zarrZoomHandler && typeof this.map?.on === 'function') {
+      this._zarrZoomHandler = () => this._applyZarrZoomNotice();
+      this.map.on('zoomend', this._zarrZoomHandler);
+    }
+    this._applyZarrZoomNotice();
+  }
+
+  // Take down a zoom notice this layer put up, and only that one. The flag is
+  // what says the notice on screen is ours; without it a clear would wipe
+  // whatever another format had put there.
+  _clearZarrZoomNotice() {
+    if (!this._zarrZoomNoticeShown) {return;}
+    this._zarrZoomNoticeShown = false;
+    this._postNotice(null);
+  }
+
+  // Take down a refusal notice this layer put up, and only that one. The flag
+  // is what says the notice on screen is ours; without it a clear would wipe
+  // whatever another format had put there.
+  _clearZarrRefusal() {
+    if (!this._zarrRefusalShown) {return;}
+    this._zarrRefusalShown = false;
+    this._postNotice(null);
+  }
+
+  // Every notice this layer puts on the map goes through here.
+  //
+  // There is one notice slot and three messages competing for it: a GeoParquet
+  // file too large to draw, a Zarr store that was refused, and a Zarr store
+  // held back below its minimum zoom. Only the last of those re-posts on its
+  // own — on every zoomend — so without a record of what is already on screen
+  // it overwrote the other two the moment the user zoomed. See
+  // _applyZarrZoomNotice, which is the one emission that defers.
+  //
+  // Posting also drops both Zarr flags, and the two emissions that own one set
+  // it again straight after. That is what keeps a flag meaning "this message
+  // of mine is the one on screen" rather than "I posted one once": a stale
+  // flag would have a later clear wipe whatever had replaced it.
+  _postNotice(notice) {
+    this._activeNotice = notice ?? null;
+    this._zarrRefusalShown = false;
+    this._zarrZoomNoticeShown = false;
+    this.options.onVectorNotice?.(notice ?? null);
+  }
+
+  _applyZarrZoomNotice() {
+    const zoom = this.map?.getZoom?.();
+    if (typeof zoom !== 'number') {return;}
+    // With nothing held back there is no zoom notice to put up or take down.
+    // Taking the notice down here anyway would wipe another format's notice —
+    // a GeoParquet file too large to draw — on the next zoom the user makes.
+    // _noticeZarrZoom owns the clearing, because it is what knows the held
+    // list just became empty.
+    if (!this._zarrHeld?.length) {return;}
+    const held = this._zarrHeld.find(entry => entry.minZoom > zoom);
+    if (!held) {
+      // Only clear a notice this check is responsible for. Another format's
+      // notice (a GeoParquet file that was too large) must survive a zoom.
+      this._clearZarrZoomNotice();
+      return;
+    }
+    // Another format's message holds the slot. A GeoParquet file too large to
+    // draw is still too large at the next zoom, and this notice re-posts on
+    // every one of them, so it waits rather than replacing it.
+    if (this._activeNotice && this._activeNotice.format !== 'zarr') {return;}
+    this._postNotice({
+      format: 'zarr',
+      reason: ZARR_NOTICE_ZOOM_IN,
+      minZoom: held.minZoom,
+      hasOverviews: held.hasOverviews,
+    });
+    this._zarrZoomNoticeShown = true;
+  }
+
   fit(padding = { top: 160, bottom: 50, left: 50, right: 50 }) {
     if (!this.stac || !this.map) {return;}
     const bbox = this.stac.getBoundingBox();
@@ -1334,7 +1614,10 @@ export default class StacMapLayer {
     return [...this.getFootprintLayerIds(), ...this.getChildrenLayerIds(), ...this._overlayLayerIds];
   }
 
-  /** How many COG assets the layer picker could not list (see COG_LAYER_CAP). */
+  /**
+   * How many raster layers the layer picker could not list: COG assets, plus
+   * the variables of a Zarr store past the same cap. See COG_LAYER_CAP.
+   */
   getCogOverflowCount() {
     return this._cogOverflow;
   }
@@ -1401,6 +1684,10 @@ export default class StacMapLayer {
     this._clearLayers();
     this._removeCogLayers();
     this._removeOverlayLayers();
+    if (this._zarrZoomHandler) {
+      try { this.map?.off?.('zoomend', this._zarrZoomHandler); } catch { /* map already gone */ }
+      this._zarrZoomHandler = null;
+    }
     // The instance is done for: nothing will read these bytes, so stop paying
     // for them, and release the decoded FeatureCollections.
     this._abortInflightParquet();
@@ -1604,6 +1891,11 @@ export default class StacMapLayer {
     this._cogList = [];
     this._cogOverflow = 0;
     this._cogLayerCache.clear();
+    // No Zarr layer is held back any more, and no zoom notice of ours is on
+    // screen. Leaving the flag set would have the next zoomend clear a notice
+    // that by then belongs to another format. See _applyZarrZoomNotice.
+    this._zarrHeld = [];
+    this._zarrZoomNoticeShown = false;
     // Invalidate the setAssets idempotency signature here so every teardown path
     // (setAssets, remove, readdAfterStyleChange) forces the next setAssets to
     // rebuild. A successful setAssets run re-records the signature at its end;

@@ -1,0 +1,156 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.2.0/schema.json",
+    "https://stac-extensions.github.io/datacube/v2.2.0/schema.json",
+    "https://stac-extensions.github.io/render/v2.0.0/schema.json"
+  ],
+  "id": "ftw-predictions-zarr",
+  "title": "Fields of The World: global field prediction probabilities (Zarr V3, 14 levels)",
+  "description": "Per-pixel softmax probabilities from the PRUE field-boundary model over the FTW global Sentinel-2 composites, as one Zarr V3 datacube on source.coop. The store describes itself properly, which is why it belongs in this catalog as a control: root attributes carry `proj:code` EPSG:4326, `spatial:dimensions`, `spatial:transform`, `spatial:shape` and `spatial:registration`, and `multiscales` in the array spelling with 14 datasets (`.`, `2x`, `4x` .. `8192x`), each stating its own `factor`, `spatial:transform` and `spatial:shape`. The data array is `variables`, [time(2), band(3), y(1566049), x(4007517)] float32, `sharding_indexed` with a [1, 3, 8192, 8192] shard -- so the shard spans all three softmax bands and one time step, which is exactly what one map tile reads, and the amplification guard has nothing to object to. Confirmed from the store's own `zarr.json` documents and its publisher STAC collection. CORS confirmed (`access-control-allow-origin: *`).\n\nLicense confirmed from the publisher collection: CC-BY-4.0.\n\nExpected browser outcome: draws (viridis ramp on the `field` probability band) at a world view -- the coarsest level is one chunk.",
+  "license": "CC-BY-4.0",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -180,
+          -56.93171310991181,
+          180.00005391686943,
+          83.748345
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2024-01-01T00:00:00Z",
+          "2025-01-01T00:00:00Z"
+        ]
+      ]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "Wild Zarr/Icechunk test catalog"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "via",
+      "href": "https://data.source.coop/ftw/global-data/predictions/zarr/collection.json",
+      "type": "application/json",
+      "title": "Publisher STAC collection"
+    },
+    {
+      "rel": "via",
+      "href": "https://data.source.coop/ftw/global-data/predictions/zarr/alpha/global.zarr/zarr.json",
+      "type": "application/json",
+      "title": "Source store root zarr.json"
+    }
+  ],
+  "cube:dimensions": {
+    "time": {
+      "type": "temporal",
+      "extent": [
+        "2024-01-01T00:00:00Z",
+        "2025-01-01T00:00:00Z"
+      ],
+      "values": [
+        "2024-01-01T00:00:00Z",
+        "2025-01-01T00:00:00Z"
+      ],
+      "description": "Prediction year (CF time: days since 2024-01-01)."
+    },
+    "band": {
+      "type": "other",
+      "values": [
+        "non_field_background",
+        "field",
+        "field_boundaries"
+      ],
+      "description": "PRUE softmax output classes."
+    },
+    "x": {
+      "type": "spatial",
+      "axis": "x",
+      "extent": [
+        -180,
+        180.00005391686943
+      ],
+      "step": 0.0000898311982,
+      "reference_system": 4326
+    },
+    "y": {
+      "type": "spatial",
+      "axis": "y",
+      "extent": [
+        -56.93171310991181,
+        83.748345
+      ],
+      "step": -0.0000898311982,
+      "reference_system": 4326
+    }
+  },
+  "cube:variables": {
+    "variables": {
+      "dimensions": [
+        "time",
+        "band",
+        "y",
+        "x"
+      ],
+      "type": "data",
+      "chunks": [
+        1,
+        3,
+        8192,
+        8192
+      ],
+      "dtype": "float32",
+      "unit": "1",
+      "long_name": "Per-pixel class probability (softmax) from the PRUE model",
+      "description": "Finest level is the root array itself, [2, 3, 1566049, 4007517]; 13 average-resampled overviews follow at 2x .. 8192x. The array really is named `variables`.",
+      "statistics": {
+        "minimum": 0,
+        "maximum": 1
+      }
+    }
+  },
+  "renders": {
+    "field": {
+      "title": "Field probability (band 2), viridis",
+      "assets": [
+        "data"
+      ],
+      "bidx": [
+        2
+      ],
+      "rescale": [
+        [
+          0,
+          1
+        ]
+      ],
+      "colormap_name": "viridis"
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "https://data.source.coop/ftw/global-data/predictions/zarr/alpha/global.zarr",
+      "type": "application/vnd.zarr; version=3; profile=multiscales",
+      "title": "PRUE prediction probabilities (Zarr V3 datacube, 14 levels)",
+      "description": "Self-describing: spatial and geo-proj conventions on the root group, 14 multiscale levels each stating its own transform and shape.",
+      "roles": [
+        "data",
+        "cloud-optimized"
+      ]
+    }
+  }
+}
