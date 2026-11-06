@@ -36,25 +36,48 @@ export const VECTOR_NOTICE_ERROR = 'error';
 // problem is the declared CRS or the coordinates themselves.
 export const VECTOR_NOTICE_REPROJECTION = 'reprojection';
 
-// True when an href is a glob pattern, such as the `./country=*/*.parquet` asset
-// portolan-cli writes beside `partition:glob` on a partitioned collection. A glob
-// names many files, and HTTP cannot list them, so there is no single file to
-// fetch. `getAbsoluteUrl()` percent-encodes the `*`, hence the `%2A` check.
-export function isGlobHref(href) {
-  return /\*|%2a/i.test(href || '');
+// Both spellings of the wildcard that marks a glob href, such as the
+// `./country=*/*.parquet` asset portolan-cli writes beside `partition:glob` on
+// a partitioned collection. stac-js resolves an href through a URI library
+// that percent-encodes `*`, so a published `zone=*/utm*.parquet` reaches a
+// caller as `zone=%2A/utm%2A.parquet`.
+// Not a global regex: `test` on one carries `lastIndex` between calls, and
+// `split` matches every occurrence either way.
+export const WILDCARD = /\*|%2A/i;
+
+// Only the path is examined. A wildcard in a query string or a fragment is a
+// literal character of the URL, not a pattern over object keys — a signed URL
+// such as `data.parquet?token=ab*cd` names one file.
+export function hasGlobPattern(url) {
+  if (!url) {
+    return false;
+  }
+  return WILDCARD.test(url.split('#')[0].split('?')[0]);
+}
+
+function matchesParquet(type, href) {
+  return PARQUET_MEDIA_TYPES.some(mt => type.includes(mt)) || href.endsWith('.parquet');
 }
 
 // Matches the sibling predicates in StacMapLayer (isCogAsset/isPmtilesAsset):
 // substring media-type match — so parameterized types like
 // `application/vnd.apache.parquet; charset=binary` are detected — plus an
 // `.parquet` href fallback for untyped assets. Shared by the map render path
-// and the table preview so both detect the same assets. A glob href is not a
-// file either can load, so it is left out.
+// and the table preview so both detect the same assets. A glob asset is a
+// parquet asset: the table preview resolves its pattern to one partition
+// through utils/parquetGlob.js. A caller that fetches the href as one file
+// filters with isLoadableParquetAsset below.
 export function isParquetAsset(asset) {
-  const type = asset.type || '';
   const href = asset.getAbsoluteUrl?.() || asset.href || '';
-  if (isGlobHref(asset.href) || isGlobHref(href)) {
-    return false;
-  }
-  return PARQUET_MEDIA_TYPES.some(mt => type.includes(mt)) || href.endsWith('.parquet');
+  return matchesParquet(asset.type || '', href);
+}
+
+// A parquet asset whose href names one fetchable file. The map render path
+// downloads an asset's bytes directly and cannot expand a glob, so it filters
+// with this predicate and leaves glob assets to the table preview. The href
+// is computed once: stac-js builds the absolute URL on every getAbsoluteUrl
+// call, and the map filters whole asset lists with this predicate.
+export function isLoadableParquetAsset(asset) {
+  const href = asset.getAbsoluteUrl?.() || asset.href || '';
+  return matchesParquet(asset.type || '', href) && !hasGlobPattern(href);
 }

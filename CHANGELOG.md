@@ -38,6 +38,10 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
   each band by its own `rescale`, instead of ramping the first band through a colormap
 - The layer picker says how many raster assets it could not list, instead of quietly
   showing a shorter list
+- The data preview of a partitioned collection resolves a glob asset href to the
+  collection's first partition and shows that file, with a note that names the partition.
+  The row counts measure the whole collection, from `table:row_count` or from the
+  item mirror, and fall back to the partition's own count when neither settles the total
 - A Zarr or Icechunk asset draws on the map. The browser reads the chunks from object
   storage, reprojects them and colours them from the `renders` the catalog declares. No
   tile server takes part. A Zarr asset becomes one layer per variable, and the browser
@@ -63,9 +67,9 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 - A COG whose west edge lies west of -180, such as a 0.5° grid with its origin at -180.3125,
   draws at its georeferenced position. Before, the whole raster drew shifted and stretched, and
   the console reported that the mesh refinement did not converge
-- The data preview and the map skip a Parquet asset whose href is a glob, such as the
-  `./country=*/*.parquet` asset that portolan-cli adds to a partitioned collection. The
-  preview loads the next Parquet asset instead of failing with `fetch head failed 404`
+- The map skips a Parquet asset whose href is a glob, such as the `./country=*/*.parquet`
+  asset that portolan-cli adds to a partitioned collection. The map downloads one file,
+  and a glob names many, so the asset no longer fails with `fetch head failed 404`
 - A raster layer no longer paints over the map controls: the layer picker, the style
   picker and the map notices stayed clickable but became invisible behind an enabled COG
 - Band statistics are read from `raster:bands` as well as `bands`, so a raster-extension

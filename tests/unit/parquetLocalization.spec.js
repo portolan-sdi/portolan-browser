@@ -12,6 +12,10 @@ vi.mock('../../src/utils/parquet', () => ({
   loadParquetMetadata: vi.fn(),
   loadParquetRows: vi.fn(),
   getBboxForRow: vi.fn(),
+  GLOB_UNRESOLVED: 'globUnresolved',
+  isLoadableParquetAsset: () => true,
+  readMirrorRowTotal: vi.fn(),
+  resolveParquetGlob: vi.fn(asset => Promise.resolve({ url: asset.getAbsoluteUrl(), partition: null })),
   MAX_ROWS: 10000,
 }))
 
