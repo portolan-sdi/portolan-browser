@@ -3,6 +3,11 @@ export default class BboxDrawInteraction {
     this.map = map;
     this.onExtentChanged = onExtentChanged;
     this._drawing = false;
+    // Armed: the next drag draws a box with no modifier key held, for a UI
+    // that offers a "Draw a box" button instead of teaching Shift-drag. One
+    // box per arming -- a mode the user cannot see they are still in is
+    // worse than one they have to re-enter.
+    this._armed = false;
     this._startPoint = null;
     this._sourceId = 'bbox-draw-source';
     this._fillLayerId = 'bbox-draw-fill';
@@ -44,7 +49,7 @@ export default class BboxDrawInteraction {
   }
 
   _onMouseDown(e) {
-    if (!e.shiftKey) {return;}
+    if (!e.shiftKey && !this._armed) {return;}
     e.preventDefault();
     this._drawing = true;
     this._startPoint = { x: e.offsetX, y: e.offsetY };
@@ -78,8 +83,27 @@ export default class BboxDrawInteraction {
     }
 
     this._startPoint = null;
+    this.setArmed(false);
     const extent = [sw.lng, sw.lat, ne.lng, ne.lat];
     this.onExtentChanged(extent);
+  }
+
+  /**
+   * Let the next drag draw a box without Shift, and show a crosshair while
+   * it is pending. Disarmed again by the drag that draws, or by the caller.
+   * @param {boolean} armed
+   */
+  setArmed(armed) {
+    this._armed = Boolean(armed);
+    const canvas = this.map.getCanvas?.();
+    if (canvas) {
+      canvas.style.cursor = this._armed ? 'crosshair' : '';
+    }
+    return this._armed;
+  }
+
+  get armed() {
+    return this._armed;
   }
 
   _updateRect(start, end) {
@@ -124,6 +148,7 @@ export default class BboxDrawInteraction {
   }
 
   destroy() {
+    this.setArmed(false);
     const canvas = this.map.getCanvas();
     canvas.removeEventListener('mousedown', this._onMouseDown);
     canvas.removeEventListener('mousemove', this._onMouseMove);

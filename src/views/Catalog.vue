@@ -4,7 +4,7 @@
       <MapView
         ref="mapView" :stac="data" v-bind="mapData" @changed="dataChanged"
         @empty="handleEmptyMap" popover
-        hideFootprint
+        hideFootprint overlayWidgets
       />
     </section>
     <b-row>
@@ -396,6 +396,11 @@ export default defineComponent({
     // reason a layer does not draw never reaches the screen.
     .map-textcontrol {
       top: 160px;
+    }
+
+    // Same offset for the overlay widgets' own top edge.
+    .map-overlay-widgets {
+      --sb-map-overlay-top: 160px;
     }
   }
 

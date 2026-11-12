@@ -5,7 +5,7 @@
         <!-- eslint-disable-next-line vue/no-unused-refs -- read by ShowAssetLinkMixin.showAsset() -->
         <b-tabs v-model="tab" ref="tabs" card pills vertical end>
           <b-tab :title="$t('map')" :id="tabIds.map" no-body>
-            <MapView ref="mapView" :stac="data" :assets="selectedAssets" @changed="dataChanged" @empty="handleEmptyMap" />
+            <MapView ref="mapView" :stac="data" :assets="selectedAssets" @changed="dataChanged" @empty="handleEmptyMap" overlayWidgets />
           </b-tab>
           <b-tab v-if="hasThumbnails" :id="tabIds.thumbnails" :title="$t('thumbnails')" no-body>
             <Thumbnails :thumbnails="thumbnails" />
@@ -132,6 +132,11 @@ export default defineComponent({
     // reason a layer does not draw never reaches the screen.
     .map-textcontrol {
       top: 160px;
+    }
+
+    // Same offset for the overlay widgets' own top edge.
+    .map-overlay-widgets {
+      --sb-map-overlay-top: 160px;
     }
 
     // The hero map is pulled up underneath the site header (z-index 10),

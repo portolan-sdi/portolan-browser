@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Collection from 'stac-js/src/collection.js'
 import Item from 'stac-js/src/item.js'
+import { createMapHost } from '../../src/components/maps/mapHost.js'
 
 // The whole feature's correctness is decided by the order in which MapView
 // calls expectStyleFields, setAssets, setStyleFields and applyStyleAtIndex.
@@ -133,6 +134,10 @@ function createView(overrides = {}) {
     hideFootprint: false,
     popover: false,
     map: {},
+    // The real host. Applying a style re-stacks the layer list, and overlay
+    // widgets have to be told so they can raise their own layers back above
+    // the data -- see src/components/maps/mapHost.js.
+    mapHost: createMapHost(),
     stacLayerOptions: {},
     stacLayer: null,
     availableStyles: [],
@@ -425,6 +430,23 @@ describe('MapView style orchestration', () => {
       expect(view.activeStyleIndex).toBe(0)
       expect(view.styleApplied).toBe(true)
       expect(view.stacLayer.applied).toEqual(['https://example.com/boundaries/nl/styles/a.json'])
+    })
+
+    it('tells the overlay widgets that applying a style re-stacked the layers', async () => {
+      // A collection's GL style puts its data layers in below the basemap's
+      // labels, which is *above* anything a map-overlay widget added before
+      // them. Without this notification an outline drawn to frame the data
+      // ends up buried under it -- which is what happened to AreaDownload.
+      const view = createView({ stac: twoStyles() })
+      const restacked = vi.fn()
+      view.mapHost.setMap({})
+      view.mapHost.onStyleReload(restacked)
+
+      await view.addStacLayer()
+      expect(restacked).toHaveBeenCalledTimes(1)
+
+      view.applyStyleAtIndex(1)
+      expect(restacked).toHaveBeenCalledTimes(2)
     })
 
     it('does not snap back a style the user chose while the assets were loading', async () => {
