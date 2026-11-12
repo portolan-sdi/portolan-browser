@@ -1,15 +1,20 @@
 // The "Download data" widget's glue: the cheap `condition` gate, the
-// stac-js -> DatasetDescriptor derivation, and the two code generators.
+// stac-js -> DatasetDescriptor derivation, the two code generators, and the
+// two pieces of map plumbing the on-map redesign added -- the map host that
+// hands the page's real map to a `map-overlay` widget, and the draw
+// interaction's button-driven armed mode.
 //
 // Fixtures are trimmed from real Portolan catalogs: geoboundaries-catalog's
 // adm0 collection (single GeoParquet, relative hrefs, bbox covering) and
 // firms-catalog's hive-partitioned detections collection (no parquet asset
 // at all, an s3:// partition glob, one item per year).
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { Collection, Item } from 'stac-js'
 import { mayHaveDownloadableVector } from '../../src/utils/download/support.js'
 import { describeDataset, toPlainStacJson } from '../../src/utils/download/descriptor.js'
+import { createMapHost } from '../../src/components/maps/mapHost.js'
+import BboxDrawInteraction from '../../src/components/maps/BboxDrawInteraction.js'
 import DownloadRequestGenerator from '../../src/codegen/DownloadRequestGenerator.js'
 import DuckDbSqlGenerator from '../../src/codegen/DuckDbSqlGenerator.js'
 
@@ -309,5 +314,136 @@ describe('DuckDbSqlGenerator', () => {
     })
     expect(sql).toContain('"acq_datetime" >= \'2020-01-01\'')
     expect(sql).toContain('"acq_datetime" < \'2021-01-01\'')
+  })
+})
+
+describe('createMapHost (the map-overlay extension point)', () => {
+  const fakeMap = id => ({ id })
+
+  it('hands a late subscriber the map that already exists', () => {
+    const host = createMapHost()
+    host.setMap(fakeMap('a'))
+
+    const seen = []
+    host.onMap(map => seen.push(map?.id ?? null))
+
+    expect(seen).toEqual(['a'])
+    expect(host.map.id).toBe('a')
+    expect(host.mapRef.value.id).toBe('a')
+  })
+
+  it('tells subscribers about a replacement, and about teardown', () => {
+    const host = createMapHost()
+    const seen = []
+    host.onMap(map => seen.push(map?.id ?? null))
+
+    expect(seen).toEqual([])  // nothing yet: there is no map
+    host.setMap(fakeMap('a'))
+    host.setMap(fakeMap('b'))
+    host.setMap(null)
+
+    expect(seen).toEqual(['a', 'b', null])
+    expect(host.map).toBe(null)
+  })
+
+  it('stops calling a handler that unsubscribed', () => {
+    const host = createMapHost()
+    const handler = vi.fn()
+    const off = host.onMap(handler)
+    host.setMap(fakeMap('a'))
+    off()
+    host.setMap(fakeMap('b'))
+
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the style-reload channel separate, and silent without a map', () => {
+    const host = createMapHost()
+    const onMap = vi.fn()
+    const onStyle = vi.fn()
+    host.onMap(onMap)
+    host.onStyleReload(onStyle)
+
+    // No map yet: a re-stacking cannot be about anything.
+    host.notifyStyleReload()
+    expect(onStyle).not.toHaveBeenCalled()
+
+    host.setMap(fakeMap('a'))
+    host.notifyStyleReload()
+    expect(onStyle).toHaveBeenCalledTimes(1)
+    expect(onStyle).toHaveBeenCalledWith(host.map)
+    // Publishing a map is not a style reload, and vice versa.
+    expect(onMap).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let one broken widget stop the others', () => {
+    const host = createMapHost()
+    const console_ = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const second = vi.fn()
+    host.onMap(() => { throw new Error('widget is broken') })
+    host.onMap(second)
+
+    host.setMap(fakeMap('a'))
+
+    expect(second).toHaveBeenCalledTimes(1)
+    expect(console_).toHaveBeenCalled()
+    console_.mockRestore()
+  })
+})
+
+describe('BboxDrawInteraction armed mode (the "Draw a box" button)', () => {
+  // The smallest map the interaction actually touches.
+  function stubMap() {
+    const canvas = document.createElement('canvas')
+    const sources = new Map()
+    return {
+      canvas,
+      getCanvas: () => canvas,
+      getSource: id => sources.get(id),
+      addSource: (id, spec) => sources.set(id, { ...spec, setData(data) { this.data = data } }),
+      addLayer: () => {},
+      getLayer: () => undefined,
+      removeLayer: () => {},
+      removeSource: id => sources.delete(id),
+      dragPan: { enable: () => {}, disable: () => {} },
+      unproject: ([x, y]) => ({ lng: x / 10, lat: y / 10 })
+    }
+  }
+
+  const drag = (map, from, to) => {
+    const event = (type, point) => new MouseEvent(type, { bubbles: true, ...point })
+    // happy-dom does not synthesize offsetX/offsetY, so set them directly.
+    const at = (type, [x, y]) => Object.assign(event(type), { offsetX: x, offsetY: y })
+    map.canvas.dispatchEvent(at('mousedown', from))
+    map.canvas.dispatchEvent(at('mousemove', to))
+    map.canvas.dispatchEvent(at('mouseup', to))
+  }
+
+  it('ignores a plain drag until the button arms it', () => {
+    const map = stubMap()
+    const onExtent = vi.fn()
+    const draw = new BboxDrawInteraction(map, onExtent)
+
+    drag(map, [10, 10], [100, 100])
+    expect(onExtent).not.toHaveBeenCalled()
+
+    expect(draw.setArmed(true)).toBe(true)
+    expect(map.canvas.style.cursor).toBe('crosshair')
+    drag(map, [10, 10], [100, 100])
+    expect(onExtent).toHaveBeenCalledWith([1, 10, 10, 1])
+  })
+
+  it('disarms itself after the box it was armed for', () => {
+    const map = stubMap()
+    const onExtent = vi.fn()
+    const draw = new BboxDrawInteraction(map, onExtent)
+    draw.setArmed(true)
+
+    drag(map, [10, 10], [100, 100])
+    expect(draw.armed).toBe(false)
+    expect(map.canvas.style.cursor).toBe('')
+
+    drag(map, [20, 20], [120, 120])
+    expect(onExtent).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,10 +1,15 @@
 import { defineAsyncComponent } from 'vue';
 import { mayHaveDownloadableVector } from './src/utils/download/support.js';
 
-// The "Download data" panel. It appears on any collection or item that
-// plausibly holds vector GeoParquet, and nowhere else: a raster, zarr or
-// PMTiles-only collection simply has no panel, which is how the widget
-// design wants "unsupported" to read.
+// The "Download data" tool. It is registered on the `map-overlay` hook, so
+// it renders inside the map container and draws on the page's real map: the
+// search box, the draw and upload buttons and the download card all sit over
+// the data they select from.
+//
+// It appears on any collection or item that plausibly holds vector
+// GeoParquet, and nowhere else: a raster, zarr or PMTiles-only collection
+// gets nothing at all, which is how the widget design wants "unsupported" to
+// read.
 //
 // `condition` runs on every render of the hook and must stay cheap, so it
 // uses a small app-local predicate rather than the authoritative
@@ -23,6 +28,5 @@ const areaDownload = {
 };
 
 export default {
-  'view-catalog-meta-end': [areaDownload],
-  'view-item-secondary-end': [areaDownload]
+  'map-overlay': [areaDownload]
 };

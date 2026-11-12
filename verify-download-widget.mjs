@@ -1,35 +1,48 @@
-// Drive the "Download data" widget end to end against a real Portolan
-// catalog and a real GeoParquet file: place-name search -> area -> estimate
-// -> download, in the app, with no mocks.
+// Drive the on-map "Download data" widget end to end against a real Portolan
+// catalog and real GeoParquet files: place-name search -> area outlined on
+// the page's own map -> estimate -> direct download, in the app, no mocks.
 //
-// Setup (both servers are outside this repo; see
-// .github/DOWNLOAD_WIDGET_NOTES.md):
+// Setup: just this app. The catalog, the parquet files and the geocoder's
+// names index all come from Source Cooperative over HTTP range requests, so
+// there is no second server to start any more.
 //
-//   # 1. a static server with HTTP Range support, serving a catalog and the
-//   #    geocoder's names index from one origin on :8000
-//   #      <root>/demo-root/geoboundaries/{catalog.json,adm*/...}
-//   #      <root>/examples/geocoder-demo/data/index.json
-//   python3 serve.py 8000
-//
-//   # 2. this app
-//   npx vite --port 8123 --strictPort
-//
+//   npx vite --port 8081 --strictPort      # or whatever is already running
 //   node verify-download-widget.mjs [screenshot.png]
+//
+//   APP_BASE    the app          (default http://localhost:8081)
+//   DATA_BASE   the catalog host (default https://data.source.coop)
 //
 // Prints what the user sees at each step, writes the downloaded files to
 // /tmp, and re-reads the GeoParquet it produced with hyparquet to prove the
-// output is a valid, readable file rather than just a blob of the right
-// size.
+// output is a valid, readable file rather than a blob of the right size.
+//
+// Two things the redesign has to be held to, and this is where they are:
+//
+//   * The download is a real browser download event. There is no rendered
+//     link to click any more: the widget writes straight to disk through the
+//     File System Access API where it exists, and otherwise clicks a Blob
+//     anchor it creates and throws away. Under automation it takes the
+//     second path on purpose (see the widget's `usePicker`), which is what
+//     Playwright sees as a `download`.
+//   * The area is drawn on the *page's* map. The widget has no map of its
+//     own, so selecting an area moves and repaints the one behind the
+//     collection's data -- asserted here by hashing a screenshot of the map
+//     element before and after. (Reading the WebGL buffer directly, the way
+//     tests/manual/zarr-render-check.mjs does for the deck.gl canvas, does
+//     not work here: MapLibre creates its context with
+//     `preserveDrawingBuffer: false`, so `readPixels` after the frame has
+//     been presented comes back all zeroes.)
 
 import { chromium } from '@playwright/test'
-import { writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
 import * as hyparquet from 'hyparquet'
 import { compressors } from 'hyparquet-compressors'
 
-const APP = process.env.APP_BASE || 'http://localhost:8123'
-const DATA = process.env.DATA_BASE || 'http://localhost:8000'
-const COLLECTION = `${DATA}/demo-root/geoboundaries/adm2/collection.json`
-const ZARR_COLLECTION = `${DATA}/demo-root/zarr-example/collection.json`
+const APP = process.env.APP_BASE || 'http://localhost:8081'
+const DATA = process.env.DATA_BASE || 'https://data.source.coop'
+const COLLECTION = `${DATA}/portolan-mirrors/geoboundaries-catalog/adm2/collection.json`
+const ZARR_COLLECTION = `${DATA}/ftw/global-data/features/zarr/collection.json`
 const SCREENSHOT = process.argv[2] || 'verify-download-widget.png'
 
 // The app's hash router wants a single-slashed scheme in the external path.
@@ -37,7 +50,7 @@ const externalPath = url => `${APP}/#/external/${url.replace('://', ':/')}`
 
 const browser = await chromium.launch()
 const errors = []
-const page = await browser.newPage({ viewport: { width: 1280, height: 1600 } })
+const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
 page.on('console', message => {
   if (message.type() === 'error') {
     errors.push(message.text())
@@ -46,29 +59,47 @@ page.on('console', message => {
 page.on('pageerror', error => errors.push(`pageerror: ${error.message}`))
 
 const widget = () => page.locator('.area-download')
+const card = () => page.locator('.ad-card')
 const log = (label, value) => console.log(label, typeof value === 'string' ? value : JSON.stringify(value, null, 2))
+const text = async locator => (await locator.textContent()).replace(/\s+/g, ' ').trim()
 
-// --- 1. The widget appears on a vector GeoParquet collection -------------
-await page.goto(externalPath(COLLECTION), { waitUntil: 'networkidle' })
-await widget().waitFor({ timeout: 30000 })
-log('COLLECTION', await page.locator('h1').first().textContent())
-log('WIDGET INTRO', (await widget().locator('.intro').textContent()).trim())
+// A signature of what the page's map currently shows: a pan, a zoom or a new
+// outline layer all change it.
+const mapSignature = async () => {
+  const shot = await page.locator('.map').first().screenshot()
+  return createHash('sha1').update(shot).digest('hex').slice(0, 12)
+}
 
-// --- 2. Search for an area ----------------------------------------------
-await page.fill('#areaDownloadSearch', 'liechtenstein')
-const results = widget().locator('.results .list-group-item')
-await results.first().waitFor({ timeout: 60000 })
-log('SEARCH RESULTS', await results.allTextContents())
-await results.first().click()
+// --- 1. The widget appears, on the map, on a vector GeoParquet collection
+await page.goto(externalPath(COLLECTION), { waitUntil: 'domcontentloaded' })
+await widget().waitFor({ timeout: 60000 })
+await page.waitForTimeout(3000)
+log('COLLECTION', (await page.locator('h1').first().textContent()).trim())
+log('ON-MAP TOOLS', {
+  insideTheMapContainer: await page.locator('.map .map-overlay-widgets .area-download').count(),
+  searchBox: await page.locator('.ad-search input[role="combobox"]').count(),
+  buttons: await page.locator('.ad-tools-row .ad-button').allTextContents(),
+  hint: await text(page.locator('.ad-tools-head')),
+  note: await text(page.locator('.ad-note').first())
+})
 
-const summary = widget().locator('.area-summary')
-await summary.waitFor({ timeout: 60000 })
-log('AREA', (await summary.textContent()).replace(/\s+/g, ' ').trim())
+const before = await mapSignature()
 
-// --- 3. Estimate ---------------------------------------------------------
-await page.getByRole('button', { name: 'Estimate' }).click()
-await widget().locator('dl.estimate').waitFor({ timeout: 120000 })
-log('ESTIMATE', await widget().locator('dl.estimate').evaluate(dl => {
+// --- 2. Search for an area, in the box on the map ------------------------
+const search = page.locator('.ad-search input[role="combobox"]')
+await search.fill('liechtenstein')
+const options = page.locator('.ad-search [role="option"]')
+await options.first().waitFor({ timeout: 90000 })
+log('SEARCH RESULTS', await options.allTextContents())
+await options.first().click()
+
+await card().waitFor({ timeout: 60000 })
+log('AREA', await text(page.locator('.ad-area-name')))
+log('AREA SUMMARY', await text(page.locator('.ad-area-summary')))
+
+// --- 3. The estimate runs by itself, no button to find -------------------
+await card().locator('dl.estimate').waitFor({ timeout: 120000 })
+log('ESTIMATE', await card().locator('dl.estimate').evaluate(dl => {
   const out = {}
   const terms = [...dl.querySelectorAll('dt')]
   terms.forEach((dt, index) => {
@@ -76,11 +107,16 @@ log('ESTIMATE', await widget().locator('dl.estimate').evaluate(dl => {
   })
   return out
 }))
+log('SCANNED', await text(card().locator('.ad-scanned')))
+
+await page.waitForTimeout(2500)
+const after = await mapSignature()
+log('THE PAGE MAP MOVED TO THE AREA', { before, after, changed: before !== after })
 
 // --- 4. The generated request + SQL -------------------------------------
 await page.getByRole('button', { name: /Show this download as code/ }).click()
-await widget().locator('.request-code').waitFor({ timeout: 15000 })
-const code = await widget().locator('.request-code').evaluate(node => (
+await card().locator('.request-code').waitFor({ timeout: 15000 })
+const code = await card().locator('.request-code').evaluate(node => (
   [...node.querySelectorAll('h4')].map((heading, index) => ({
     label: heading.textContent.trim(),
     code: node.querySelectorAll('.codebox')[index]?.innerText
@@ -89,26 +125,28 @@ const code = await widget().locator('.request-code').evaluate(node => (
 for (const entry of code) {
   console.log(`\n--- ${entry.label} ---\n${entry.code}`)
 }
+await page.getByRole('button', { name: /Hide the request/ }).click()
 
-// --- 5. Download, for real ----------------------------------------------
+// --- 5. Download, for real, with nothing to click afterwards -------------
 async function downloadAs(format, filename) {
-  await page.getByRole('button', { name: format, exact: true }).click()
-  const link = widget().locator('.download-ready a')
-  await link.waitFor({ timeout: 300000 })
-  log(`${format} PROGRESS`, (await widget().locator('.progress-note').textContent()).trim())
-  const bytes = await link.evaluate(async anchor => {
-    const response = await fetch(anchor.href)
-    const buffer = await response.arrayBuffer()
-    return [...new Uint8Array(buffer)]
-  })
+  const started = page.waitForEvent('download', { timeout: 300000 })
+  await card().getByRole('button', { name: format, exact: true }).click()
+  const download = await started
   const path = `/tmp/${filename}`
-  writeFileSync(path, Buffer.from(bytes))
-  log(`${format} SAVED`, { path, bytes: bytes.length, link: await link.textContent() })
+  await download.saveAs(path)
+  await card().locator('.ad-status', { hasText: /^Saved / }).waitFor({ timeout: 60000 })
+  log(`${format} SAVED`, {
+    path,
+    suggestedFilename: download.suggestedFilename(),
+    bytes: readFileSync(path).byteLength,
+    renderedLinks: await card().locator('a[download]').count(),
+    status: await text(card().locator('.ad-status').last())
+  })
   return path
 }
 
 const geojsonPath = await downloadAs('GeoJSON', 'verify-download.geojson')
-const geojson = JSON.parse(Buffer.from(await import('node:fs').then(fs => fs.readFileSync(geojsonPath))).toString('utf8'))
+const geojson = JSON.parse(readFileSync(geojsonPath, 'utf8'))
 log('GEOJSON', {
   type: geojson.type,
   features: geojson.features.length,
@@ -117,7 +155,7 @@ log('GEOJSON', {
 })
 
 const parquetPath = await downloadAs('GeoParquet', 'verify-download.parquet')
-const buffer = (await import('node:fs')).readFileSync(parquetPath)
+const buffer = readFileSync(parquetPath)
 const file = {
   byteLength: buffer.byteLength,
   slice: (start, end) => buffer.buffer.slice(buffer.byteOffset + start, buffer.byteOffset + (end ?? buffer.byteLength))
@@ -140,27 +178,33 @@ log('GEOPARQUET', {
   geometryIsBinary: rows[0]?.geometry instanceof Uint8Array
 })
 
-// The screenshot is the evidence for the branch: the panel with its map,
-// the outline of the searched area, the estimate, and a finished download.
-await widget().scrollIntoViewIfNeeded()
+// The screenshots are the evidence for the branch: the on-map search box,
+// the draw and upload buttons, the area outlined over the real data, and the
+// download card with a finished download in it -- then the same map with the
+// cluster collapsed to its "Download data" pill, which is the discovery
+// affordance and cannot be in the same frame as the thing it opens.
+await card().evaluate(node => { node.scrollTop = 0 })
 await page.screenshot({ path: SCREENSHOT, fullPage: false })
+await page.locator('.ad-collapse').click()
+await page.locator('.ad-pill').waitFor({ timeout: 5000 })
+await page.screenshot({ path: SCREENSHOT.replace(/\.png$/, '-pill.png'), clip: await page.locator('.map').first().boundingBox() })
+await page.locator('.ad-pill').click()
 
 // --- 6. The other two ways to pick an area ------------------------------
-// Draw: shift-drag on the widget's own map.
-const mapBox = await widget().locator('.map').boundingBox()
-await page.keyboard.down('Shift')
-await page.mouse.move(mapBox.x + mapBox.width * 0.35, mapBox.y + mapBox.height * 0.35)
+// Draw: arm the button, then drag on the page's own map -- no Shift needed.
+await card().locator('.ad-icon-button').first().click()
+await page.getByRole('button', { name: 'Draw a box' }).click()
+const mapBox = await page.locator('.map').first().boundingBox()
+await page.mouse.move(mapBox.x + mapBox.width * 0.45, mapBox.y + mapBox.height * 0.45)
 await page.mouse.down()
-await page.mouse.move(mapBox.x + mapBox.width * 0.6, mapBox.y + mapBox.height * 0.6, { steps: 12 })
+await page.mouse.move(mapBox.x + mapBox.width * 0.58, mapBox.y + mapBox.height * 0.58, { steps: 12 })
 await page.mouse.up()
-await page.keyboard.up('Shift')
-await summary.waitFor({ timeout: 15000 })
-log('DRAWN AREA', (await summary.textContent()).replace(/\s+/g, ' ').trim())
-await page.getByRole('button', { name: 'Estimate' }).click()
-await widget().locator('dl.estimate').waitFor({ timeout: 120000 })
-log('DRAWN AREA ESTIMATE', await widget().locator('dl.estimate dd').first().textContent())
+await card().locator('dl.estimate').waitFor({ timeout: 120000 })
+log('DRAWN AREA', await text(page.locator('.ad-area-name')))
+log('DRAWN AREA ESTIMATE', await text(card().locator('dl.estimate dd').first()))
 
-// Upload: a GeoJSON area file.
+// Upload: a GeoJSON area file, through the button beside the search box.
+await card().locator('.ad-icon-button').first().click()
 const uploaded = '/tmp/verify-download-area.geojson'
 writeFileSync(uploaded, JSON.stringify({
   type: 'Feature',
@@ -170,18 +214,18 @@ writeFileSync(uploaded, JSON.stringify({
     coordinates: [[[9.50, 47.12], [9.56, 47.12], [9.56, 47.16], [9.50, 47.16], [9.50, 47.12]]]
   }
 }))
-await page.setInputFiles('#areaDownloadUpload', uploaded)
-await page.waitForTimeout(1500)
-log('UPLOADED AREA', (await summary.textContent()).replace(/\s+/g, ' ').trim())
-await page.getByRole('button', { name: 'Estimate' }).click()
-await widget().locator('dl.estimate').waitFor({ timeout: 120000 })
-log('UPLOADED AREA ESTIMATE', await widget().locator('dl.estimate dd').first().textContent())
+await page.locator('.ad-file').setInputFiles(uploaded)
+await card().locator('dl.estimate').waitFor({ timeout: 120000 })
+log('UPLOADED AREA', await text(page.locator('.ad-area-name')))
+log('UPLOADED AREA ESTIMATE', await text(card().locator('dl.estimate dd').first()))
 
-// --- 7. No widget on a zarr collection ----------------------------------
-await page.goto(externalPath(ZARR_COLLECTION), { waitUntil: 'networkidle' })
-await page.waitForTimeout(4000)
-log('ZARR COLLECTION', await page.locator('h1').first().textContent())
+// --- 7. No widget, and no hint, on a zarr collection --------------------
+await page.goto(externalPath(ZARR_COLLECTION), { waitUntil: 'domcontentloaded' })
+await page.locator('.map').first().waitFor({ timeout: 60000 })
+await page.waitForTimeout(5000)
+log('ZARR COLLECTION', (await page.locator('h1').first().textContent()).trim())
 log('WIDGET PRESENT ON ZARR', await widget().count())
+log('HINT PRESENT ON ZARR', await page.locator('.ad-pill, .ad-tools').count())
 
 console.log('\nCONSOLE ERRORS', JSON.stringify(errors, null, 2))
 await browser.close()

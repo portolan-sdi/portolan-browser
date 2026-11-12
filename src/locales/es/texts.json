@@ -559,16 +559,19 @@
     "areaDownload": {
       "area": {
         "clear": "Borrar área",
-        "drawHint": "O mantén pulsada la tecla Mayús y arrastra en el mapa para dibujar un rectángulo.",
+        "draw": "Dibujar un rectángulo",
+        "drawArmed": "Arrastra en el mapa",
+        "drawHint": "O mantén pulsada la tecla Mayús y arrastra en el mapa, o suelta un GeoJSON sobre él.",
         "drawnName": "Área dibujada",
+        "dropActive": "Suelta el GeoJSON para usarlo como área.",
         "label": "Área",
-        "mapLabel": "Mapa para seleccionar un área de descarga",
-        "noResults": "Ningún lugar coincide.",
         "placeholder": "Busca un lugar…",
         "summary": "— {vertices} vértices de filtro, bbox {bbox}",
-        "upload": "o sube un área en GeoJSON:",
+        "upload": "Subir",
+        "uploadTitle": "Subir un área en GeoJSON",
         "uploadWarnings": "El área subida se ha ajustado: {warnings}"
       },
+      "close": "Ocultar las herramientas de descarga",
       "code": {
         "hide": "Ocultar la petición",
         "request": "Petición de descarga",
@@ -579,11 +582,12 @@
         "acceptCeiling": "Descargar de todos modos",
         "cancel": "Cancelar",
         "ceiling": "Esta descarga supera el límite de seguridad ({breaches}).",
-        "done": "Hecho: {rows} filas, {bytes} escritos en {seconds} s.",
+        "dismissed": "No se ha guardado nada: se ha cerrado el diálogo de guardado.",
+        "done": "Guardado {filename} — {rows} filas, {bytes} en {seconds} s.",
+        "format": "Descargar como",
         "phase": "{phase}…",
         "planning": "Planificando…",
-        "reading": "Leyendo el grupo de filas {done} de {total} — {rows} filas coincidentes, {bytes} leídos.",
-        "save": "Guardar {filename}"
+        "reading": "Leyendo el grupo de filas {done} de {total} — {rows} filas coincidentes, {bytes} leídos."
       },
       "estimate": {
         "button": "Estimar",
@@ -592,9 +596,11 @@
         "partsValue": "{files} de {filesTotal} ficheros, {rowGroups} de {rowGroupsTotal} grupos de filas, {requests} peticiones",
         "range": "{estimate} (entre {min} y {max})",
         "read": "Leído del almacenamiento",
-        "rows": "Filas"
+        "rows": "Filas",
+        "running": "Estimando…"
       },
       "intro": "Elige un área y descarga solo esa parte de {dataset}, directamente de los ficheros de origen.",
+      "open": "Descargar datos",
       "title": "Descargar datos",
       "unsupported": "Este conjunto de datos no se puede descargar por área.",
       "unsupportedReason": "Este conjunto de datos no se puede descargar por área: {reason}",

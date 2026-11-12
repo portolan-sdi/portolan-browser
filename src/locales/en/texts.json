@@ -559,16 +559,19 @@
     "areaDownload": {
       "area": {
         "clear": "Clear area",
-        "drawHint": "Or hold Shift and drag on the map to draw a box.",
+        "draw": "Draw a box",
+        "drawArmed": "Drag on the map",
+        "drawHint": "Or hold Shift and drag on the map, or drop a GeoJSON onto it.",
         "drawnName": "Drawn area",
+        "dropActive": "Drop the GeoJSON to use it as your area.",
         "label": "Area",
-        "mapLabel": "Map for selecting a download area",
-        "noResults": "No matching places.",
         "placeholder": "Search for a place…",
         "summary": "— {vertices} filter vertices, bbox {bbox}",
-        "upload": "or upload a GeoJSON area:",
+        "upload": "Upload",
+        "uploadTitle": "Upload a GeoJSON area",
         "uploadWarnings": "The uploaded area was adjusted: {warnings}"
       },
+      "close": "Hide the download tools",
       "code": {
         "hide": "Hide the request",
         "request": "Download request",
@@ -579,11 +582,12 @@
         "acceptCeiling": "Download anyway",
         "cancel": "Cancel",
         "ceiling": "This download is larger than the safety ceiling ({breaches}).",
-        "done": "Done: {rows} rows, {bytes} written in {seconds} s.",
+        "dismissed": "Nothing saved: the save dialog was dismissed.",
+        "done": "Saved {filename} — {rows} rows, {bytes} in {seconds} s.",
+        "format": "Download as",
         "phase": "{phase}…",
         "planning": "Planning…",
-        "reading": "Reading row group {done} of {total} — {rows} rows matched, {bytes} read.",
-        "save": "Save {filename}"
+        "reading": "Reading row group {done} of {total} — {rows} rows matched, {bytes} read."
       },
       "estimate": {
         "button": "Estimate",
@@ -592,9 +596,11 @@
         "partsValue": "{files} of {filesTotal} files, {rowGroups} of {rowGroupsTotal} row groups, {requests} requests",
         "range": "{estimate} (between {min} and {max})",
         "read": "Read from storage",
-        "rows": "Rows"
+        "rows": "Rows",
+        "running": "Estimating…"
       },
       "intro": "Pick an area and download just that part of {dataset}, straight from the source files.",
+      "open": "Download data",
       "title": "Download data",
       "unsupported": "This dataset cannot be downloaded by area.",
       "unsupportedReason": "This dataset cannot be downloaded by area: {reason}",

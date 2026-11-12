@@ -1,11 +1,18 @@
 /**
- * "Download data" widget presence.
+ * The "Download data" tool, on the map.
  *
- * The panel is registered in widgets.config.js with a condition, and the
- * design it comes from treats an undownloadable dataset as an *absence* of
- * the panel rather than a panel that explains itself. That contract is what
- * these tests hold: it appears on vector GeoParquet, and it is not there at
- * all on a raster collection.
+ * It is registered on the `map-overlay` hook, so its DOM is a child of the
+ * map container and the area it picks is drawn on the page's own map. These
+ * tests hold three things about that:
+ *
+ *   1. On vector GeoParquet it is there, inside the map, with the three ways
+ *      of picking an area side by side: the @cnmw/maplibre geocoder's search
+ *      box, a draw button and an upload button.
+ *   2. On a raster collection it is not there at all -- the design it comes
+ *      from treats an undownloadable dataset as an *absence*, not as a panel
+ *      that explains itself -- and neither is the "Download data" hint.
+ *   3. When the data is vector parquet the browser cannot reach, it says so
+ *      on the map rather than offering tools that would fail.
  *
  * The end-to-end flow -- search, area, estimate, real download -- needs a
  * real GeoParquet file and a real place index, so it lives in
@@ -43,10 +50,12 @@ function catalogWith(assets, extra = {}) {
   return { catalog, collection };
 }
 
-const panel = page => page.locator('.area-download');
+// Scoped through `.map`, so the assertion is "inside the map container",
+// which is the whole point of the redesign.
+const widget = page => page.locator('.map .map-overlay-widgets .area-download');
 
 test.describe('Download data widget', () => {
-  test('offers itself on a collection with vector GeoParquet', async ({ page, worker }) => {
+  test('puts the area tools on the map for a vector GeoParquet collection', async ({ page, worker }) => {
     const { catalog, collection } = catalogWith(PARQUET_ASSET, {
       'table:primary_geometry': 'geometry',
       'table:row_count': 1000,
@@ -61,13 +70,38 @@ test.describe('Download data widget', () => {
     await page.goto(collection.getBrowserPath());
     await waitForBrowserReady(page);
 
-    await expect(panel(page)).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Download data' })).toBeVisible();
-    await expect(page.locator('#areaDownloadSearch')).toBeVisible();
-    await expect(panel(page).getByRole('button', { name: 'Estimate' })).toBeVisible();
+    await expect(widget(page)).toBeVisible();
+    // The affordance, in words, on the map.
+    await expect(widget(page).locator('.ad-tools-head')).toContainText('Download data');
+    // The @cnmw geocoder control, mounted on the real map.
+    await expect(widget(page).locator('.ad-search input[role="combobox"]')).toBeVisible();
+    await expect(widget(page).getByRole('button', { name: 'Draw a box' })).toBeVisible();
+    await expect(widget(page).getByRole('button', { name: 'Upload' })).toBeVisible();
+    // Nothing to download yet, so no card.
+    await expect(widget(page).locator('.ad-card')).toHaveCount(0);
   });
 
-  test('stays away from a raster collection', async ({ page, worker }) => {
+  test('collapses to a hint pill and back', async ({ page, worker }) => {
+    const { catalog, collection } = catalogWith(PARQUET_ASSET, {
+      'table:primary_geometry': 'geometry',
+      'table:columns': [{ name: 'geometry', type: 'geometry' }]
+    });
+    await catalog.createServer(worker);
+
+    await page.goto(collection.getBrowserPath());
+    await waitForBrowserReady(page);
+
+    await widget(page).locator('.ad-collapse').click();
+    const pill = widget(page).locator('.ad-pill');
+    await expect(pill).toBeVisible();
+    await expect(pill).toContainText('Download data');
+    await expect(widget(page).locator('.ad-search input[role="combobox"]')).toBeHidden();
+
+    await pill.click();
+    await expect(widget(page).locator('.ad-search input[role="combobox"]')).toBeVisible();
+  });
+
+  test('stays away from a raster collection, hint and all', async ({ page, worker }) => {
     const { catalog, collection } = catalogWith(COG_ASSET);
     await catalog.createServer(worker);
 
@@ -75,13 +109,15 @@ test.describe('Download data widget', () => {
     await waitForBrowserReady(page);
 
     await expect(page.getByRole('heading', { name: 'Example Collection' })).toBeVisible();
-    await expect(panel(page)).toHaveCount(0);
+    await expect(page.locator('.area-download')).toHaveCount(0);
+    await expect(page.locator('.ad-pill')).toHaveCount(0);
   });
 
-  test('explains itself when the data is not reachable from a browser', async ({ page, worker }) => {
+  test('explains itself on the map when the data is not reachable from a browser', async ({ page, worker }) => {
     // A hive-partitioned collection whose partitions are published as an
     // s3:// URI: the condition says yes, because this is vector parquet, and
-    // the panel then says why it cannot read it.
+    // the widget then says why it cannot read it -- instead of offering a
+    // search box that leads nowhere.
     const { catalog, collection } = catalogWith(
       { tiles: { href: './x.pmtiles', type: 'application/vnd.pmtiles', roles: ['visual', 'data'] } },
       {
@@ -95,7 +131,8 @@ test.describe('Download data widget', () => {
     await page.goto(collection.getBrowserPath());
     await waitForBrowserReady(page);
 
-    await expect(panel(page)).toBeVisible();
-    await expect(panel(page).locator('.refusal')).toContainText('s3://');
+    await expect(widget(page)).toBeVisible();
+    await expect(widget(page).locator('.area-download-refusal')).toContainText('s3://');
+    await expect(widget(page).locator('.ad-tools')).toHaveCount(0);
   });
 });
