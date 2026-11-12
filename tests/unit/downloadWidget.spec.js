@@ -158,10 +158,28 @@ describe('describeDataset', () => {
     expect(support.message).toMatch(/raster\/zarr/i)
   })
 
-  it('refuses a source the browser cannot fetch, naming the scheme', () => {
-    // The real FIRMS collection's partition glob is an s3:// URI. DuckDB can
-    // read it; fetch() cannot.
+  it('accepts a partitioned collection whose glob is s3://, because the glob is never fetched', () => {
+    // The real FIRMS collection's partition glob is an s3:// URI, which
+    // DuckDB can read, fetch() cannot, and the browser never asks for: with
+    // no `collection-mirror` asset, §2.4 derives a `stac-items`
+    // enumeration, so each year's concrete file URL comes from that item's
+    // own `data` asset over https. Refusing on the glob alone turned a
+    // 632M-row archive away over a string published for other tools.
     const support = describeDataset(firmsCollection())
+    expect(support.supported).toBe(true)
+    expect(support.descriptor.source.kind).toBe('hive')
+    expect(support.descriptor.source.enumeration).toEqual({
+      kind: 'stac-items',
+      collectionUrl: 'https://data.example.org/firms/detections/collection.json'
+    })
+    // And the time column the card's date range feeds.
+    expect(support.descriptor.table.timeColumn).toBe('acq_datetime')
+  })
+
+  it('refuses a source the browser really cannot fetch, naming the scheme', () => {
+    const collection = adm0()
+    collection.assets.data.href = 's3://example-bucket/cgaz_adm0.parquet'
+    const support = describeDataset(collection)
     expect(support.supported).toBe(false)
     expect(support.code).toBe('DATASET_UNREACHABLE')
     expect(support.message).toMatch(/^s3:\/\//)

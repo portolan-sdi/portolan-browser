@@ -114,16 +114,22 @@ test.describe('Download data widget', () => {
   });
 
   test('explains itself on the map when the data is not reachable from a browser', async ({ page, worker }) => {
-    // A hive-partitioned collection whose partitions are published as an
-    // s3:// URI: the condition says yes, because this is vector parquet, and
-    // the widget then says why it cannot read it -- instead of offering a
-    // search box that leads nowhere.
+    // A collection whose one parquet file is published as an s3:// URI:
+    // the condition says yes, because this is vector parquet, and the
+    // widget then says why it cannot read it -- instead of offering a
+    // search box that leads nowhere. DuckDB and the QGIS plugin can open
+    // that href; fetch() cannot.
     const { catalog, collection } = catalogWith(
-      { tiles: { href: './x.pmtiles', type: 'application/vnd.pmtiles', roles: ['visual', 'data'] } },
       {
-        'partition:scheme': 'hive',
-        'partition:glob': 's3://example-bucket/detections/year=*/*.parquet',
-        'partition:keys': [{ name: 'year', type: 'int32' }]
+        data: {
+          href: 's3://example-bucket/fields.parquet',
+          type: 'application/vnd.apache.parquet',
+          roles: ['data']
+        }
+      },
+      {
+        'table:primary_geometry': 'geometry',
+        'table:columns': [{ name: 'geometry', type: 'geometry' }]
       }
     );
     await catalog.createServer(worker);
@@ -134,5 +140,34 @@ test.describe('Download data widget', () => {
     await expect(widget(page)).toBeVisible();
     await expect(widget(page).locator('.area-download-refusal')).toContainText('s3://');
     await expect(widget(page).locator('.ad-tools')).toHaveCount(0);
+  });
+
+  test('offers a partitioned collection whose glob is s3://, because the glob is never fetched', async ({ page, worker }) => {
+    // The real FIRMS mirror's shape: a hive `partition:glob` on s3:// with
+    // no `collection-mirror` asset, so §2.4 derives a `stac-items`
+    // enumeration and every concrete file URL comes from an item's own
+    // asset over https. Refusing on the glob alone turned a 632M-row
+    // archive away over a string published for DuckDB's benefit.
+    const { catalog, collection } = catalogWith(
+      { tiles: { href: './x.pmtiles', type: 'application/vnd.pmtiles', roles: ['visual', 'data'] } },
+      {
+        'partition:scheme': 'hive',
+        'partition:glob': 's3://example-bucket/detections/year=*/detections.parquet',
+        'partition:keys': [{ name: 'year', type: 'int32' }],
+        'table:primary_geometry': 'geometry',
+        'table:columns': [
+          { name: 'geometry', type: 'geometry' },
+          { name: 'acq_datetime', type: 'timestamp' }
+        ]
+      }
+    );
+    await catalog.createServer(worker);
+
+    await page.goto(collection.getBrowserPath());
+    await waitForBrowserReady(page);
+
+    await expect(widget(page)).toBeVisible();
+    await expect(widget(page).locator('.area-download-refusal')).toHaveCount(0);
+    await expect(widget(page).locator('.ad-search input[role="combobox"]')).toBeVisible();
   });
 });

@@ -67,18 +67,65 @@ export function toPlainStacJson(data) {
 }
 
 /**
+ * The URLs a browser would actually have to fetch to run this descriptor.
+ *
+ * Not every URL in a descriptor is one the widget reads. A hive source
+ * carries a `partition:glob` that may be an `s3://` URI -- FIRMS publishes
+ * one -- but the glob is only *fetched* when the partition values are
+ * enumerated from it (`declared`/`values` enumeration). With a
+ * `collection-mirror` or `stac-items` enumeration, which is what §2.4
+ * derives for every Portolan partitioned collection, the concrete file URL
+ * of each part comes from the mirror row or the item's own asset, and the
+ * glob is a declaration for DuckDB's benefit that the browser never
+ * touches. Treating it as unreachable refused the whole FIRMS archive for
+ * no reason.
+ * @param {object} source a resolved `DatasetDescriptor['source']`
+ * @returns {string[]}
+ */
+export function fetchTargets(source) {
+  if (!source) {
+    return [];
+  }
+  if (source.kind === 'parquet') {
+    return [source.url].filter(Boolean);
+  }
+  if (source.kind === 'parquet-set') {
+    return (source.urls || (source.parts || []).map(part => part.url)).filter(Boolean);
+  }
+  if (source.kind === 'hive' || source.kind === 'stac-geoparquet') {
+    const enumeration = source.enumeration;
+    if (!enumeration || enumeration.kind === 'declared') {
+      return [source.glob].filter(Boolean);
+    }
+    if (enumeration.kind === 'values') {
+      return [source.glob, enumeration.url].filter(Boolean);
+    }
+    if (enumeration.kind === 'collection-mirror') {
+      return [enumeration.url].filter(Boolean);
+    }
+    if (enumeration.kind === 'stac-items') {
+      return [enumeration.collectionUrl].filter(Boolean);
+    }
+    if (enumeration.kind === 'bucket-listing') {
+      return [enumeration.endpoint].filter(Boolean);
+    }
+    return [source.glob].filter(Boolean);
+  }
+  return [source.url, source.glob].filter(Boolean);
+}
+
+/**
  * A browser can only read `http(s)` and same-origin relative URLs. Portolan
- * catalogs do publish other schemes -- the FIRMS collection's
- * `partition:glob` is an `s3://` URI -- and a descriptor carrying one is
+ * catalogs do publish other schemes, and a descriptor carrying one is
  * resolvable in DuckDB or the QGIS plugin but not here. Saying so is much
  * better than a fetch failing with a cryptic scheme error several seconds
- * into an estimate.
+ * into an estimate -- but only for the URLs the browser would really fetch,
+ * which is what `fetchTargets` decides.
  * @param {object} descriptor
  * @returns {string|null} a reason, or null when the source is fetchable
  */
 export function unreachableSource(descriptor) {
-  const candidates = [descriptor?.source?.url, descriptor?.source?.glob].filter(Boolean);
-  for (const url of candidates) {
+  for (const url of fetchTargets(descriptor?.source)) {
     const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url);
     if (scheme && !/^https?$/i.test(scheme[1])) {
       return `${scheme[1]}:// is not readable from a browser (${url})`;
