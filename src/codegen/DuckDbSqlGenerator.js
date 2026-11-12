@@ -133,10 +133,13 @@ function bboxSql(paths, bboxes, includeTouch) {
 }
 
 // A filter geometry can run to the 10,000-vertex ceiling, which inlines as
-// several hundred KB of coordinates -- unreadable as a snippet and awkward
-// to paste. Past this many characters the snippet falls back to the bbox
+// a few hundred KB of coordinates: still pasteable, but past some size the
+// snippet stops being readable and the syntax highlighter starts to cost
+// real time. Past this many characters the snippet falls back to the bbox
 // test and says so; the exact geometry is in the request JSON next to it.
-const MAX_INLINE_GEOMETRY_CHARS = 8000;
+// 120,000 characters is about 5,000 vertices, which covers an ADM2-sized
+// area comfortably and a simplified country outline most of the time.
+const MAX_INLINE_GEOMETRY_CHARS = 120_000;
 
 function sourceSql(source) {
   if (!source) {

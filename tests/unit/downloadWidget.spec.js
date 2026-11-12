@@ -267,9 +267,11 @@ describe('DuckDbSqlGenerator', () => {
   })
 
   it('falls back to the bbox test when the geometry is too large to inline', () => {
+    // Past ~5,000 vertices the inlined GeoJSON stops being a readable
+    // snippet, so the generator drops to the bbox test and says why.
     const ring = []
-    for (let i = 0; i < 2000; i += 1) {
-      ring.push([9 + i / 100000, 47 + i / 100000])
+    for (let i = 0; i < 6000; i += 1) {
+      ring.push([9 + i / 1000000, 47 + i / 1000000])
     }
     ring.push(ring[0])
     const doc = {
@@ -277,12 +279,12 @@ describe('DuckDbSqlGenerator', () => {
       properties: {
         ...AREA_DOCUMENT.properties,
         'area:filter_geometry': { type: 'Polygon', coordinates: [ring] },
-        'area:vertex_count': { display: 2001, filter: 2001 }
+        'area:vertex_count': { display: 6001, filter: 6001 }
       }
     }
     const sql = new DuckDbSqlGenerator().generate(request({ filter: { area: doc } }))
     expect(sql).not.toContain('ST_GeomFromGeoJSON')
-    expect(sql).toContain('2001 vertices')
+    expect(sql).toContain('6001 vertices')
     expect(sql).toContain('download-request.json')
   })
 

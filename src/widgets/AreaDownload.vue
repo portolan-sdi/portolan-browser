@@ -115,7 +115,7 @@
       <b-button size="sm" variant="link" class="code-toggle" @click="showCode = !showCode">
         {{ showCode ? $t('widgets.areaDownload.code.hide') : $t('widgets.areaDownload.code.show') }}
       </b-button>
-      <div v-if="showCode && request" class="code">
+      <div v-if="showCode && request" class="request-code">
         <div v-for="generator of codeGenerators" :key="generator.language">
           <h4>{{ $t(generator.labelKey) }}</h4>
           <CodeBox :generator="generator" :filters="request" />
@@ -279,11 +279,31 @@ export default defineComponent({
       if (!this.map) {
         return;
       }
-      this.areaLayer = markRaw(addAreaLayer(this.map));
-      this.bboxDraw = markRaw(new BboxDrawInteraction(this.map, extent => this.areaFromExtent(extent)));
+      this.attachMapLayers();
       const bbox = this.data?.getBoundingBox?.();
       if (bbox) {
         this.map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 20, maxZoom: this.maxZoom });
+      }
+    },
+    // MapMixin's hook, called after every `map.setStyle` -- including the
+    // one that loads the basemap right after createMap() resolves. setStyle
+    // drops every source and layer added before it, so the outline and the
+    // draw rectangle have to be put back or they silently never appear.
+    onBasemapChanged() {
+      this.attachMapLayers();
+    },
+    attachMapLayers() {
+      if (!this.map) {
+        return;
+      }
+      this.areaLayer = markRaw(addAreaLayer(this.map));
+      this.bboxDraw?.destroy();
+      this.bboxDraw = markRaw(new BboxDrawInteraction(this.map, extent => this.areaFromExtent(extent)));
+      if (this.area) {
+        this.areaLayer.setArea(this.area);
+        if (this.area.provenance?.source === 'draw') {
+          this.bboxDraw.setExtent(this.area.bbox);
+        }
       }
     },
     ensureGeocoder() {
@@ -630,7 +650,7 @@ export default defineComponent({
     color: $secondary;
   }
 
-  .code {
+  .request-code {
     margin-top: 0.5rem;
   }
 }
