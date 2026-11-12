@@ -126,15 +126,56 @@ An on-map download tool, for the [`map-overlay`](#on-map-widgets) hook. It puts 
 button and an "Upload" button, side by side. Picking a place, drawing a box, uploading
 a GeoJSON or dropping one onto the map outlines that area **on the page's own map**,
 over the collection's data, and opens a compact card with the dataset name, a live
-estimate (rows, bytes, warnings, and the safety ceiling with its accept button) and the
-two output formats. Choosing a format saves the file straight away — through
-`showSaveFilePicker` where the browser has it, otherwise as a Blob the widget clicks for
-you. There is no link to find and click.
+estimate (rows, bytes read, warnings, and the safety ceiling with its accept button) and
+the output formats, each labelled with its own expected size. Choosing a format saves
+the file straight away — through `showSaveFilePicker` where the browser has it,
+otherwise as a Blob the widget clicks for you. There is no link to find and click.
+
+GeoJSON and GeoParquet are offered directly; "More formats" adds GeoPackage,
+FlatGeobuf, Shapefile, CSV and Esri JSON. The last five are separate `@cnmw` packages
+whose writers load the first time someone picks them, so each button says what its
+plugin still has to fetch (`GeoPackage · 133 kB +331 kB`) before anything is downloaded,
+and a format that cannot be fetched says so rather than failing silently. Anything a
+writer has to change to fit its format — Shapefile renaming a column to dBase's
+ten-character limit, for instance — is reported beside the saved file.
+
+The card narrows the request as well as placing it:
+
+- **Which table.** A collection that publishes several parquet `data` assets — Fields of
+  the World's benchmark collections carry field polygons, boundary lines and a chip
+  index side by side — gets a picker labelled with each asset's title, row count and
+  file size. Choosing re-derives the dataset from that asset, so its columns, its bbox
+  covering and its time column are the ones the rest of the card works from. A
+  partitioned collection has no picker: its source is the partition set.
+- **When.** A table with a declared time column gets a date range, auto-populated from
+  the collection's own temporal extent, with "Last 30 days", "Last year" and "Whole
+  range" beside it. It is switched on by default only when the extent is wider than two
+  years, where a window saves whole files from being read: on the FIRMS mirror, naming
+  one month takes a county-sized request from 27 files and 10.2 GB read to one file and
+  962 MB.
+- **Which rows.** Column filters built from the table's own columns, ANDed onto the
+  `where` prop. They are applied row by row as the data is read, so they lower the rows
+  written rather than the bytes read, which the card says.
+
+Every one of those re-runs the estimate. "Why this estimate" expands into the pruning
+cascade stage by stage — how many files and row groups each stage looked at, how many
+survived, and on what basis — which is where "this dataset has no bbox covering, so
+nothing could be pruned" becomes visible.
+
+A running download shows rows matched and bytes read, and can be paused, resumed or
+cancelled; cancelling keeps nothing. It ends in a success state naming the file, the
+rows, the size and how long it took, or in a failure state that says what went wrong in
+words rather than as an error code.
 
 Collapsed, the cluster is a single "Download data" pill, which is the discoverability
 affordance: on a downloadable collection it pulses once when the page loads (never under
 `prefers-reduced-motion`), so the feature is visible rather than buried in the metadata
-column.
+column. <kbd>Esc</kbd> inside the tool disarms a draw if one is armed, and otherwise
+collapses the cluster back to the pill; the search box keeps <kbd>Esc</kbd> for its own
+suggestion list. Below 576px the tool starts collapsed to that pill, both
+it and the card span the width of the map instead of sitting in a lane down its
+right-hand side, and the card is capped at just under half the map's height so the
+style picker and its legend stay reachable underneath.
 
 The browser reads only the row groups the area touches, straight from the collection's
 parquet files. The widget is built on the `@cnmw` cloud-native map widget packages,
@@ -151,7 +192,7 @@ shows nothing at all — no card, no cluster, not even the pill. It must be plac
 | Props        | Type   | Default      | Description |
 | ------------ | ------ | ------------ | ----------- |
 | `indexUrl`   | String | the published geoBoundaries names index | The place-name index the search box reads, as a `cnmw-index/1.0` manifest URL. |
-| `where`      | Array  | `[]`         | Attribute predicates applied to every download, in `@cnmw` `FilterSpec` form, e.g. `[{ col: 'confidence', op: '>=', value: 0.9 }]`. |
+| `where`      | Array  | `[]`         | Attribute predicates applied to every download, in `@cnmw` `FilterSpec` form, e.g. `[{ col: 'confidence', op: '>=', value: 0.9 }]`. The card's own column filters are ANDed onto these, not instead of them. |
 | `limit`      | Number | `100000`     | Hard cap on the rows a download writes. Distinct from the safety ceiling, which is a refusal the user can accept. |
 | `directSave` | String | `'auto'`     | How the finished file reaches the disk: `'picker'` always asks the File System Access API for a destination, `'anchor'` always writes a Blob and clicks it, `'auto'` prefers the picker where it exists and is not driven by automation. |
 

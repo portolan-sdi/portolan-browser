@@ -10,6 +10,7 @@ throughout.
 
 - [What it does](#what-it-does)
   - [The on-map redesign](#the-on-map-redesign)
+  - [The card's choices](#the-cards-choices)
 - [Running it](#running-it)
 - [What is reusable and what is portolan glue](#what-is-reusable-and-what-is-portolan-glue)
 - [The hyparquet version reconciliation](#the-hyparquet-version-reconciliation)
@@ -26,18 +27,23 @@ offers:
    a "Draw a box" button (or Shift-drag), uploaded as GeoJSON with an
    "Upload" button, or dropped onto the map. Whichever way, the area is
    outlined on the page's own map, over the collection's data.
-2. **An estimate.** Rows, bytes read, output size, and how many files and row
-   groups the request touches, from parquet footer metadata alone — no row
-   data is read to produce it. It runs by itself as soon as there is an area:
-   metadata-only estimation is cheap enough that making the user press a
-   button for it was the wrong trade.
-3. **A download.** GeoJSON or GeoParquet, written in the browser from the row
-   groups the area actually intersects, with a progress bar and cancellation,
+2. **A choice of what, when and which rows.** Which parquet table, when the
+   collection publishes several; a date range, when it declares a time
+   column; and column predicates built from the table's own columns. Every
+   one of them re-estimates. See [The card's choices](#the-cards-choices).
+3. **An estimate.** Rows, bytes read, per-format output size, and the
+   pruning cascade behind the numbers, from parquet footer metadata alone —
+   no row data is read to produce it. It runs by itself as soon as there is
+   an area: metadata-only estimation is cheap enough that making the user
+   press a button for it was the wrong trade.
+4. **A download.** GeoJSON or GeoParquet, written in the browser from the row
+   groups the area actually intersects, with progress in rows and bytes,
+   pause, resume and cancel, a success state that says what landed where,
    and a refusal when the request exceeds the safety ceiling. The save starts
    immediately — `showSaveFilePicker` where the browser has it, otherwise a
    Blob anchor the widget creates, clicks and throws away. There is no
    rendered link to find.
-4. **The request as code.** The portable `DownloadRequest` JSON and the
+5. **The request as code.** The portable `DownloadRequest` JSON and the
    equivalent DuckDB SQL, both for the area and filters the user picked,
    behind a toggle in the card.
 
@@ -91,6 +97,175 @@ Two consequences worth knowing:
 
 [on-map-widgets]: ../docs/widgets.md#on-map-widgets
 
+### The card's choices
+
+The first cut asked one question — *where* — and answered everything else
+by taking the first thing it found. Against real catalogs that produced two
+bad outcomes: a 1.4 MB chip index silently became an 889 MB field-boundary
+read, and a 26-year fire archive offered a 10.2 GB one. The card now asks
+three questions, each of which re-runs the estimate.
+
+**Which table.** A Fields of the World benchmark collection publishes four
+parquet assets with role `data` (`fields`, `fields_filtered`,
+`boundary_lines`, `chips`), each with its own `table:columns` and
+`table:row_count`; a FIRMS year item publishes its detections beside two
+`aggregate` tables of itself. §2.4 has no asset-choice step — it takes the
+first `data`-role parquet asset — so the choice is made *before* the
+derivation, in `src/utils/download/assets.js`:
+`narrowToAsset(collectionJson, key)` hands the derivation a copy of the
+collection with the other candidates removed and the chosen asset's own
+`table:`/`geoparquet:`/`proj:` fields lifted to where §2.4 reads them.
+
+Narrowing rather than patching the derived descriptor, because the choice
+changes the *table*, not just the URL: its columns, its bbox covering and
+its time column all come from the asset. Two rules follow from real data:
+
+- An asset with no `table:` fields of its own keeps the entity's **only if
+  it is the primary (first) one** — the entity's fields describe that asset.
+  A FIRMS item's `table:columns` describe `detections.parquet`, and handing
+  them to `aggregate-r5`, whose schema is daily columns, would have
+  projected columns that are not in it. With nothing declared, `estimate()`
+  infers the table from the parquet footer, which costs no extra request.
+- An asset that declares **no roles at all** counts as a candidate, and the
+  narrowed copy gives it role `data`. §2.4 only looks at role-`data` assets,
+  so a catalog that omits `roles` — plenty do — used to be refused with "no
+  parquet data asset found" even though the cheap condition had said yes.
+
+The picker labels each table with its title, `table:row_count` and
+`file:size`, all of which are in the collection JSON already, so choosing
+costs nothing. A partitioned collection gets no picker: its source is the
+partition set, not an asset.
+
+**When.** `FilterSpec.time` is the cheapest filter a partitioned dataset
+has — `partitionPruneCascade` drops whole files whose declared interval
+misses the window before a footer is read. Measured in the app against the
+live FIRMS mirror, for Contra Costa County:
+
+| Window | Files | Read from storage |
+| --- | --- | --- |
+| none | 27 of 27 | 10.2 GB (over the 4 GB ceiling) |
+| August 2025 | 1 of 27 | 962 MB |
+
+So the card carries a date range for any table whose derived
+`table.timeColumn` is set, auto-populated from the entity's own temporal
+extent, with `Last 30 days` / `Last year` / `Whole range` beside it.
+`src/utils/download/time.js` holds the policy, and the one judgement call
+in it is when the window should be **on** by default: only when the extent
+is wider than two years. A benchmark collection covering 2021 *is* the
+dataset, and defaulting it to December would silently drop eleven months of
+what the user asked for by name; a 26-year archive is never meant to be
+taken whole from a browser.
+
+Within one file the window does nothing for FIRMS: its row groups are not
+sorted by time, so every row group's `acq_datetime` statistics span the
+whole year and `pruneRowGroupsByTime` honestly selects all of them. The win
+is entirely at the file level, which is what the narration shows.
+
+**Which rows.** Column predicates are built from the chosen table's own
+`table:columns` — numeric columns get comparisons, text columns get
+`contains`, everything gets the two null tests — and are ANDed onto the
+`where` prop's. They do not change the estimate's byte count, because
+`evaluateWhere` runs per row after the read; the card says so rather than
+leaving an unchanged "read from storage" looking like a filter that did
+nothing.
+
+**Saying the numbers honestly.** O12's `Bounded` has three readings and the
+card now distinguishes them: an `exact` number is said plainly, a modelled
+one is `≈36,469` with its bounds behind it, and a *wide* one
+(`max/estimate > 10`, the package's own threshold) leads with the range —
+`0 – 768` with `likely ≈15` as the footnote — because a point estimate
+there is a guess wearing a suit. A fourth case is the row cap: when
+`capBounded` has pushed the estimate up against `limit`, the card says `up
+to 100,000` and names the limit, instead of claiming a measurement.
+Output size is per format, from each format plugin's own `estimateBytes`
+(GeoJSON text of the same rows runs roughly three times a GeoParquet file),
+shown on the button that would produce it. "Why this estimate" expands into
+the pruning cascade stage by stage, with each stage's own basis sentence
+from `@cnmw/download-core`, plus the files, row groups, requests, output
+columns and whether the row cap bound.
+
+**Seven formats, two of which cost something to offer.** GeoJSON and
+GeoParquet are built into `@cnmw/download-core`. GeoPackage, FlatGeobuf,
+Shapefile, CSV and Esri JSON are separate packages (E10) that register a
+*descriptor* — id, label, extension, media type, a synchronous
+`estimateBytes` and an `approxBytes` weight — through
+`registerLazyFormat`, and whose `load()` is not called until a download for
+that id starts. That is what makes offering GeoPackage honest: the button
+can say `+331 kB` before sql.js's wasm is fetched, and a user who wanted
+GeoParquet never fetches it. `src/utils/download/formats.js` does the
+registration and the listing; `listFormats()` never resolves a plugin.
+
+Two consequences in the card. The format row is two primary buttons and a
+"More formats" toggle, because seven buttons is 200 pixels of a card that
+has to fit on a hero map. And a lazy load is a phase of the run: the
+`loading-format` progress event becomes "Loading the GeoPackage writer…",
+and a failure is `FORMAT_LOAD_FAILED`, which the card says in words and
+points at the two formats that need nothing. The CDN fetch for GeoPackage
+and FlatGeobuf is the only code this widget loads at runtime; a deployment
+with no outbound internet keeps the other five.
+
+Shapefile's limits arrive as `warning` events from the plugin's `close()`
+— "Column `country_units` was renamed to `COUNTRY_UN` to fit dBase's
+10-character field-name limit" — and land in the success state beside the
+file they are about, deduplicated and capped at four. `download()` also
+re-emits every *estimate* warning on the same channel, so those are
+filtered out by code; they are already on screen above.
+
+Verified against `geoboundaries-catalog/adm2` (Liechtenstein, 17 rows),
+written and saved from the browser: `.geojson` 385 kB, `.parquet` 82 kB,
+`.gpkg` 320 kB, `.shp.zip` 278 kB, `.csv` 618 kB, `.fgb` 270 kB.
+
+**Output-size models are about columns, not geometry.** Those measured
+sizes are also the clearest open problem: every `estimateBytes` is
+bytes-per-row from the *column count*, so for boundary polygons with
+thousands of vertices the models are low by a lot (GeoJSON modelled at most
+334 kB and wrote 385 kB; CSV modelled 134 kB and wrote 618 kB). The card
+says so in "why this estimate" rather than pretending the bound is one.
+`download()` checks the same model against `ceiling.blobBytes`, so the
+under-count is upstream's to fix — `estimate()`'s own
+`genericOutputBytesModel` (compressed read bytes per row × 1.6) is better
+calibrated for this data and could be the floor every format model is
+clamped to. **Worth passing upstream.**
+
+**Empty results are a state, not a zero.** An estimate whose upper bound is
+zero shows what emptied it and, when it was the dates, a one-click way out.
+This is not hypothetical: the FIRMS collection's temporal extent currently
+runs two months past its newest published parquet file, so the default
+"last 30 days" window selects 27 files and then drops all of them.
+
+**The run and the end of it.** Progress is rows matched and bytes read, not
+just a bar, because with no bbox covering the bar sits still for a long
+time while the numbers move. Pause and resume are the handle's own, which
+means they take effect at a row-group boundary (the engine awaits the
+progress hook between row groups) — the button therefore follows the
+handle's `state` events rather than the widget's idea of what it did.
+Cancel, success and failure are three separate end states:
+
+- **Cancel** reports the rows read when it stopped and that nothing was
+  kept. The sinks do the keeping-nothing: `blobSink` drops its chunks, and
+  `fileSystemSink` removes the partial file where the browser allows it.
+- **Success** carries the filename, the rows, the bytes and the elapsed
+  time — measured in the widget, because `DownloadHandle.result.elapsedMs`
+  is the *estimate's* elapsed time (`download.js` builds the result with
+  `elapsedMs: est.elapsedMs`), which on a one-minute read is the one number
+  a user would never mean.
+- **Failure** is the error taxonomy in words. The taxonomy's own rule is
+  that the `code` is the API and the message is for humans and may be
+  reworded, so all 31 codes have an i18n key saying what happened and what
+  to do; an unknown code still falls back to `CODE: message`.
+
+**The `s3://` refusal was too wide, and that mattered.** The widget used to
+refuse any descriptor whose `source.url` *or* `source.glob` was not
+`http(s)`. FIRMS publishes its `partition:glob` as an `s3://` URI, so the
+whole 632M-row archive was refused — but the browser never fetches that
+glob. With no `collection-mirror` asset, §2.4 derives a `stac-items`
+enumeration, and each year's concrete file URL comes from that item's own
+`data` asset over https. `fetchTargets()` in `descriptor.js` now reports
+only what would actually be fetched (the glob for `declared`/`values`
+enumeration, the mirror URL, the collection URL, the bucket endpoint), and
+the refusal applies to that. A single-file `parquet` source with an `s3://`
+href still refuses, which is the case the message was written for.
+
 ## Running it
 
 The widget's packages are not published to npm yet, so the branch consumes
@@ -117,22 +292,54 @@ provisional geoBoundaries index (49,530 rows, 2.5 MB) from cn-geocoding's
 once that catalog is live**, and it is a widget prop, so a deployment can
 point at any index that satisfies §6 of the design.
 
-`verify-download-widget.mjs` at the repo root drives the whole flow against a
-real catalog; its header comment has the one server it expects (just this
-app -- the catalog, the parquet files and the names index all come from
-Source Cooperative now).
+Two scripts at the repo root drive the real thing against real catalogs,
+with no mocks and no second server (the catalogs, the parquet files and the
+names index all come from Source Cooperative):
+
+- `verify-download-widget.mjs` — the whole flow once, on
+  `geoboundaries-catalog/adm2`: search, area on the page's own map,
+  estimate, both downloads, and the files read back with hyparquet to prove
+  they are valid. Writes `verify-download-widget.png` and
+  `verify-download-widget-pill.png`.
+- `verify-download-card.mjs` — the card's choices, on three catalogs:
+  the four-table picker on `ftw/benchmark-data/at_2021`, the date window on
+  the 27-file FIRMS archive (with the empty state its stale extent
+  produces), a finished download's success state, and pause / resume /
+  cancel on the FIRMS 2020 item. Writes `verify-download-assets.png`,
+  `verify-download-firms.png`, `verify-download-success.png` and
+  `verify-download-cancel.png`, which are the committed evidence for this
+  branch.
+
+Both take `APP_BASE` (default `http://localhost:8081`) and expect
+`npx vite --port 8081` to be running.
+
+The automated suites split the same way the flow does. `tests/unit/`
+(`downloadWidget`, `downloadFilters`, `downloadHyparquet`) holds everything
+that is a pure function of a collection JSON: the support gate, the §2.4
+derivation and its asset narrowing, the time window policy, the `Bounded`
+readings, the error taxonomy mapping and both code generators.
+`tests/e2e/downloadWidget.spec.js` holds what the DOM does — the tool on
+the map, the picker, the date row, the column filters and the human error
+sentence — driving an uploaded GeoJSON area so a card appears without a
+parquet file behind it. Anything that needs real bytes (a real estimate, a
+real download, pause and cancel) is in the two verify scripts, because an
+MSW fixture cannot serve range requests over a 797 MB file.
 
 ## What is reusable and what is portolan glue
 
 Everything that understands areas, parquet, pruning, estimates and output
 formats lives in the `@cnmw` packages and is host-agnostic. This repo adds
-about 2,000 lines, of which the widget itself is most:
+about 3,500 lines, of which the widget itself is most:
 
 | File | Lines | Portolan-specific? |
 | --- | --- | --- |
-| `src/widgets/AreaDownload.vue` | 1,258 | **Partly.** The flow is generic; the Vue, the i18n keys and the on-map positioning (which corners this app's own map controls already own) are this app's. Roughly 375 of those lines are the scoped stylesheet the on-map chrome needs. |
+| `src/widgets/AreaDownload.vue` | 2,398 | **Partly.** The flow is generic; the Vue, the i18n keys and the on-map positioning (which corners this app's own map controls already own) are this app's. Roughly 670 of those lines are the scoped stylesheet the on-map chrome needs. |
 | `src/codegen/DuckDbSqlGenerator.js` | 346 | **No.** A pure `DownloadRequest` → SQL translation of design §2.9. Moves anywhere. |
-| `src/utils/download/descriptor.js` | 119 | **No.** stac-js object → dataset descriptor. stac-js is upstream's object model too. |
+| `src/utils/download/descriptor.js` | 192 | **No.** stac-js object → dataset descriptor, plus which of its URLs a browser would actually fetch. stac-js is upstream's object model too. |
+| `src/utils/download/assets.js` | 165 | **No**, apart from importing this app's parquet predicates. Enumerating a collection's parquet tables and narrowing it to one is §2.4's missing asset-choice step. |
+| `src/utils/download/time.js` | 157 | **No.** STAC temporal extent → a default window and a `FilterSpec.time`. |
+| `src/utils/download/formats.js` | 129 | **No.** Registers the five optional format packages lazily and lists what the card can offer, with each one's weight. |
+| `src/utils/download/present.js` | 155 | **No.** `Bounded`, the pruning cascade and the error taxonomy, turned into things to say. No i18n in it: it returns the kind and the numbers, the card supplies the sentence. |
 | `src/components/maps/mapHost.js` | 105 | **No.** Knows nothing about STAC or downloads; this is the piece to offer upstream. |
 | `src/utils/download/support.js` | 63 | **No**, apart from importing this app's parquet predicates. |
 | `src/utils/download/hyparquet.js` | 61 | **No.** Any bundler-hosted app needs this. |
@@ -331,29 +538,70 @@ Files touched: `packages/download-core/src/{cdn,dataset-resolve,index}.js`,
 and a new `packages/download-core/test/descriptor-from-collection.test.js`
 (9 tests, built from real catalog fixtures).
 
+Since then the card has also come to depend on **E10's lazy format
+registry** — `registerLazyFormat`, `resolveFormat`, `getFormat`,
+`formatLoadState`, the `loading-format` progress event and the
+`FORMAT_LOAD_FAILED` code — and on four new packages:
+`@cnmw/format-gpkg`, `@cnmw/format-flatgeobuf`, `@cnmw/format-shapefile`
+and `@cnmw/format-extras`. They are in the same sibling checkout and are
+aliased the same way; a checkout without them fails to build the widget's
+chunk, which is why the alias list in `vite.config.js` and
+`vitest.config.js` names all nine packages.
+
 ## Known gaps
 
-- **A collection with several parquet `data` assets** (benchmark-data-catalog
-  publishes `fields`, `boundary_lines` and `chips` side by side) silently
-  downloads the first. §2.4 has no asset-choice step and the widget offers no
-  picker. This needs a design answer before it needs code.
-- **`s3://` partition globs.** The FIRMS collection publishes its
-  `partition:glob` as an `s3://` URI, which DuckDB and the QGIS plugin can
-  read and a browser cannot. The widget refuses with a message naming the
-  scheme rather than failing mid-estimate, but the right fix is upstream: a
-  collection that wants browser downloads should publish an HTTPS glob, or a
-  `collection-mirror` asset to enumerate from.
+- **A cancel inside a row-group read is reported as a dataset failure.**
+  Aborting the signal rejects the in-flight range request, and
+  `download-core`'s `readRows` wraps any hyparquet throw as
+  `DATASET_UNRESOLVED`, so `download()` ends in `failed` rather than
+  `cancelled`. The widget works around it — it knows it asked — but the fix
+  belongs in `parquet-io.js`, which can see `signal.aborted` and rethrow a
+  `CancelledError`. **Worth passing upstream.**
+- **Column filters cannot prune.** `where` predicates run per row after the
+  read, so adding `frp >= 50` lowers the rows written and not the bytes
+  read. Row-group min/max statistics could exclude row groups for a
+  comparison on a plain column, exactly as the time filter does — a
+  `pruneRowGroupsByPredicate` in `download-core` would make the card's
+  column filters as cheap as its dates. **Worth passing upstream.**
+- **No column projection in the card.** A FIRMS request reads all 19
+  columns because the output takes all of them; most users want geometry,
+  time and a couple of others. `FilterSpec.columns` already supports
+  `include`/`exclude`/`dropGeometry`/`includeBbox`, and `readBytes` is
+  computed from the read columns, so a projection row in the card would cut
+  the largest number on screen. It is the obvious next thing.
+- **FIRMS' temporal extent is ahead of its files.** The collection declares
+  data to 2026-11-12; the newest published partition ends 2026-09-15. The
+  default "last 30 days" window therefore selects nothing, and the card
+  shows its empty state with a one-click "Whole range". The widget's
+  behaviour is right either way, but the metadata is wrong at the source and
+  is worth reporting to that catalog.
+- **The format registry's load state is not reactive.** `formats()` is a
+  plain function over module-scoped maps, so a Vue computed built on it
+  cannot know that a lazy plugin has finished loading. The card bumps a
+  counter after every run to re-read it, which works because that is the
+  only moment a load can have happened. A registry event (`format-loaded`)
+  would be the honest fix. **Worth passing upstream.**
+- **Two formats fetch code from a CDN.** GeoPackage's sql.js wasm and
+  FlatGeobuf's writer come from pinned jsdelivr URLs inside their
+  packages' own `load()`. That is the design's zero-build path, and it is
+  the one thing in this widget that fetches code at runtime: a deployment
+  behind a strict CSP or with no outbound internet keeps the other five
+  formats and sees `FORMAT_LOAD_FAILED` for these two. Both packages
+  export an injection seam (`setSqlJsModule`, `setFlatGeobufModule`) if
+  this app ever wants to bundle them instead, exactly as it already does
+  for hyparquet.
 - **Shared boundaries are intersections.** Downloading ADM2 units for
   Liechtenstein returns 17 rows, not the 11 municipalities: six neighbouring
   Swiss and Austrian units share a boundary line, and `ST_Intersects` is true
   for a shared boundary. That is correct and documented behaviour (§2.2), but
   it will surprise users. The `clip` spatial mode is the answer and is not
   implemented yet (design §O7).
-- **Estimates are wide.** Metadata-only estimation reports "15 rows (between
-  0 and 768)" for the Liechtenstein download that produces 17. That is the
-  honest number from row-group statistics, and the design's opt-in
-  one-row-group sampling (§O12) would narrow it. It is now shown without the
-  user asking for it, so it is read more often than it used to be.
+- **Estimates are wide.** Metadata-only estimation reports "0 – 768, likely
+  ≈15" for the Liechtenstein download that produces 17. That is the honest
+  number from row-group statistics, and the card now leads with the range
+  rather than the point estimate when the two are that far apart — but the
+  design's opt-in one-row-group sampling (§O12) is what would actually
+  narrow it, and is not implemented.
 - **`MapSelect.vue` probably has the layer-ordering bug this branch fixes for
   its own map:** `BboxDrawInteraction` adds its source in its constructor, and
   `MapMixin.createMap` replaces the whole style immediately afterwards to load
