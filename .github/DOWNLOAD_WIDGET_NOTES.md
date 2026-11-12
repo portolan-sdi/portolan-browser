@@ -214,10 +214,11 @@ port is:
 ## What this branch needs from cn-geocoding
 
 The widget depends on four additions to the `@cnmw` packages, made while
-building it. They are additive — every existing test in that repo still
-passes — but this branch does not build without them, and **they are
-uncommitted in the cn-geocoding working tree** because another task was
-editing neighbouring files at the same time.
+building it and committed there as `E7: host seams for a bundler, and the
+§2.4 derivation on an in-memory collection`. They are additive — every
+existing test in that repo still passes (237) — but this branch does not
+build without them, so a reviewer needs a cn-geocoding checkout that
+includes that commit.
 
 1. `@cnmw/download-core` exports `descriptorFromCollection` and
    `collectionDownloadSupport`: the §2.4 derivation run against a collection
