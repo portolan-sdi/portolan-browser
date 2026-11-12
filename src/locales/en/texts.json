@@ -556,6 +556,49 @@
     "title": "Display Options"
   },
   "widgets": {
+    "areaDownload": {
+      "area": {
+        "clear": "Clear area",
+        "drawHint": "Or hold Shift and drag on the map to draw a box.",
+        "drawnName": "Drawn area",
+        "label": "Area",
+        "mapLabel": "Map for selecting a download area",
+        "noResults": "No matching places.",
+        "placeholder": "Search for a place…",
+        "summary": "— {vertices} filter vertices, bbox {bbox}",
+        "upload": "or upload a GeoJSON area:",
+        "uploadWarnings": "The uploaded area was adjusted: {warnings}"
+      },
+      "code": {
+        "hide": "Hide the request",
+        "request": "Download request",
+        "show": "Show this download as code",
+        "sql": "DuckDB SQL"
+      },
+      "download": {
+        "acceptCeiling": "Download anyway",
+        "cancel": "Cancel",
+        "ceiling": "This download is larger than the safety ceiling ({breaches}).",
+        "done": "Done: {rows} rows, {bytes} written in {seconds} s.",
+        "phase": "{phase}…",
+        "planning": "Planning…",
+        "reading": "Reading row group {done} of {total} — {rows} rows matched, {bytes} read.",
+        "save": "Save {filename}"
+      },
+      "estimate": {
+        "button": "Estimate",
+        "output": "Output size",
+        "parts": "Scanned",
+        "partsValue": "{files} of {filesTotal} files, {rowGroups} of {rowGroupsTotal} row groups, {requests} requests",
+        "range": "{estimate} (between {min} and {max})",
+        "read": "Read from storage",
+        "rows": "Rows"
+      },
+      "intro": "Pick an area and download just that part of {dataset}, straight from the source files.",
+      "title": "Download data",
+      "unsupported": "This dataset cannot be downloaded by area.",
+      "unsupportedReason": "This dataset cannot be downloaded by area: {reason}"
+    },
     "featured": "Featured"
   }
 }

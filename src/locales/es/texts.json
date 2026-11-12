@@ -556,6 +556,49 @@
     "title": "Opciones de visualización"
   },
   "widgets": {
+    "areaDownload": {
+      "area": {
+        "clear": "Borrar área",
+        "drawHint": "O mantén pulsada la tecla Mayús y arrastra en el mapa para dibujar un rectángulo.",
+        "drawnName": "Área dibujada",
+        "label": "Área",
+        "mapLabel": "Mapa para seleccionar un área de descarga",
+        "noResults": "Ningún lugar coincide.",
+        "placeholder": "Busca un lugar…",
+        "summary": "— {vertices} vértices de filtro, bbox {bbox}",
+        "upload": "o sube un área en GeoJSON:",
+        "uploadWarnings": "El área subida se ha ajustado: {warnings}"
+      },
+      "code": {
+        "hide": "Ocultar la petición",
+        "request": "Petición de descarga",
+        "show": "Ver esta descarga como código",
+        "sql": "SQL de DuckDB"
+      },
+      "download": {
+        "acceptCeiling": "Descargar de todos modos",
+        "cancel": "Cancelar",
+        "ceiling": "Esta descarga supera el límite de seguridad ({breaches}).",
+        "done": "Hecho: {rows} filas, {bytes} escritos en {seconds} s.",
+        "phase": "{phase}…",
+        "planning": "Planificando…",
+        "reading": "Leyendo el grupo de filas {done} de {total} — {rows} filas coincidentes, {bytes} leídos.",
+        "save": "Guardar {filename}"
+      },
+      "estimate": {
+        "button": "Estimar",
+        "output": "Tamaño de salida",
+        "parts": "Analizado",
+        "partsValue": "{files} de {filesTotal} ficheros, {rowGroups} de {rowGroupsTotal} grupos de filas, {requests} peticiones",
+        "range": "{estimate} (entre {min} y {max})",
+        "read": "Leído del almacenamiento",
+        "rows": "Filas"
+      },
+      "intro": "Elige un área y descarga solo esa parte de {dataset}, directamente de los ficheros de origen.",
+      "title": "Descargar datos",
+      "unsupported": "Este conjunto de datos no se puede descargar por área.",
+      "unsupportedReason": "Este conjunto de datos no se puede descargar por área: {reason}"
+    },
     "featured": "Destacados"
   }
 }

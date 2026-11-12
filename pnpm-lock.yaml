@@ -9,6 +9,7 @@ overrides:
   '@deck.gl/geo-layers': 9.4.1
   '@deck.gl/mesh-layers': 9.4.1
   '@deck.gl/extensions': 9.4.1
+  hyparquet-writer>hyparquet: 1.26.0
 
 importers:
 
@@ -101,6 +102,9 @@ importers:
       hyparquet-compressors:
         specifier: ^1.1.1
         version: 1.1.1
+      hyparquet-writer:
+        specifier: 0.18.0
+        version: 0.18.0
       icechunk-js:
         specifier: ^0.6.1
         version: 0.6.1(zarrita@0.7.5)
@@ -2666,6 +2670,9 @@ packages:
   hyparquet-compressors@1.1.1:
     resolution: {integrity: sha512-yx7aA3Rhj0YycbdV71+XznQSLAefa4cT0urpgNXy4aM6eSeCknaVDNne8y45Uz74Fb15yyXUzOStlceOJBan7A==}
 
+  hyparquet-writer@0.18.0:
+    resolution: {integrity: sha512-1vDuEneasjp2yuk/OnLqli5aArzHQw8NYVbJD7ytpHZ3outmJaHHRcNbA7BiiFxonWGhwgPPWnVSsREv6LxE4A==}
+
   hyparquet@1.26.0:
     resolution: {integrity: sha512-yxUiViPZ+z5h+xdX4rA1G+k30jXoEsG9I2xEpjaM84imGznbKjZzxuZFsdzqg6C4LxNnnAlDFvzpk4uxQWTbTQ==}
 
@@ -2695,6 +2702,7 @@ packages:
   image-size@0.7.5:
     resolution: {integrity: sha512-Hiyv+mXHfFEP7LzUL/llg9RwFxxY+o9N3JVLIeG5E7iFIFAalxvRU9UZthBdYDEVnzHMgjnKJPPpay5BWf1g9g==}
     engines: {node: '>=6.9.0'}
+    deprecated: Please migrate to image-size@2.x
     hasBin: true
 
   immediate@3.0.6:
@@ -7389,6 +7397,10 @@ snapshots:
     dependencies:
       fzstd: 0.1.1
       hysnappy: 1.0.0
+
+  hyparquet-writer@0.18.0:
+    dependencies:
+      hyparquet: 1.26.0
 
   hyparquet@1.26.0: {}
 

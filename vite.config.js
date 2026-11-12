@@ -34,6 +34,57 @@ const optionsForType = (type) =>
 
 const defaultConfigPath = fileURLToPath(new URL("./config.js", import.meta.url));
 
+// The @cnmw cloud-native map widget packages (geocoder/upload/download cores
+// and the MapLibre adapter) that the "Download data" widget is built on.
+//
+// They are not published to npm yet, so this branch consumes them from a
+// sibling checkout of the cn-geocoding workspace rather than from
+// node_modules: a Vite alias, not an npm `file:` dependency. The alias is
+// one reviewable file and leaves pnpm-lock.yaml untouched, where `file:`
+// links would rewrite the lockfile with paths that only resolve on a
+// machine that has the sibling repo anyway.
+//
+// WHEN THESE PACKAGES ARE PUBLISHED, this block and SB_CNMW_ROOT go away and
+// the four names become ordinary version-pinned dependencies in
+// package.json. Nothing else in the app changes: every import is by package
+// name already.
+//
+// Override the location with SB_CNMW_ROOT (absolute, or relative to this
+// file's directory).
+const cnmwPackagesPath = (() => {
+  const fromEnv = process.env.SB_CNMW_ROOT;
+  if (fromEnv) {
+    return resolve(fileURLToPath(new URL(".", import.meta.url)), fromEnv);
+  }
+  return fileURLToPath(new URL("../cn-geocoding/packages", import.meta.url));
+})();
+
+const cnmwAvailable = (() => {
+  try {
+    accessSync(resolve(cnmwPackagesPath, "download-core/src/index.js"));
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+if (!cnmwAvailable) {
+  // Fail loudly here rather than as an unresolved-import error 200 lines
+  // into a build log.
+  console.warn(
+    `[portolan-browser] The @cnmw widget packages were not found at ${cnmwPackagesPath}. ` +
+      "The \"Download data\" widget will not build. Check out cn-geocoding beside this repo, " +
+      "or point SB_CNMW_ROOT at it, or remove the widget from widgets.config.js."
+  );
+}
+
+const cnmwAliases = Object.fromEntries(
+  ["spec", "geocoder-core", "upload-core", "download-core", "maplibre"].map((name) => [
+    `@cnmw/${name}`,
+    resolve(cnmwPackagesPath, `${name}/src/index.js`),
+  ])
+);
+
 // Parse an array-typed option from a single environment variable value.
 // A full JSON array (e.g. '[{"label":"a","url":"b"}]') is used as-is, which
 // allows arrays of objects. For convenience, a plain comma-separated list
@@ -235,17 +286,29 @@ export default defineConfig(async ({ mode }) => {
       // guard in utils/zarrSource and the layers' own reprojection must parse
       // a WKT definition the same way. @developmentseed/proj pins an older
       // copy, and two parsers can disagree once one of them gains a fix.
-      dedupe: ["ol", "stac-js", "proj4", "wkt-parser"],
+      // hyparquet is deduped for the same class of reason: the app pins
+      // hyparquet 1.26.0, and the @cnmw packages are aliased in from outside
+      // this project's node_modules, where a stray second copy would
+      // otherwise be resolvable. The parquet reader must be one instance --
+      // two would mean two WASM-less decoders, two module caches, and twice
+      // the bytes for no benefit. hyparquet-writer bare-imports hyparquet
+      // internally, so it has to agree as well.
+      dedupe: ["ol", "stac-js", "proj4", "wkt-parser", "hyparquet", "hyparquet-compressors", "hyparquet-writer"],
       alias: {
         "@": fileURLToPath(new URL("./src", import.meta.url)),
         "@stac-browser-external-config": externalConfigPath,
+        ...cnmwAliases,
       },
     },
     server: {
       fs: {
         allow: [
           searchForWorkspaceRoot(process.cwd()),
-          externalConfigPath
+          externalConfigPath,
+          // The aliased @cnmw packages live outside this project, so the dev
+          // server must be allowed to serve them. Drops out with the alias
+          // once the packages are published.
+          cnmwPackagesPath
         ],
       },
       port: 8080,
