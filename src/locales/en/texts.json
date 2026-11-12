@@ -597,7 +597,12 @@
       "intro": "Pick an area and download just that part of {dataset}, straight from the source files.",
       "title": "Download data",
       "unsupported": "This dataset cannot be downloaded by area.",
-      "unsupportedReason": "This dataset cannot be downloaded by area: {reason}"
+      "unsupportedReason": "This dataset cannot be downloaded by area: {reason}",
+      "warnings": {
+        "antimeridianSplit": "This area crosses the antimeridian, so it is tested as {boxes} separate boxes.",
+        "estimateWide": "This estimate is wide: the real row count could be up to {ratio} times it.",
+        "shareAlike": "This data is share-alike licensed ({licenses}). Anything you publish from it must carry the same licence and attribution."
+      }
     },
     "featured": "Featured"
   }

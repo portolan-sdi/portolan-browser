@@ -597,7 +597,12 @@
       "intro": "Elige un área y descarga solo esa parte de {dataset}, directamente de los ficheros de origen.",
       "title": "Descargar datos",
       "unsupported": "Este conjunto de datos no se puede descargar por área.",
-      "unsupportedReason": "Este conjunto de datos no se puede descargar por área: {reason}"
+      "unsupportedReason": "Este conjunto de datos no se puede descargar por área: {reason}",
+      "warnings": {
+        "antimeridianSplit": "Esta área cruza el antimeridiano, así que se evalúa como {boxes} rectángulos separados.",
+        "estimateWide": "Esta estimación es amplia: el número real de filas podría ser hasta {ratio} veces mayor.",
+        "shareAlike": "Estos datos tienen una licencia de compartir-igual ({licenses}). Lo que publiques a partir de ellos debe llevar la misma licencia y atribución."
+      }
     },
     "featured": "Destacados"
   }

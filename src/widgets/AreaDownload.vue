@@ -140,6 +140,14 @@ import { describeDataset } from '../utils/download/descriptor.js';
 import { useAppHyparquet } from '../utils/download/hyparquet.js';
 import { downloadGenerators } from '../../codeGenerators.config.js';
 
+// Warning codes that reach the user as numbers only, so the widget has to
+// supply the sentence. Anything not listed carries its own `message`.
+const WARNING_KEYS = {
+  'estimate-wide': 'widgets.areaDownload.warnings.estimateWide',
+  'antimeridian-split': 'widgets.areaDownload.warnings.antimeridianSplit',
+  'share-alike': 'widgets.areaDownload.warnings.shareAlike'
+};
+
 /** Human-readable bytes, for the estimate rows and the progress line. */
 function formatBytes(bytes) {
   const value = Number(bytes) || 0;
@@ -250,7 +258,20 @@ export default defineComponent({
       if (warnings.length === 0) {
         return '';
       }
-      return warnings.map(warning => warning.message || warning.code).join(' ');
+      // Most warnings carry their own sentence. Three carry only numbers --
+      // and one of those, share-alike, is a licence obligation the user has
+      // to see in words, not as a code.
+      return warnings.map(warning => {
+        const key = WARNING_KEYS[warning.code];
+        if (key) {
+          return this.$t(key, {
+            ratio: Math.round(warning.ratio || 0),
+            boxes: warning.boxes,
+            licenses: (warning.attribution || []).map(entry => entry.license).join(', ')
+          });
+        }
+        return warning.message || warning.code;
+      }).join(' ');
     }
   },
   async mounted() {
