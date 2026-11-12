@@ -11,6 +11,7 @@ content you need - using either the pre-defined widgets or your own Vue componen
   - [Conditional Widgets](#conditional-widgets)
 - [Pre-defined Widgets](#pre-defined-widgets)
   - [AlertBox](#alertbox)
+  - [AreaDownload](#areadownload)
   - [CustomText](#customtext)
   - [ExternalWarning](#externalwarning)
   - [Featured](#featured)
@@ -113,6 +114,30 @@ Renders a dismissible alert banner.
 | `variant`     | String  | `'warning'` | Color variant: `'warning'`, `'danger'`, `'success'`, `'info'`, etc. |
 | `dismissible` | Boolean | `false`     | Whether the user can close the alert. |
 | `allowHTML`   | Boolean | `false`     | Allows HTML tags in the `text`. |
+
+### AreaDownload
+
+Renders a "Download data" panel: the user picks an area by searching for a place, by
+holding Shift and dragging a box on the panel's own map, or by uploading a GeoJSON,
+then estimates the download and saves the matching features as GeoJSON or GeoParquet.
+The browser reads only the row groups the area touches, straight from the collection's
+parquet files.
+
+The panel is built on the `@cnmw` cloud-native map widget packages, which are consumed
+from a sibling `cn-geocoding` checkout through a Vite alias until they are published to
+npm. See [.github/DOWNLOAD_WIDGET_NOTES.md](../.github/DOWNLOAD_WIDGET_NOTES.md) for the
+architecture, the setup the panel needs, and what is portolan-specific about it.
+
+The widget needs no `condition` of its own: the one in `widgets.config.js` keeps it off
+any entity with no downloadable vector data, so a raster, Zarr or PMTiles-only collection
+shows no panel at all. Typical placements are the `view-catalog-meta-end` and
+`view-item-secondary-end` hooks.
+
+| Props      | Type   | Default      | Description |
+| ---------- | ------ | ------------ | ----------- |
+| `indexUrl` | String | a local index | The place-name index the search box reads, as a `cnmw-index/1.0` manifest URL. |
+| `where`    | Array  | `[]`         | Attribute predicates applied to every download, in `@cnmw` `FilterSpec` form, e.g. `[{ col: 'confidence', op: '>=', value: 0.9 }]`. |
+| `limit`    | Number | `100000`     | Hard cap on the rows a download writes. Distinct from the safety ceiling, which is a refusal the user can accept. |
 
 ### CustomText
 

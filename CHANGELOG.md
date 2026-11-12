@@ -21,6 +21,13 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ### Added
 
+- A "Download data" panel on a vector collection or item takes an area -- searched by
+  place name, drawn on the map, or uploaded as GeoJSON -- estimates the download from
+  parquet metadata alone, and writes the matching features out as GeoJSON or GeoParquet.
+  The browser reads the row groups it needs straight from object storage; no server
+  converts anything. The panel is absent on a collection it cannot download, and it can
+  show the request as a portable JSON document and as the equivalent DuckDB SQL
+  (see [docs/widgets.md](docs/widgets.md))
 - A search box on the start page filters the registry list. Every word of the query must appear
   in the catalog title, its registry id, or its URL. The catalog URL field no longer filters the list
 - A categorical COG takes its colours from the `color_hint` values of its own `classification:classes`,
