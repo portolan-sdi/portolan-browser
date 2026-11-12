@@ -211,6 +211,34 @@ port is:
    should say so rather than appear to offer the same thing.
 5. **Drop nothing else.** No Portolan styles or render-order code is involved.
 
+## What this branch needs from cn-geocoding
+
+The widget depends on four additions to the `@cnmw` packages, made while
+building it. They are additive — every existing test in that repo still
+passes — but this branch does not build without them, and **they are
+uncommitted in the cn-geocoding working tree** because another task was
+editing neighbouring files at the same time.
+
+1. `@cnmw/download-core` exports `descriptorFromCollection` and
+   `collectionDownloadSupport`: the §2.4 derivation run against a collection
+   JSON already in memory, and its non-throwing form. The design assumed a
+   `@cnmw/stac` package for this; the mapping has always lived in
+   download-core.
+2. `@cnmw/download-core` exports `setHyparquetModules` / `loadHyparquet` /
+   `loadHyparquetWriter`, and its injection seam is documented as a host
+   path rather than test-only.
+3. `@cnmw/geocoder-core` gains the same seam. It had two private copies of
+   the CDN loader, in `index-loader.js` and `geometry-resolver.js`; both now
+   use one in `cdn.js`.
+4. Asset hrefs are resolved against the collection's own URL during
+   derivation, and a declared non-parquet `data` asset no longer passes as
+   parquet (the bug described above).
+
+Files touched: `packages/download-core/src/{cdn,dataset-resolve,index}.js`,
+`packages/geocoder-core/src/{cdn,index-loader,geometry-resolver,index}.js`,
+and a new `packages/download-core/test/descriptor-from-collection.test.js`
+(9 tests, built from real catalog fixtures).
+
 ## Known gaps
 
 - **A collection with several parquet `data` assets** (benchmark-data-catalog
