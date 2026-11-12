@@ -98,8 +98,8 @@ log('AREA', await text(page.locator('.ad-area-name')))
 log('AREA SUMMARY', await text(page.locator('.ad-area-summary')))
 
 // --- 3. The estimate runs by itself, no button to find -------------------
-await card().locator('dl.estimate').waitFor({ timeout: 120000 })
-log('ESTIMATE', await card().locator('dl.estimate').evaluate(dl => {
+await card().locator('dl.estimate').first().waitFor({ timeout: 120000 })
+log('ESTIMATE', await card().locator('dl.estimate').first().evaluate(dl => {
   const out = {}
   const terms = [...dl.querySelectorAll('dt')]
   terms.forEach((dt, index) => {
@@ -107,7 +107,14 @@ log('ESTIMATE', await card().locator('dl.estimate').evaluate(dl => {
   })
   return out
 }))
-log('SCANNED', await text(card().locator('.ad-scanned')))
+// How the estimate got there -- the pruning cascade, stage by stage --
+// lives behind "why this estimate" now.
+await card().locator('.ad-why summary').click()
+log('WHY THIS ESTIMATE', {
+  stages: (await card().locator('.ad-why-list li').allTextContents()).map(line => line.replace(/\s+/g, ' ').trim()),
+  scanned: (await card().locator('.ad-why .ad-scanned').allTextContents()).map(line => line.replace(/\s+/g, ' ').trim())
+})
+log('FORMAT BUTTONS', await card().locator('.ad-formats .ad-button').allTextContents())
 
 await page.waitForTimeout(2500)
 const after = await mapSignature()
@@ -129,18 +136,34 @@ await page.getByRole('button', { name: /Hide the request/ }).click()
 
 // --- 5. Download, for real, with nothing to click afterwards -------------
 async function downloadAs(format, filename) {
+  // The format buttons are hidden while a finished download is on screen,
+  // so a second one starts by dismissing the first's success state -- which
+  // is also the "Download another" button working.
+  if (await card().locator('.ad-done').count() > 0) {
+    await card().locator('.ad-done .ad-button').click()
+  }
   const started = page.waitForEvent('download', { timeout: 300000 })
-  await card().getByRole('button', { name: format, exact: true }).click()
+  // Each button carries that format's own size hint, so the name is a
+  // prefix rather than the whole label.
+  await card().getByRole('button', { name: new RegExp(`^${format}`) }).click()
   const download = await started
   const path = `/tmp/${filename}`
   await download.saveAs(path)
-  await card().locator('.ad-status', { hasText: /^Saved / }).waitFor({ timeout: 60000 })
+  await card().locator('.ad-done').waitFor({ timeout: 60000 })
   log(`${format} SAVED`, {
     path,
     suggestedFilename: download.suggestedFilename(),
     bytes: readFileSync(path).byteLength,
     renderedLinks: await card().locator('a[download]').count(),
-    status: await text(card().locator('.ad-status').last())
+    head: await text(card().locator('.ad-done-head')),
+    numbers: await card().locator('.ad-done dl').evaluate(node => {
+      const out = {}
+      const terms = [...node.querySelectorAll('dt')]
+      terms.forEach((dt, index) => {
+        out[dt.textContent.trim()] = node.querySelectorAll('dd')[index]?.textContent.trim()
+      })
+      return out
+    })
   })
   return path
 }
@@ -199,7 +222,7 @@ await page.mouse.move(mapBox.x + mapBox.width * 0.45, mapBox.y + mapBox.height *
 await page.mouse.down()
 await page.mouse.move(mapBox.x + mapBox.width * 0.58, mapBox.y + mapBox.height * 0.58, { steps: 12 })
 await page.mouse.up()
-await card().locator('dl.estimate').waitFor({ timeout: 120000 })
+await card().locator('dl.estimate').first().waitFor({ timeout: 120000 })
 log('DRAWN AREA', await text(page.locator('.ad-area-name')))
 log('DRAWN AREA ESTIMATE', await text(card().locator('dl.estimate dd').first()))
 
@@ -215,7 +238,7 @@ writeFileSync(uploaded, JSON.stringify({
   }
 }))
 await page.locator('.ad-file').setInputFiles(uploaded)
-await card().locator('dl.estimate').waitFor({ timeout: 120000 })
+await card().locator('dl.estimate').first().waitFor({ timeout: 120000 })
 log('UPLOADED AREA', await text(page.locator('.ad-area-name')))
 log('UPLOADED AREA ESTIMATE', await text(card().locator('dl.estimate dd').first()))
 

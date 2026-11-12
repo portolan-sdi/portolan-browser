@@ -12,7 +12,17 @@ const cnmwPackagesPath = process.env.SB_CNMW_ROOT
   : path.resolve(__dirname, '../cn-geocoding/packages')
 
 const cnmwAliases = Object.fromEntries(
-  ['spec', 'geocoder-core', 'upload-core', 'download-core', 'maplibre'].map((name) => [
+  [
+    'spec',
+    'geocoder-core',
+    'upload-core',
+    'download-core',
+    'maplibre',
+    'format-gpkg',
+    'format-flatgeobuf',
+    'format-shapefile',
+    'format-extras',
+  ].map((name) => [
     `@cnmw/${name}`,
     path.resolve(cnmwPackagesPath, `${name}/src/index.js`),
   ])

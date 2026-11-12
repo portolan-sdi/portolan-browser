@@ -12,6 +12,7 @@
 
 import { collectionDownloadSupport } from '@cnmw/download-core';
 import { assetHref } from '../mapAssets.js';
+import { narrowToAsset, parquetDataAssets } from './assets.js';
 
 // The table/partition extension fields sit at the top level of a Collection
 // but inside `properties` on an Item -- a FIRMS partition item carries its
@@ -135,32 +136,57 @@ export function unreachableSource(descriptor) {
 }
 
 /**
- * The authoritative support answer, plus the descriptor when supported.
+ * The authoritative support answer, plus the descriptor when supported, the
+ * parquet assets a download could read, and which of them this descriptor
+ * is for.
  *
  * An item inherits nothing from its collection here: a Portolan partition
  * item (FIRMS' `year=2020`) carries its own `data` parquet asset and its own
  * `table:row_count`, which is exactly the single-file case §2.4 handles.
+ *
+ * `assetKey` picks among several parquet data assets (see
+ * `utils/download/assets.js` for why a real catalog has several and why the
+ * choice cannot be made by patching the derived descriptor). It is ignored
+ * by a partitioned collection, whose source is its partition set.
  * @param {object} data a stac-js Collection or Item from the Vuex store
- * @returns {{ supported: boolean, code?: string, message?: string, descriptor?: object }}
+ * @param {{ assetKey?: string }} [options]
+ * @returns {{ supported: boolean, code?: string, message?: string, descriptor?: object,
+ *   assets?: object[], assetKey?: string, json?: object }}
  */
-export function describeDataset(data) {
+export function describeDataset(data, options = {}) {
   if (!data) {
     return { supported: false, code: 'DATASET_UNSUPPORTED' };
   }
   const baseUrl = typeof data.getAbsoluteUrl === 'function' ? data.getAbsoluteUrl() : undefined;
   const json = toPlainStacJson(data);
-  const support = collectionDownloadSupport(json, {
+  const assets = parquetDataAssets(json);
+  // A partitioned collection downloads its partition set, not an asset, so
+  // the picker has nothing to offer and the narrowing must not run: hiding
+  // the other parquet assets from the derivation would be harmless, but
+  // overwriting the collection's `table:` fields with an aggregate asset's
+  // would quietly describe the wrong table.
+  const partitioned = Boolean(json['partition:scheme'] || json['partition:glob']);
+  const assetKey = partitioned ? undefined : (assets.find(asset => asset.key === options.assetKey)?.key || assets[0]?.key);
+  const derived = partitioned ? json : narrowToAsset(json, assetKey);
+  const support = collectionDownloadSupport(derived, {
     baseUrl,
     id: json.id,
     title: json.title || json.properties?.title || json.id,
   });
+  const extra = { assets: partitioned ? [] : assets, assetKey, json };
   if (!support.supported) {
-    return support;
+    return { ...support, ...extra };
   }
   const unreachable = unreachableSource(support.descriptor);
   if (unreachable) {
-    return { supported: false, code: 'DATASET_UNREACHABLE', message: unreachable, descriptor: support.descriptor };
+    return {
+      supported: false,
+      code: 'DATASET_UNREACHABLE',
+      message: unreachable,
+      descriptor: support.descriptor,
+      ...extra
+    };
   }
-  return support;
+  return { ...support, ...extra };
 }
 

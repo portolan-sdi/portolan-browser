@@ -45,9 +45,8 @@ const defaultConfigPath = fileURLToPath(new URL("./config.js", import.meta.url))
 // machine that has the sibling repo anyway.
 //
 // WHEN THESE PACKAGES ARE PUBLISHED, this block and SB_CNMW_ROOT go away and
-// the four names become ordinary version-pinned dependencies in
-// package.json. Nothing else in the app changes: every import is by package
-// name already.
+// these names become ordinary version-pinned dependencies in package.json.
+// Nothing else in the app changes: every import is by package name already.
 //
 // Override the location with SB_CNMW_ROOT (absolute, or relative to this
 // file's directory).
@@ -79,7 +78,21 @@ if (!cnmwAvailable) {
 }
 
 const cnmwAliases = Object.fromEntries(
-  ["spec", "geocoder-core", "upload-core", "download-core", "maplibre"].map((name) => [
+  [
+    "spec",
+    "geocoder-core",
+    "upload-core",
+    "download-core",
+    "maplibre",
+    // The optional output formats. Each package is a small descriptor plus
+    // its writer; anything heavy inside one (sql.js's wasm for GeoPackage)
+    // is fetched by that descriptor's own `load()`, only once the user
+    // picks the format.
+    "format-gpkg",
+    "format-flatgeobuf",
+    "format-shapefile",
+    "format-extras",
+  ].map((name) => [
     `@cnmw/${name}`,
     resolve(cnmwPackagesPath, `${name}/src/index.js`),
   ])
