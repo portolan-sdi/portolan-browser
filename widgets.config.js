@@ -15,11 +15,10 @@ const areaDownload = {
   component: defineAsyncComponent(() => import('./src/widgets/AreaDownload.vue')),
   condition: ({ data }) => mayHaveDownloadableVector(data),
   props: {
-    // Provisional geoBoundaries names index, served locally for the branch
-    // demo (see .github/DOWNLOAD_WIDGET_NOTES.md). This becomes the
-    // portolan-mirrors/geoboundaries-catalog names index on source.coop
-    // once that catalog is published.
-    indexUrl: 'http://localhost:8000/examples/geocoder-demo/data/index.json'
+    // The published geoBoundaries names index on Source Cooperative
+    // (portolan-mirrors/geoboundaries-catalog): 52,398 names across
+    // ADM0-2, with geometry_ref fast-path row pointers.
+    indexUrl: 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json'
   }
 };
 
