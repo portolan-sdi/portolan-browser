@@ -212,6 +212,7 @@ export default defineComponent({
       showCode: false,
       request: null,
       geocoder: null,
+      indexAttribution: [],
       areaLayer: null,
       bboxDraw: null,
       handle: null,
@@ -247,8 +248,7 @@ export default defineComponent({
     attribution() {
       const entries = this.descriptor?.attribution || [];
       const parts = entries.map(entry => [entry.text, entry.license].filter(Boolean).join(' · '));
-      const index = this.geocoder?.attribution || [];
-      for (const entry of index) {
+      for (const entry of this.indexAttribution) {
         parts.push([entry.text, entry.license].filter(Boolean).join(' · '));
       }
       return parts.filter(Boolean).join(' | ');
@@ -337,7 +337,17 @@ export default defineComponent({
         // of the true boundary -- so it would over-select at the edges.
         geocoder.on('area:upgraded', ({ area }) => {
           if (this.area && area.id === this.area.id) {
-            this.setArea(area, { refit: false });
+            this.upgradeArea(area);
+          }
+        });
+        // The index carries its own licence (the geoBoundaries index is
+        // CC-BY), and it only knows it once loaded. Copy it into reactive
+        // state: reading `geocoder.attribution` straight from the markRaw'd
+        // object would leave the credit off the page until some unrelated
+        // render happened to pick it up.
+        geocoder.on('state', ({ state }) => {
+          if (state === 'ready') {
+            this.indexAttribution = [...geocoder.attribution];
           }
         });
         geocoder.on('warning', warning => {
@@ -414,17 +424,30 @@ export default defineComponent({
         this.areaError = this.formatError(error);
       }
     },
-    setArea(area, options = {}) {
-      this.area = markRaw(area);
+    // A new area: everything computed from the old one is now wrong.
+    setArea(area) {
+      this.applyArea(area);
       this.resetDownload();
       this.estimateResult = null;
-      this.areaLayer?.setArea(area);
-      if (options.refit !== false) {
-        this.areaLayer?.fit({ padding: 20, maxZoom: this.maxZoom });
-        if (this.bboxDraw && area.provenance?.source !== 'draw') {
-          this.bboxDraw.setExtent(null);
-        }
+      this.areaLayer?.fit({ padding: 20, maxZoom: this.maxZoom });
+      if (this.bboxDraw && area.provenance?.source !== 'draw') {
+        this.bboxDraw.setExtent(null);
       }
+    },
+    // The same area at full resolution, arriving from the geocoder's
+    // background upgrade. It must not clear the estimate: the upgrade lands
+    // whenever the boundary file finishes loading, which can be after the
+    // user has already pressed Estimate, and taking their result away
+    // because something finished in the background is indefensible. The
+    // numbers stay valid: row-group selection is driven by the bbox, which
+    // the upgrade does not change, and the download rebuilds its request
+    // from `this.area`, so it filters on the full-resolution geometry.
+    upgradeArea(area) {
+      this.applyArea(area);
+    },
+    applyArea(area) {
+      this.area = markRaw(area);
+      this.areaLayer?.setArea(area);
     },
     clearArea() {
       this.area = null;

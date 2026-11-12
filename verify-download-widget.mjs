@@ -140,6 +140,11 @@ log('GEOPARQUET', {
   geometryIsBinary: rows[0]?.geometry instanceof Uint8Array
 })
 
+// The screenshot is the evidence for the branch: the panel with its map,
+// the outline of the searched area, the estimate, and a finished download.
+await widget().scrollIntoViewIfNeeded()
+await page.screenshot({ path: SCREENSHOT, fullPage: false })
+
 // --- 6. The other two ways to pick an area ------------------------------
 // Draw: shift-drag on the widget's own map.
 const mapBox = await widget().locator('.map').boundingBox()
@@ -171,8 +176,6 @@ log('UPLOADED AREA', (await summary.textContent()).replace(/\s+/g, ' ').trim())
 await page.getByRole('button', { name: 'Estimate' }).click()
 await widget().locator('dl.estimate').waitFor({ timeout: 120000 })
 log('UPLOADED AREA ESTIMATE', await widget().locator('dl.estimate dd').first().textContent())
-
-await page.screenshot({ path: SCREENSHOT, fullPage: false })
 
 // --- 7. No widget on a zarr collection ----------------------------------
 await page.goto(externalPath(ZARR_COLLECTION), { waitUntil: 'networkidle' })
