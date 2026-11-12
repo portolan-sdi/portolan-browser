@@ -477,11 +477,11 @@ export default defineComponent({
       this.bboxDraw?.destroy();
       this.bboxDraw = markRaw(new BboxDrawInteraction(this.map, extent => this.areaFromExtent(extent)));
       this.drawArmed = this.bboxDraw.setArmed(wasArmed);
+      // The draw rectangle is only the rubber band of a drag in progress.
+      // Once there is an area, the amber outline *is* that box, and drawing
+      // a dashed blue one over it says nothing extra.
       if (this.area) {
         this.areaLayer.setArea(this.area);
-        if (this.area.provenance?.source === 'draw') {
-          this.bboxDraw.setExtent(this.area.bbox);
-        }
       }
     },
     // @cnmw/maplibre's GeocoderControl, built as a MapLibre IControl: it
@@ -628,9 +628,8 @@ export default defineComponent({
       this.resetDownload();
       this.areaError = '';
       this.areaLayer?.fit({ padding: 60, maxZoom: MAX_ZOOM });
-      if (this.bboxDraw && area.provenance?.source !== 'draw') {
-        this.bboxDraw.setExtent(null);
-      }
+      // The rubber band has done its job; the outline takes over.
+      this.bboxDraw?.setExtent(null);
       this.runEstimate();
     },
     // The same area at full resolution, arriving from the geocoder's
