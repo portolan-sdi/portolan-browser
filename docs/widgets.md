@@ -16,11 +16,15 @@ content you need - using either the pre-defined widgets or your own Vue componen
   - [ExternalWarning](#externalwarning)
   - [Featured](#featured)
 - [Hooks](#hooks)
+  - [components/MapView.vue](#componentsmapviewvue)
   - [StacBrowser.vue](#stacbrowservue)
   - [views/ApiSearch.vue](#viewsapisearchvue)
   - [views/Catalog.vue](#viewscatalogvue)
   - [views/Item.vue](#viewsitemvue)
   - [views/SelectDataSource.vue](#viewsselectdatasourcevue)
+- [On-map Widgets](#on-map-widgets)
+  - [The map host](#the-map-host)
+  - [Positioning on the map](#positioning-on-the-map)
 - [Developer Guide](#developer-guide)
   - [Creating a New Widget](#creating-a-new-widget)
   - [Adding a New Hook](#adding-a-new-hook)
@@ -117,27 +121,39 @@ Renders a dismissible alert banner.
 
 ### AreaDownload
 
-Renders a "Download data" panel: the user picks an area by searching for a place, by
-holding Shift and dragging a box on the panel's own map, or by uploading a GeoJSON,
-then estimates the download and saves the matching features as GeoJSON or GeoParquet.
-The browser reads only the row groups the area touches, straight from the collection's
-parquet files.
+An on-map download tool, for the [`map-overlay`](#on-map-widgets) hook. It puts a
+"Download data" cluster on the map itself: a place-name search box, a "Draw a box"
+button and an "Upload" button, side by side. Picking a place, drawing a box, uploading
+a GeoJSON or dropping one onto the map outlines that area **on the page's own map**,
+over the collection's data, and opens a compact card with the dataset name, a live
+estimate (rows, bytes, warnings, and the safety ceiling with its accept button) and the
+two output formats. Choosing a format saves the file straight away — through
+`showSaveFilePicker` where the browser has it, otherwise as a Blob the widget clicks for
+you. There is no link to find and click.
 
-The panel is built on the `@cnmw` cloud-native map widget packages, which are consumed
-from a sibling `cn-geocoding` checkout through a Vite alias until they are published to
-npm. See [.github/DOWNLOAD_WIDGET_NOTES.md](../.github/DOWNLOAD_WIDGET_NOTES.md) for the
-architecture, the setup the panel needs, and what is portolan-specific about it.
+Collapsed, the cluster is a single "Download data" pill, which is the discoverability
+affordance: on a downloadable collection it pulses once when the page loads (never under
+`prefers-reduced-motion`), so the feature is visible rather than buried in the metadata
+column.
+
+The browser reads only the row groups the area touches, straight from the collection's
+parquet files. The widget is built on the `@cnmw` cloud-native map widget packages,
+which are consumed from a sibling `cn-geocoding` checkout through a Vite alias until
+they are published to npm. See
+[.github/DOWNLOAD_WIDGET_NOTES.md](../.github/DOWNLOAD_WIDGET_NOTES.md) for the
+architecture, the setup it needs, and what is portolan-specific about it.
 
 The widget needs no `condition` of its own: the one in `widgets.config.js` keeps it off
 any entity with no downloadable vector data, so a raster, Zarr or PMTiles-only collection
-shows no panel at all. Typical placements are the `view-catalog-meta-end` and
-`view-item-secondary-end` hooks.
+shows nothing at all — no card, no cluster, not even the pill. It must be placed on
+`map-overlay`; in any other hook it has no map to draw on and says so in the console.
 
-| Props      | Type   | Default      | Description |
-| ---------- | ------ | ------------ | ----------- |
-| `indexUrl` | String | a local index | The place-name index the search box reads, as a `cnmw-index/1.0` manifest URL. |
-| `where`    | Array  | `[]`         | Attribute predicates applied to every download, in `@cnmw` `FilterSpec` form, e.g. `[{ col: 'confidence', op: '>=', value: 0.9 }]`. |
-| `limit`    | Number | `100000`     | Hard cap on the rows a download writes. Distinct from the safety ceiling, which is a refusal the user can accept. |
+| Props        | Type   | Default      | Description |
+| ------------ | ------ | ------------ | ----------- |
+| `indexUrl`   | String | the published geoBoundaries names index | The place-name index the search box reads, as a `cnmw-index/1.0` manifest URL. |
+| `where`      | Array  | `[]`         | Attribute predicates applied to every download, in `@cnmw` `FilterSpec` form, e.g. `[{ col: 'confidence', op: '>=', value: 0.9 }]`. |
+| `limit`      | Number | `100000`     | Hard cap on the rows a download writes. Distinct from the safety ceiling, which is a refusal the user can accept. |
+| `directSave` | String | `'auto'`     | How the finished file reaches the disk: `'picker'` always asks the File System Access API for a destination, `'anchor'` always writes a Blob and clicks it, `'auto'` prefers the picker where it exists and is not driven by automation. |
 
 ### CustomText
 
@@ -208,6 +224,10 @@ Each hook has an ID like `view-catalog-meta-start` that you use as the key in
 - `root-end`
 - `root-start`
 
+### components/MapView.vue
+
+- `map-overlay`
+
 ### views/ApiSearch.vue
 
 - `view-search-filters-collections-end`
@@ -241,6 +261,100 @@ Each hook has an ID like `view-catalog-meta-start` that you use as the key in
 <!-- END HOOKS -->
 
 *Note: This list is auto-generated. Run `npm run docs:hooks` to update it after adding new hooks.*
+
+## On-map Widgets
+
+`map-overlay` is not like the other hooks. It renders **inside the map container**, as a
+transparent layer over the map, so a widget there can draw on the map and position
+itself over the data. It is how [`AreaDownload`](#areadownload) works.
+
+It is opt-in per map: `MapView` only renders the hook when it is given the
+`overlayWidgets` prop. The collection and item views pass it; the API search view
+deliberately does not, because its map draws other entities' footprints rather than
+`state.data`, and a widget whose `condition` was written about the page's own entity has
+no business there.
+
+### The map host
+
+A widget in this hook gets the live MapLibre map by injecting the **map host**, a small
+object `MapView` provides. The host is stable for the component's whole life; the map
+inside it is not, because `MapView` creates it asynchronously and replaces it when the
+STAC entity changes.
+
+```js
+import { MAP_HOST } from '../components/maps/mapHost.js';
+
+export default {
+  inject: {
+    mapHost: { from: MAP_HOST, default: null }
+  },
+  mounted() {
+    if (!this.mapHost) {
+      return; // not in the map-overlay hook
+    }
+    this.offMap = this.mapHost.onMap(map => {
+      // Called at once if a map already exists, again whenever a new one is
+      // created, and with `null` when the current one is torn down.
+      this.draw(map);
+    });
+    this.offStyle = this.mapHost.onStyleReload(map => this.draw(map));
+  },
+  beforeUnmount() {
+    this.offMap?.();
+    this.offStyle?.();
+  }
+};
+```
+
+| Member                  | Description |
+| ----------------------- | ----------- |
+| `map`                   | The current MapLibre map, or `null` before the first one exists. |
+| `mapRef`                | The same thing as a `shallowRef`, for `watch`. |
+| `onMap(handler)`        | Subscribe to map changes. Called immediately with the current map if there is one, and with `null` on teardown. Returns an unsubscribe function. |
+| `onStyleReload(handler)` | Subscribe to re-stackings of the layer list. Returns an unsubscribe function. |
+
+**Always subscribe to `onStyleReload`** if the widget adds sources or layers. Two things
+happen that a widget cannot see from the outside:
+
+- `map.setStyle()` — the basemap load right after the map is created, and every basemap
+  switch — drops every source and layer added from outside. Without re-adding them, they
+  silently never appear.
+- Applying a collection's own GL style re-inserts the data layers *below the basemap's
+  labels*, which puts them **above** anything the widget added earlier. Re-adding is also
+  how a widget raises its layers back to the top; MapLibre orders by insertion, so remove
+  before you add or nothing moves.
+
+### Positioning on the map
+
+The hook's container covers the map with `pointer-events: none`, so panning and clicking
+the map keep working around a widget. Each piece of chrome has to claim pointer events
+back for itself:
+
+```scss
+.my-overlay-widget {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+
+  .my-panel {
+    position: absolute;
+    top: var(--sb-map-overlay-top, 10px);
+    right: 52px;
+    pointer-events: auto;
+  }
+}
+```
+
+`--sb-map-overlay-top` is the layout's answer to "where does the usable top of the map
+start". It is `10px` by default; the collection and item views raise it, because the hero
+map is pulled up underneath the site header and the top of the map element is behind it.
+
+The map's corners are mostly spoken for, and a widget should stay out of them: the top
+left is the map's notice (`.map-textcontrol`, which says why a layer did not draw), the
+top right and the right edge are MapLibre's navigation buttons, the bottom left is the
+style picker and layer control, and the bottom right corner is the attribution button.
+`AreaDownload` uses the lane between the right edge's buttons and the middle of the map,
+which is why it insets by 52px rather than 10px.
 
 ## Developer Guide
 
