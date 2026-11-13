@@ -794,3 +794,19 @@ chunk, which is why the alias list in `vite.config.js` and
   modal the page did not draw and every test would hang on it. A deployment
   that wants the picker regardless can set `directSave: 'picker'`. Worth a
   second look if a better signal appears.
+
+  **This gap has already cost one bug, so it is not a theoretical one.**
+  Skipping the dialog does not only skip the dialog — it swaps the whole
+  sink. Under automation every test takes `blobSink()` and the anchor, so
+  `fileSystemSink()` was never constructed in any of the 256 e2e tests, and
+  a bug living entirely in that sink's commit step shipped:
+  `fileSystemSink.close()` was a no-op, the `FileSystemWritableFileStream`
+  was never closed, and the browser discarded the `.crswap` file holding
+  every byte. Users got a 0-byte file under a card that said
+  "Saved … 7.3 MB". Fixed in `@cnmw/download-core`'s `sinks.js` and held by
+  `packages/download-core/test/browser/filesystem-sink.verify.mjs` over
+  there, which drives the real `download()` into a real OPFS writable —
+  same commit semantics, no dialog. If this widget grows picker-path
+  coverage of its own, that is the shape to copy. The lesson: "nothing else
+  about the flow differs" was wrong. The destination differs, and the
+  destination is where downloads fail.

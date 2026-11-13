@@ -946,8 +946,17 @@ export default defineComponent({
     // Whether the finished bytes go straight to a file the user named.
     // Under automation the native dialog is skipped: a WebDriver session
     // cannot dismiss a modal the page did not draw, so a test would hang on
-    // it instead of getting a file. Nothing else about the flow differs --
-    // the anchor path is still a save the user never has to click.
+    // it instead of getting a file.
+    //
+    // What this skips is NOT just the dialog -- it is the whole sink.
+    // `false` here means `blobSink()` and the anchor; `true` means
+    // `fileSystemSink()` and a `FileSystemWritableFileStream`, which is a
+    // different destination with a different commit. So no test that runs
+    // under WebDriver exercises the picker path, and a commit bug in that
+    // sink once shipped past this whole suite (0-byte files under a card
+    // reporting 7.3 MB; see .github/DOWNLOAD_WIDGET_NOTES.md). The
+    // regression test for it lives in @cnmw/download-core, driving a real
+    // OPFS writable, because that is the layer that can be tested headless.
     usePicker() {
       if (this.directSave === 'anchor' || typeof window.showSaveFilePicker !== 'function') {
         return false;
