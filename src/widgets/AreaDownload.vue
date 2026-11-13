@@ -1206,7 +1206,13 @@ export default defineComponent({
           // which is drawn deliberately *outward* of the true boundary -- so
           // it would over-select at the edges. Set on the Geocoder rather
           // than per select() call, because GeocoderControl owns the call.
-          geometry: { resolution: 'both' }
+          // `upgradeDisplay` swaps the *visible* outline to the
+          // full-resolution geometry too once that background fetch lands
+          // (via the control's 'upgrade' event -> upgradeArea below).
+          // Without it the drawn outline stays simplified forever, which
+          // reads as "the full-detail load did nothing" next to the
+          // "full detail loaded" notice.
+          geometry: { resolution: 'both', upgradeDisplay: true }
         });
         // The index carries its own licence (the geoBoundaries index is
         // CC-BY) and only knows it once loaded. Copy it into reactive state:
@@ -1417,10 +1423,22 @@ export default defineComponent({
     // whenever the boundary file finishes loading, which can be after the
     // estimate has already been shown, and taking a result away because
     // something finished in the background is indefensible. The numbers stay
-    // valid: row-group selection is driven by the bbox, which the upgrade
-    // does not change, and the download rebuilds its request from
-    // `this.area`, so it filters on the full-resolution geometry.
+    // valid: the upgrade can only *tighten* the picture -- with
+    // `upgradeDisplay` the bbox is re-derived from the full geometry, which
+    // sits inside the outward-buffered display one -- and the download
+    // rebuilds its request from `this.area`, so it filters on the
+    // full-resolution geometry.
+    //
+    // Dropped, not applied, when the user has moved on from the selection
+    // this upgrade belongs to: a draw/upload/edit builds a *new* Area (fresh
+    // id), and applying the stale geocoder area here would silently discard
+    // their shape. Same mid-edit, where the id still matches: applyArea
+    // would re-show the static outline that startEditing deliberately
+    // removed, a frame behind the editor's own ring.
     upgradeArea(area) {
+      if (this.editing || this.area?.id !== area.id) {
+        return;
+      }
       this.applyArea(area);
     },
     applyArea(area) {

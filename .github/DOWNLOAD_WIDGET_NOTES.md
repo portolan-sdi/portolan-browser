@@ -476,10 +476,22 @@ responsibility back to this app:
 - `outline: false` and `fitBounds: false`. The widget owns one
   `addAreaLayer` and one fit for all three ways of picking an area; the
   control must not add a second of each.
-- `geometry: { resolution: 'both' }` on the `Geocoder`, not per `select()`
-  call, because the control owns the call. Without it the download would
-  filter on the display-simplified outline, which is drawn deliberately
-  *outward* of the true boundary, and would over-select at the edges.
+- `geometry: { resolution: 'both', upgradeDisplay: true }` on the
+  `Geocoder`, not per `select()` call, because the control owns the call.
+  Without `'both'` the download would filter on the display-simplified
+  outline, which is drawn deliberately *outward* of the true boundary, and
+  would over-select at the edges. Without `upgradeDisplay` the *visible*
+  outline never followed: the background upgrade replaced only
+  `filterGeometry`, so Poland kept its 1,085-vertex display ring on screen
+  while the notice said "full detail loaded" (Chris's 2026-11-13 report).
+  Now the control's deferred `'upgrade'` event hands the full-resolution
+  `Area` to `upgradeArea`, which re-renders the widget's own layer —
+  verified end-to-end by `verify-upgrade-outline.mjs` (Liechtenstein,
+  44 → 2,570 vertices on the `area-download-display` source). `upgradeArea`
+  drops the swap when the user has moved on — mid-edit, or after a
+  draw/upload/edit replaced the geocoder's `Area` (fresh id) — because
+  applying a stale upgrade would discard their shape or re-show the static
+  outline under the editor's own ring.
 
 The control's `document.addEventListener('click', …)` (for closing the
 listbox) is not removed by its `onRemove`. One listener per map instance,
