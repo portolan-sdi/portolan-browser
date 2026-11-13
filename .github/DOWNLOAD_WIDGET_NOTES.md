@@ -204,6 +204,20 @@ points at the two formats that need nothing. The CDN fetch for GeoPackage
 and FlatGeobuf is the only code this widget loads at runtime; a deployment
 with no outbound internet keeps the other five.
 
+The picker's own re-render used to be a poll in disguise: `formats()` is a
+plain function over module-scoped maps, invisible to Vue's reactivity, so
+`formatChoices` bumped a `formatsVersion` counter once, in `startDownload`'s
+`finally`, and relied on that being the only moment a lazy load could have
+finished. A download-core hardening pass added the real fix upstream —
+`onFormatState(handler)`, a push subscription fired on every registration
+and lazy-load transition (`'idle'` → `'loading'` → `'loaded'`/`'failed'`) —
+and the widget now subscribes to it in `created()` (bumping the same
+counter) instead of guessing when to re-read. A failed load now shows in
+the picker the instant it fails, not only after whatever run triggered it
+happens to settle, and a load triggered by one card is reflected in every
+other `AreaDownload` instance on the page, since the registry is one
+module-level singleton.
+
 Shapefile's limits arrive as `warning` events from the plugin's `close()`
 — "Column `country_units` was renamed to `COUNTRY_UN` to fit dBase's
 10-character field-name limit" — and land in the success state beside the
@@ -253,6 +267,28 @@ Cancel, success and failure are three separate end states:
   that the `code` is the API and the message is for humans and may be
   reworded, so all 31 codes have an i18n key saying what happened and what
   to do; an unknown code still falls back to `CODE: message`.
+
+**The ceiling is a pause, not a failure, and `requestHandle.result` now says
+so by rejecting.** A download-core hardening pass (cn-geocoding, design doc
+§3.4's "blocked handles reject" amendment) changed `DownloadHandle.result`
+from a promise that waited forever while `blocked` to one that *rejects*
+with `CeilingExceededError` (`code: 'CEILING_EXCEEDED'`) the moment the
+handle goes `blocked`, and made `acceptCeiling()` return the continued run's
+own promise rather than `void`. `startDownload`'s single `await
+requestHandle.result` is wrapped in a small retry loop instead of a plain
+`try`/`catch`: on a `CEILING_EXCEEDED` rejection while the handle is still
+`blocked`, it waits on `this.ceilingGate` — a promise that `acceptCeiling()`
+and `cancel()` resolve with `'accept'`/`'cancel'` — and on `'accept'`
+re-reads `requestHandle.result` (a live getter, so by then it is the fresh
+promise `acceptCeiling()` just installed) rather than treating the first
+rejection as the end of the run. Cancelling while blocked leaves that first
+rejection alone (promises settle once; `requestHandle.state` becomes
+`'cancelled'` instead), so the loop just rethrows it — the outer `catch`
+still recognizes a cancel via `this.cancelling`, not the error code, exactly
+as it did for an in-flight cancel before this change. Before this fix, the
+old code's plain `try`/`catch`/`finally` sent a ceiling breach straight to
+the generic "download error" box and nulled `this.handle` in `finally`, so
+the "Download anyway" button's `acceptCeiling()` call landed on nothing.
 
 **The `s3://` refusal was too wide, and that mattered.** The widget used to
 refuse any descriptor whose `source.url` *or* `source.glob` was not
@@ -575,12 +611,6 @@ chunk, which is why the alias list in `vite.config.js` and
   shows its empty state with a one-click "Whole range". The widget's
   behaviour is right either way, but the metadata is wrong at the source and
   is worth reporting to that catalog.
-- **The format registry's load state is not reactive.** `formats()` is a
-  plain function over module-scoped maps, so a Vue computed built on it
-  cannot know that a lazy plugin has finished loading. The card bumps a
-  counter after every run to re-read it, which works because that is the
-  only moment a load can have happened. A registry event (`format-loaded`)
-  would be the honest fix. **Worth passing upstream.**
 - **Two formats fetch code from a CDN.** GeoPackage's sql.js wasm and
   FlatGeobuf's writer come from pinned jsdelivr URLs inside their
   packages' own `load()`. That is the design's zero-build path, and it is

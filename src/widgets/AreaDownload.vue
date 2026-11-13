@@ -458,7 +458,7 @@
 <script>
 import { defineComponent, markRaw } from 'vue';
 import { mapState } from 'vuex';
-import { estimate, blobSink, fileSystemSink, downloadRequest } from '@cnmw/download-core';
+import { estimate, blobSink, fileSystemSink, downloadRequest, onFormatState } from '@cnmw/download-core';
 import { Geocoder } from '@cnmw/geocoder-core';
 import { areaFromFile, attachDropTarget } from '@cnmw/upload-core';
 import { addAreaLayer, GeocoderControl } from '@cnmw/maplibre';
@@ -645,6 +645,11 @@ export default defineComponent({
       // fault -- the save dialog being dismissed is the only one so far.
       notice: '',
       ceiling: null,
+      // Resolves the `startDownload` loop's wait while `requestHandle` is
+      // `blocked` on the ceiling -- set only for that wait's lifetime, and
+      // called by `acceptCeiling()`/`cancel()` with which way the user
+      // went. See `startDownload`'s doc comment for why this exists.
+      ceilingGate: null,
       showCode: false,
       request: null,
       geocoder: null,
@@ -916,6 +921,17 @@ export default defineComponent({
     this.lastProgressRows = 0;
     this.blobUrls = [];
     this._estimateToken = 0;
+    // Push, not poll (design doc §3.4 amendment, "format load state was
+    // pull-only"): `formats()`/`formatLoadState()` are pull-only, and a
+    // lazy format's state moves asynchronously underneath a UI that has
+    // already rendered. Bumping `formatsVersion` here -- `formatChoices`'s
+    // only dependency on it -- on every registration and load transition
+    // (`'idle'` → `'loading'` → `'loaded'`/`'failed'`) means a format that
+    // fails to load shows that in the picker the moment it fails, not only
+    // after whatever `startDownload` happened to be running settles.
+    this.unsubscribeFormatState = onFormatState(() => {
+      this.formatsVersion += 1;
+    });
   },
   async mounted() {
     if (!this.support.supported || !this.mapHost) {
@@ -948,8 +964,12 @@ export default defineComponent({
   },
   beforeUnmount() {
     this.handle?.cancel('widget unmounted');
+    // Otherwise a widget unmounted while `blocked` on the ceiling leaves
+    // `startDownload`'s wait loop awaiting a gate nobody will ever signal.
+    this.ceilingGate?.('cancel');
     this.unsubscribeMap?.();
     this.unsubscribeStyle?.();
+    this.unsubscribeFormatState?.();
     this.geocoder?.close();
     this.releaseMap();
     clearTimeout(this.dropTimer);
@@ -1523,8 +1543,11 @@ export default defineComponent({
         requestHandle.on('ceiling', event => {
           this.ceiling = markRaw(event.estimate.ceiling);
         });
-        const result = await requestHandle.result;
-        this.ceiling = null;
+        // See `awaitDownloadResult`'s doc comment: a ceiling breach rejects
+        // `requestHandle.result` rather than this `await` hanging forever,
+        // and that method is what waits out the user's decision and, on
+        // acceptance, picks up the continued run's promise.
+        const result = await this.awaitDownloadResult(requestHandle);
         if (!handle) {
           this.saveBlob(sink.blob, result.filename);
         }
@@ -1571,7 +1594,11 @@ export default defineComponent({
         this.downloadState = '';
         this.progressPercent = null;
         this.handle = null;
-        this.formatsVersion += 1;
+        // No manual `formatsVersion` bump needed here any more: the
+        // `onFormatState` subscription (`created()`) already bumped it the
+        // moment this run's format plugin actually finished loading or
+        // failed to -- which is also *before* this `finally` runs, not
+        // after, for a lazy format whose `load()` this very call triggered.
         // The card scrolls -- on a hero map the filters and the estimate
         // are already more than fits -- so what just happened is brought to
         // where the user is looking instead of being left below the fold,
@@ -1625,9 +1652,58 @@ export default defineComponent({
         this.progress = this.phaseLabel(event.phase);
       }
     },
+    // `requestHandle.result` REJECTS with `CeilingExceededError` (code
+    // `CEILING_EXCEEDED`) the moment the handle goes `blocked`, rather than
+    // hanging forever (design doc §3.4's "blocked handles reject"
+    // amendment) -- so a ceiling breach reaching here is not a failure
+    // `startDownload`'s `catch` should see. It is a pause: the `ceiling`
+    // listener already showed the box, so this waits for the user's
+    // decision (`acceptCeiling()`/`cancel()`, which signal `this.ceilingGate`)
+    // and either recurses on the continued run's promise or rethrows.
+    //
+    // Recursion, not a loop, because ESLint's `no-await-in-loop` is right in
+    // general and this is the one place in this file an awaited retry is
+    // the actual design, not an accident -- a plain function sidesteps the
+    // rule instead of suppressing it, and this can only ever recurse once
+    // (one `download()` call plans one estimate, so there is at most one
+    // ceiling breach per handle).
+    //
+    // Accepting calls `handle.acceptCeiling()`, which synchronously installs
+    // a *fresh* deferred -- so re-reading `requestHandle.result` (a live
+    // getter, not the promise this call's first `await` captured) after the
+    // gate resolves hands back the continued run's promise rather than the
+    // already-rejected one. Cancelling leaves that original rejection alone
+    // (it's already settled; design doc: "the promise keeps its
+    // `CEILING_EXCEEDED`") and `requestHandle.state` becomes `'cancelled'`,
+    // so this simply rethrows its own already-caught error, and the outer
+    // `catch` in `startDownload` recognizes it as a cancellation via
+    // `this.cancelling` (set by `cancel()` before it signals the gate), not
+    // the error code.
+    async awaitDownloadResult(requestHandle) {
+      try {
+        return await requestHandle.result;
+      } catch (error) {
+        if (error?.code !== 'CEILING_EXCEEDED' || requestHandle.state !== 'blocked') {
+          throw error;
+        }
+        const decision = await new Promise(resolve => { this.ceilingGate = resolve; });
+        this.ceilingGate = null;
+        if (decision !== 'accept') {
+          throw error; // cancel(): already called handle.cancel() and set this.cancelling.
+        }
+        this.ceiling = null;
+        return this.awaitDownloadResult(requestHandle);
+      }
+    },
     acceptCeiling() {
+      // Order matters: `handle.acceptCeiling()` synchronously installs the
+      // continued run's fresh deferred (so `requestHandle.result` already
+      // points at it) *before* `startDownload`'s wait loop resumes --
+      // signalling the gate second guarantees that ordering rather than
+      // relying on it by luck.
       this.handle?.acceptCeiling();
       this.ceiling = null;
+      this.ceilingGate?.('accept');
     },
     pause() {
       this.handle?.pause();
@@ -1645,6 +1721,11 @@ export default defineComponent({
       // still said "Cancel" would look ignored.
       this.cancelling = true;
       this.handle.cancel('cancelled by user');
+      // No-op when nothing is waiting on it (the common case: cancelling a
+      // `running` download). While `blocked` on the ceiling, this is what
+      // wakes `startDownload`'s wait loop so it rethrows the ceiling
+      // rejection instead of waiting for a decision that already happened.
+      this.ceilingGate?.('cancel');
     },
     clearOutcome() {
       this.result = null;
@@ -1655,6 +1736,7 @@ export default defineComponent({
     },
     resetDownload() {
       this.ceiling = null;
+      this.ceilingGate = null;
       this.progress = '';
       this.progressPercent = null;
       this.downloadError = '';
