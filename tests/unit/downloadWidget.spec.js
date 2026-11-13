@@ -15,6 +15,7 @@ import { mayHaveDownloadableVector } from '../../src/utils/download/support.js'
 import { describeDataset, toPlainStacJson } from '../../src/utils/download/descriptor.js'
 import { createMapHost } from '../../src/components/maps/mapHost.js'
 import BboxDrawInteraction from '../../src/components/maps/BboxDrawInteraction.js'
+import { createDrawTool } from '@cnmw/maplibre'
 import DownloadRequestGenerator from '../../src/codegen/DownloadRequestGenerator.js'
 import DuckDbSqlGenerator from '../../src/codegen/DuckDbSqlGenerator.js'
 
@@ -463,5 +464,178 @@ describe('BboxDrawInteraction armed mode (the "Draw a box" button)', () => {
 
     drag(map, [20, 20], [120, 120])
     expect(onExtent).toHaveBeenCalledTimes(1)
+  })
+})
+
+// The "Draw polygon" button is @cnmw/maplibre's shared `createDrawTool` in
+// polygon mode, consumed through the Vite alias -- not a local class. The
+// gesture logic has its own unit tests upstream; what is worth asserting
+// *here* is that the package this app actually resolves behaves the way the
+// widget assumes, in this app's DOM environment.
+describe('createDrawTool polygon mode (the "Draw polygon" button)', () => {
+  // A MapLibre-shaped stub: the tool listens through `map.on`, not through
+  // raw canvas events.
+  function stubMap() {
+    const canvas = document.createElement('canvas')
+    const sources = new Map()
+    const handlers = new Map()
+    return {
+      canvas,
+      sources,
+      getCanvas: () => canvas,
+      getSource: id => sources.get(id),
+      addSource: (id, spec) => sources.set(id, { ...spec, setData(data) { this.data = data } }),
+      addLayer: () => {},
+      getLayer: () => undefined,
+      removeLayer: () => {},
+      removeSource: id => sources.delete(id),
+      dragPan: { enable: () => {}, disable: () => {} },
+      doubleClickZoom: { enable: () => {}, disable: () => {} },
+      on: (type, fn) => {
+        if (!handlers.has(type)) { handlers.set(type, new Set()) }
+        handlers.get(type).add(fn)
+      },
+      off: (type, fn) => handlers.get(type)?.delete(fn),
+      fire: (type, event) => { for (const fn of handlers.get(type) || []) { fn(event) } }
+    }
+  }
+
+  // MapLibre hands both a screen point and a lngLat; this tool uses the
+  // screen point for same-click detection and the lngLat for the ring.
+  const clickAt = (map, x, y) => map.fire('click', { point: { x, y }, lngLat: { lng: x, lat: y } })
+
+  it('ignores clicks until the button arms it', () => {
+    const map = stubMap()
+    const draw = createDrawTool(map, { tools: ['polygon'] })
+    const onArea = vi.fn()
+    draw.on('area', onArea)
+
+    clickAt(map, 0, 0)
+    expect(draw.vertices).toEqual([])
+
+    draw.arm('polygon')
+    expect(draw.armed).toBe(true)
+    expect(map.canvas.style.cursor).toBe('crosshair')
+    clickAt(map, 0, 0)
+    expect(draw.vertices).toEqual([[0, 0]])
+  })
+
+  it('closes on double-click into an Area with draw provenance, and disarms', () => {
+    const map = stubMap()
+    const draw = createDrawTool(map, { tools: ['polygon'], names: { drawn: 'Drawn area' } })
+    const onArea = vi.fn()
+    draw.on('area', onArea)
+    draw.arm('polygon')
+
+    clickAt(map, 0, 0)
+    clickAt(map, 10, 0)
+    clickAt(map, 10, 10)
+    map.fire('dblclick', { point: { x: 10, y: 10 }, lngLat: { lng: 10, lat: 10 }, preventDefault: () => {} })
+
+    expect(onArea).toHaveBeenCalledTimes(1)
+    const { area } = onArea.mock.calls[0][0]
+    expect(area.name).toBe('Drawn area')
+    expect(area.provenance.source).toBe('draw')
+    expect(area.provenance.draw.tool).toBe('polygon')
+    expect(area.provenance.draw.mapCrs).toBe('EPSG:4326')
+    // Closed ring: four positions for a triangle.
+    expect(area.geometry.type).toBe('Polygon')
+    expect(area.geometry.coordinates[0]).toHaveLength(4)
+    expect(area.geometry.coordinates[0][0]).toEqual(area.geometry.coordinates[0][3])
+    expect(draw.armed).toBe(false)
+  })
+
+  it('drops the second half of a double-click rather than adding a duplicate corner', () => {
+    const map = stubMap()
+    const draw = createDrawTool(map, { tools: ['polygon'] })
+    const onArea = vi.fn()
+    draw.on('area', onArea)
+    draw.arm('polygon')
+
+    clickAt(map, 0, 0)
+    clickAt(map, 10, 0)
+    clickAt(map, 10, 10)
+    // A real double-click delivers an ordinary click first, at the same spot.
+    clickAt(map, 10, 10)
+    map.fire('dblclick', { point: { x: 10, y: 10 }, lngLat: { lng: 10, lat: 10 }, preventDefault: () => {} })
+
+    expect(onArea.mock.calls[0][0].area.geometry.coordinates[0]).toHaveLength(4)
+  })
+
+  it('closes on Enter and cancels on Escape', () => {
+    const map = stubMap()
+    const draw = createDrawTool(map, { tools: ['polygon'] })
+    const onArea = vi.fn()
+    const onCancel = vi.fn()
+    draw.on('area', onArea)
+    draw.on('cancel', onCancel)
+    draw.arm('polygon')
+
+    clickAt(map, 0, 0)
+    clickAt(map, 10, 0)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    expect(onCancel).toHaveBeenCalledWith({ duringDrag: false, duringDraw: true })
+    expect(draw.armed).toBe(false)
+    expect(onArea).not.toHaveBeenCalled()
+
+    draw.arm('polygon')
+    clickAt(map, 0, 0)
+    clickAt(map, 10, 0)
+    clickAt(map, 10, 10)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    expect(onArea).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses to close a ring of fewer than three corners, staying armed', () => {
+    const map = stubMap()
+    const draw = createDrawTool(map, { tools: ['polygon'] })
+    const onArea = vi.fn()
+    draw.on('area', onArea)
+    draw.arm('polygon')
+
+    clickAt(map, 0, 0)
+    clickAt(map, 10, 0)
+    map.fire('dblclick', { point: { x: 10, y: 10 }, lngLat: { lng: 10, lat: 10 }, preventDefault: () => {} })
+
+    expect(onArea).not.toHaveBeenCalled()
+    expect(draw.armed).toBe(true)
+  })
+
+  it('closes when the first corner is clicked again', () => {
+    const map = stubMap()
+    const draw = createDrawTool(map, { tools: ['polygon'] })
+    const onArea = vi.fn()
+    draw.on('area', onArea)
+    draw.arm('polygon')
+
+    clickAt(map, 0, 0)
+    clickAt(map, 20, 0)
+    clickAt(map, 20, 20)
+    clickAt(map, 2, 2) // within SAME_POINT_PX of the first corner
+
+    expect(onArea).toHaveBeenCalledTimes(1)
+    expect(onArea.mock.calls[0][0].area.geometry.coordinates[0]).toHaveLength(4)
+  })
+
+  it('exposes arm/disarm/on/remove, and on() returns an unsubscribe', () => {
+    const map = stubMap()
+    const draw = createDrawTool(map, { tools: ['polygon'] })
+    for (const member of ['arm', 'disarm', 'on', 'remove']) {
+      expect(typeof draw[member]).toBe('function')
+    }
+    const onArea = vi.fn()
+    const off = draw.on('area', onArea)
+    off()
+    draw.arm('polygon')
+    clickAt(map, 0, 0)
+    clickAt(map, 10, 0)
+    clickAt(map, 10, 10)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    expect(onArea).not.toHaveBeenCalled()
+  })
+
+  it('refuses a tool outside the enabled set', () => {
+    const draw = createDrawTool(stubMap(), { tools: ['polygon'] })
+    expect(() => draw.arm('rectangle')).toThrow(/not in the enabled set/)
   })
 })

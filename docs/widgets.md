@@ -123,7 +123,8 @@ Renders a dismissible alert banner.
 
 An on-map download tool, for the [`map-overlay`](#on-map-widgets) hook. It puts a
 "Download data" cluster on the map itself: a place-name search box, a "Draw a box"
-button and an "Upload" button, side by side. Picking a place, drawing a box, uploading
+button, a "Draw polygon" button and an "Upload" button, side by side. Picking a place,
+drawing a box or a polygon, uploading
 a GeoJSON or dropping one onto the map outlines that area **on the page's own map**,
 over the collection's data, and opens a compact card with the dataset name, a live
 estimate (rows, bytes read, warnings, and the safety ceiling with its accept button) and
@@ -138,6 +139,21 @@ plugin still has to fetch (`GeoPackage · 133 kB +331 kB`) before anything is do
 and a format that cannot be fetched says so rather than failing silently. Anything a
 writer has to change to fit its format — Shapefile renaming a column to dBase's
 ten-character limit, for instance — is reported beside the saved file.
+
+**Drawing a polygon.** "Draw polygon" is the box tool's sibling, for a region a
+rectangle does not describe. Click each corner; double-click, press <kbd>Enter</kbd>, or
+click the first corner again to close the ring; <kbd>Esc</kbd> cancels. While you draw,
+the corners placed so far are marked and the edge follows the cursor, and once there are
+three the fill shows the shape closing would produce. Arming either draw tool disarms
+the other.
+
+**Editing an area.** Once there is an area — however it arrived — the card offers
+"Edit shape". Turning it on puts handles on the outline: drag a large one to move a
+corner, drag a small one between two corners to add a corner there, double-click a
+corner to remove it. The estimate re-runs as you go, so the row count always describes
+the shape currently on the map, and a download started afterwards uses that shape.
+<kbd>Esc</kbd> or "Done editing" leaves the editor. Editing adjusts the exterior ring of
+the largest polygon; holes and any other parts of a multi-polygon are kept as they are.
 
 The card narrows the request as well as placing it:
 
@@ -170,8 +186,8 @@ words rather than as an error code.
 Collapsed, the cluster is a single "Download data" pill, which is the discoverability
 affordance: on a downloadable collection it pulses once when the page loads (never under
 `prefers-reduced-motion`), so the feature is visible rather than buried in the metadata
-column. <kbd>Esc</kbd> inside the tool disarms a draw if one is armed, and otherwise
-collapses the cluster back to the pill; the search box keeps <kbd>Esc</kbd> for its own
+column. <kbd>Esc</kbd> inside the tool disarms a draw if one is armed, then leaves the
+shape editor if it is open, and otherwise collapses the cluster back to the pill; the search box keeps <kbd>Esc</kbd> for its own
 suggestion list. Below 576px the tool starts collapsed to that pill, both
 it and the card span the width of the map instead of sitting in a lane down its
 right-hand side, and the card is capped at just under half the map's height so the

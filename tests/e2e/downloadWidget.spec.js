@@ -158,6 +158,8 @@ test.describe('Download data widget', () => {
     // The @cnmw geocoder control, mounted on the real map.
     await expect(widget(page).locator('.ad-search input[role="combobox"]')).toBeVisible();
     await expect(widget(page).getByRole('button', { name: 'Draw a box' })).toBeVisible();
+    // The box tool's sibling: @cnmw/maplibre's shared draw tool in polygon mode.
+    await expect(widget(page).getByRole('button', { name: 'Draw polygon' })).toBeVisible();
     await expect(widget(page).getByRole('button', { name: 'Upload' })).toBeVisible();
     // Nothing to download yet, so no card.
     await expect(widget(page).locator('.ad-card')).toHaveCount(0);
@@ -389,5 +391,91 @@ test.describe('Download card: saying what went wrong', () => {
     await expect(error).toContainText(/could not be fetched|could not be read/);
     await expect(error).not.toContainText('NETWORK:');
     await expect(error).not.toContainText('DATASET_UNRESOLVED');
+  });
+});
+
+test.describe('Drawing a polygon, and editing an area', () => {
+  // Both tools are @cnmw/maplibre's, consumed through the Vite alias:
+  // `createDrawTool` in polygon mode and `createEditTool`. These tests are
+  // about this app's half of the wiring -- that the buttons arm and disarm
+  // the right tool, that the two draw modes are mutually exclusive, and
+  // that Escape and the card's toggle get the user back out again.
+  const mapPoint = async (page, fx, fy) => {
+    const box = await page.locator('.map').first().boundingBox();
+    return [box.x + box.width * fx, box.y + box.height * fy];
+  };
+
+  test('draws a polygon from clicked vertices and closes it with Enter', async ({ page, worker }) => {
+    const { catalog, collection } = catalogWith(PARQUET_ASSET, VECTOR_TABLE);
+    await catalog.createServer(worker);
+    await page.goto(collection.getBrowserPath());
+    await waitForBrowserReady(page);
+
+    const polygon = widget(page).getByRole('button', { name: 'Draw polygon' });
+    await polygon.click();
+    // Armed: the button says what to do next, and the hint changes with it.
+    await expect(widget(page).getByRole('button', { name: 'Click to add points' })).toBeVisible();
+    await expect(widget(page).locator('.ad-note').first()).toContainText('Double-click or press Enter');
+
+    for (const [fx, fy] of [[0.30, 0.30], [0.55, 0.28], [0.58, 0.62], [0.33, 0.66]]) {
+      await page.mouse.click(...(await mapPoint(page, fx, fy)));
+    }
+    await page.keyboard.press('Enter');
+
+    const card = widget(page).locator('.ad-card');
+    await expect(card).toBeVisible({ timeout: 30000 });
+    await expect(card.locator('.ad-area-name')).toHaveText('Drawn area');
+    // Four clicked corners, not a rectangle's four-from-two-drag.
+    await expect(card.locator('.ad-area-summary')).toContainText('5 filter vertices');
+    // One shape per arming: the tool disarms itself afterwards.
+    await expect(widget(page).getByRole('button', { name: 'Draw polygon' })).toBeVisible();
+  });
+
+  test('Escape cancels a polygon mid-draw, and arming one tool disarms the other', async ({ page, worker }) => {
+    const { catalog, collection } = catalogWith(PARQUET_ASSET, VECTOR_TABLE);
+    await catalog.createServer(worker);
+    await page.goto(collection.getBrowserPath());
+    await waitForBrowserReady(page);
+
+    await widget(page).getByRole('button', { name: 'Draw polygon' }).click();
+    await page.mouse.click(...(await mapPoint(page, 0.3, 0.3)));
+    await page.mouse.click(...(await mapPoint(page, 0.5, 0.3)));
+    await page.keyboard.press('Escape');
+    await expect(widget(page).getByRole('button', { name: 'Draw polygon' })).toBeVisible();
+    await expect(widget(page).locator('.ad-card')).toHaveCount(0);
+
+    // Two armed tools would race for the same clicks on the map.
+    await widget(page).getByRole('button', { name: 'Draw polygon' }).click();
+    await expect(widget(page).getByRole('button', { name: 'Click to add points' })).toBeVisible();
+    await widget(page).getByRole('button', { name: 'Draw a box' }).click();
+    await expect(widget(page).getByRole('button', { name: 'Drag on the map' })).toBeVisible();
+    await expect(widget(page).getByRole('button', { name: 'Draw polygon' })).toBeVisible();
+  });
+
+  test('offers "Edit shape" on an area, and leaves the editor on Escape', async ({ page, worker }) => {
+    const { catalog, collection } = catalogWith(PARQUET_ASSET, VECTOR_TABLE);
+    await catalog.createServer(worker);
+    await page.goto(collection.getBrowserPath());
+    await waitForBrowserReady(page);
+    // An uploaded area, so this test does not depend on a drag landing.
+    await widget(page).locator('.ad-file').setInputFiles(AREA_FILE);
+
+    const card = widget(page).locator('.ad-card');
+    await expect(card).toBeVisible({ timeout: 30000 });
+    const edit = card.getByRole('button', { name: 'Edit shape' });
+    await expect(edit).toBeVisible();
+
+    await edit.click();
+    await expect(card.getByRole('button', { name: 'Done editing' })).toBeVisible();
+    await expect(card.locator('.ad-edit-hint')).toContainText('Drag a handle');
+
+    await page.keyboard.press('Escape');
+    await expect(card.getByRole('button', { name: 'Edit shape' })).toBeVisible();
+
+    // And the toggle closes it too.
+    await edit.click();
+    await expect(card.getByRole('button', { name: 'Done editing' })).toBeVisible();
+    await card.getByRole('button', { name: 'Done editing' }).click();
+    await expect(card.getByRole('button', { name: 'Edit shape' })).toBeVisible();
   });
 });

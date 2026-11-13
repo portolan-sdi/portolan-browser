@@ -24,9 +24,12 @@ On any collection or item that holds vector GeoParquet, a tool **on the map**
 offers:
 
 1. **An area.** Searched by place name in a search box on the map, drawn with
-   a "Draw a box" button (or Shift-drag), uploaded as GeoJSON with an
-   "Upload" button, or dropped onto the map. Whichever way, the area is
-   outlined on the page's own map, over the collection's data.
+   a "Draw a box" button (or Shift-drag), drawn corner by corner with a
+   "Draw polygon" button, uploaded as GeoJSON with an "Upload" button, or
+   dropped onto the map. Whichever way, the area is outlined on the page's
+   own map, over the collection's data, and can then be adjusted in place
+   with "Edit shape". See [Drawing and editing an
+   area](#drawing-and-editing-an-area).
 2. **A choice of what, when and which rows.** Which parquet table, when the
    collection publishes several; a date range, when it declares a time
    column; and column predicates built from the table's own columns. Every
@@ -96,6 +99,67 @@ Two consequences worth knowing:
 [hosting]: #where-the-designs-hosting-section-met-the-real-codebase
 
 [on-map-widgets]: ../docs/widgets.md#on-map-widgets
+
+### Drawing and editing an area
+
+Two of the three area tools are `@cnmw/maplibre`'s, consumed through the Vite
+alias; one is this app's own, for historical reasons worth writing down.
+
+| Tool | Implementation | Why |
+| --- | --- | --- |
+| "Draw a box" | `src/components/maps/BboxDrawInteraction.js` (this app) | Predates the shared tool and is also used by `MapSelect.vue`'s search-view bbox picker. Swapping it for `createDrawTool`'s `rectangle` mode is a cleanup worth doing, but it touches a second caller. |
+| "Draw polygon" | `createDrawTool(map, { tools: ['polygon'] })` (`@cnmw/maplibre`) | Shared. |
+| "Edit shape" | `createEditTool(map, area)` (`@cnmw/maplibre`) | Shared. |
+
+**Polygon started here and moved upstream.** When this work began,
+`createDrawTool` declared `polygon` in its type but deliberately threw from
+`arm('polygon')`, on the grounds that a half-working draw tool is worse than
+none, and pointed hosts at terra-draw plus `@cnmw/upload-core`'s
+`areaFromGeoJson` instead. That escape hatch costs roughly 262 KB of CDN
+dependency for what turned out to be about a hundred lines of click handling,
+so polygon was first written here as a local `PolygonDrawInteraction.js`
+shaped deliberately like `createDrawTool` — same `arm`/`disarm`/`on`/`remove`
+surface, same `'area' | 'armed' | 'disarmed' | 'cancel'` events, same
+`buildArea` call. Once the shared tool was free to extend, that
+implementation was moved into `packages/maplibre/src/draw-tool.js` and the
+local file **deleted** rather than left to drift. The widget now imports the
+shared one, and this app's unit tests exercise `createDrawTool` through the
+alias rather than a local class, so they fail if the package this app
+actually resolves regresses.
+
+The one thing the move needed from the shared tool was a `names` option:
+`createDrawTool` hardcoded `'Drawn area'` and `'Current viewport'`, and this
+app has to translate them. `names: { drawn, viewport }` overrides both.
+
+**Gestures.** Polygon: click each corner, double-click or press Enter to
+close, Escape to cancel, or click the first corner again. The ordinary
+`click` that MapLibre delivers as the first half of a double-click is dropped
+rather than becoming a duplicate corner, and `doubleClickZoom` is disabled
+while armed so closing the ring does not also zoom the map. Arming either
+draw tool disarms the other — two armed tools would race for the same clicks.
+
+**Editing.** "Edit shape" appears on the card as soon as there is an area,
+whatever produced it: a searched boundary, a drawn shape or an uploaded file.
+"Nearly the right region" is the normal outcome of all three. While the
+editor is open the static amber outline is hidden, because the editor draws
+its own and the two would lag a frame apart on every drag. Each gesture emits
+a fully-built `Area` with `provenance.source: 'edited'`, the parent's lineage
+and a re-derived `filterGeometry`; the widget debounces those by 250 ms and
+re-estimates, so the numbers on the card always describe the shape currently
+on the map, and a download started afterwards filters on it. Escape leaves
+the editor before it collapses the cluster.
+
+`createEditTool` edits the exterior ring of the largest polygon component
+only; holes and other components of a `MultiPolygon` are carried through
+unedited. That limitation is documented upstream and inherited here.
+
+**The style-reload trap, again.** `map.setStyle()` drops every source and
+layer added from outside, which is what `onStyleReload` and this widget's
+`attachMapLayers()` exist for — and the editor's handles are exactly such
+layers. Switching basemap mid-edit would otherwise leave the card saying
+"Done editing" over a map with nothing to drag. `attachMapLayers()` rebuilds
+the editor on the area *as it then stands*, so the edits made so far survive
+the reload.
 
 ### The card's choices
 
@@ -516,6 +580,87 @@ collection whose only `data`-role asset was a COG or PMTiles file came back as
 "first data asset" fallback. Design call #8's graceful refusal became a parquet
 parse error several seconds later. Raster and Zarr collections now refuse up
 front, which is what makes the widget genuinely absent on them.
+
+## The Fields of the World bug: a relative href in a collection-mirror
+
+Worth recording in full, because the symptom pointed at four plausible causes
+and was none of them.
+
+**Symptom.** On
+`https://data.source.coop/ftw/global-data-2e/vector/2019/collection.json` —
+FTW Global Field Boundaries 2019, 129,384,130 parcels, 84.4 GiB across 54
+per-UTM-zone GeoParquet files — the widget appeared and a drawn box worked,
+but Estimate came back red with *"This dataset's files could not be read. The
+server may be unreachable, or the data may have moved."* (`DATASET_UNRESOLVED`).
+
+**What it was not.** Each suspect was checked against the live collection
+before the next:
+
+- *Not the CRS.* Every one of the 54 items declares `proj:code: "EPSG:4326"`,
+  the collection summarises `proj:code: ["EPSG:4326"]`, the mirror has
+  `count(DISTINCT "proj:code") = 1`, and `table:columns` documents the
+  geometry as "WKB Polygon/MultiPolygon, WGS 84". The per-zone files are
+  **not** in native UTM, so this is not design O6's
+  `DATASET_CRS_UNSUPPORTED` case and no reprojection of the area is needed.
+  (Had they been UTM, naming the CRS would have been the honest answer, and
+  reprojecting the *area* into the dataset's CRS with the proj4 this app
+  already ships would have been the browser-feasible fix for querying.)
+- *Not 54 item fetches failing.* The collection publishes a
+  `collection-mirror` asset (`items.parquet`), so `§2.4` derives a
+  `collection-mirror` enumeration and the whole partition set is read in
+  **one** request, not 55.
+- *Not the glob.* The collection-level `data` asset href is a literal glob
+  (`.../zone=*/utm*.parquet`, HTTP 404 if fetched), but `fetchTargets` in
+  `src/utils/download/descriptor.js` already knows a mirror-enumerated
+  source never fetches its glob, and `parquetDataAssets` already excludes a
+  wildcard href from the asset picker.
+- *Not a schema or geo-metadata wrinkle.* The per-zone files read fine in
+  DuckDB, and the estimate never got far enough to parse one.
+
+**The actual root cause**, in `@cnmw/download-core`'s
+`src/partitions.js`: `partFromMirrorRow` read each mirror row's
+`assets.data.href` **verbatim and never resolved it against a base URL**.
+FTW's mirror stores relative hrefs — `./utm01.parquet` for an item whose
+canonical URL is `.../vector/2019/zone=01/utm01.json` — so all 54 parts came
+out of enumeration as the bare string `./utm01.parquet`. In Node that throws
+`Failed to parse URL`; in a browser it silently resolves against the *page's*
+location, so every part read went to `http://localhost:8081/utm01.parquet`,
+got the dev server's SPA fallback, and failed as "files could not be read".
+
+The `stac-items` enumeration a few lines below carries a long comment about
+exactly this hazard, having been fixed for it at both the collection→item and
+item→asset level. The `collection-mirror` path never got the same treatment.
+
+**The fix** is `resolveMirrorPartUrl`, which resolves a mirror row's href
+most-authoritative-first: an already-absolute href; the row's own `self`
+link (the canonical STAC answer, which a conformant mirror carries);
+an `alternate` href whose path runs through the mirror's own directory —
+FTW's rows carry `alternate.s3.href` =
+`s3://ftw/global-data-2e/vector/2019/zone=01/utm01.parquet`, and the part of
+that path below the mirror's directory is the file's path below the
+collection, which recovers the `zone=NN/` the relative href dropped; and
+finally plain document-relative resolution against the mirror's URL. It can
+no longer hand `fetch` a bare relative string. The same change lets
+`keysFromHiveUrl` recover each part's `zone` from its now-real URL, which
+FTW's mirror never stored as a column — so an explicit `filter.partitions`
+works on this collection too.
+
+**Evidence it is fixed**, against the live collection:
+
+- Enumeration yields 54 parts, 1 request, **0** non-absolute URLs, and
+  `part[0].url` fetches HTTP 206.
+- A box over Ethiopia estimates ≈328 rows in 4 requests, and the
+  corresponding download returns 4 valid GeoJSON features — a count DuckDB
+  independently confirms for the same box against
+  `zone=37/utm37.parquet`.
+- In the browser (`verify-ftw-draw-edit.mjs`): Rows ≈48,491, 47.0 MB read,
+  no red error, 54 → 2 files pruned by area, 65 parquet requests, **all** on
+  `data.source.coop`, 31 of them under a `zone=NN/` path, and **none**
+  resolved against the app's own origin.
+
+The fix is in `@cnmw/download-core`, not this app: it is a bug for every host
+that reads a Portolan partitioned collection whose mirror uses relative
+hrefs, and nothing about it is portolan-browser-specific.
 
 ## The path to a stac-browser widget
 

@@ -74,6 +74,19 @@
               >
                 {{ drawArmed ? $t('widgets.areaDownload.area.drawArmed') : $t('widgets.areaDownload.area.draw') }}
               </button>
+              <!-- The box tool's sibling. Two buttons rather than one tool
+                   with a shape dropdown: a rectangle is the common case and
+                   should stay one click away. -->
+              <button
+                type="button"
+                class="ad-button"
+                :class="{ active: polygonArmed }"
+                :aria-pressed="String(polygonArmed)"
+                :title="$t('widgets.areaDownload.area.drawPolygonTitle')"
+                @click="togglePolygonDraw"
+              >
+                {{ polygonArmed ? $t('widgets.areaDownload.area.drawPolygonArmed') : $t('widgets.areaDownload.area.drawPolygon') }}
+              </button>
               <button
                 type="button"
                 class="ad-button"
@@ -90,7 +103,13 @@
                 @change="onUpload"
               >
             </div>
-            <p class="ad-note">{{ dropActive ? $t('widgets.areaDownload.area.dropActive') : $t('widgets.areaDownload.area.drawHint') }}</p>
+            <p class="ad-note">
+              {{ dropActive
+                ? $t('widgets.areaDownload.area.dropActive')
+                : polygonArmed
+                  ? $t('widgets.areaDownload.area.drawPolygonHint')
+                  : $t('widgets.areaDownload.area.drawHint') }}
+            </p>
             <p v-if="areaError" class="ad-note ad-error">{{ areaError }}</p>
           </div>
         </Transition>
@@ -119,6 +138,25 @@
         <p class="ad-area-summary">
           {{ $t('widgets.areaDownload.area.summary', { vertices: area.vertexCount.filter, bbox: formatBbox(area.bbox) }) }}
         </p>
+
+        <!-- Editing is offered on whatever produced the area -- a search
+             result's boundary, a drawn shape, an uploaded file -- because
+             "nearly the right region" is the normal outcome of all three.
+             The estimate follows the handles, so the row count above is
+             always for the shape currently on the map. -->
+        <div class="ad-area-actions">
+          <button
+            type="button"
+            class="ad-button ad-edit-toggle"
+            :class="{ active: editing }"
+            :aria-pressed="String(editing)"
+            :title="$t('widgets.areaDownload.area.editTitle')"
+            @click="toggleEdit"
+          >
+            {{ editing ? $t('widgets.areaDownload.area.editDone') : $t('widgets.areaDownload.area.edit') }}
+          </button>
+          <span v-if="editing" class="ad-edit-hint">{{ $t('widgets.areaDownload.area.editHint') }}</span>
+        </div>
 
         <!-- 2a. *What* to download, when the collection publishes more than
              one parquet table. Fields of the World's benchmark collections
@@ -461,7 +499,20 @@ import { mapState } from 'vuex';
 import { estimate, blobSink, fileSystemSink, downloadRequest, onFormatState } from '@cnmw/download-core';
 import { Geocoder } from '@cnmw/geocoder-core';
 import { areaFromFile, attachDropTarget } from '@cnmw/upload-core';
-import { addAreaLayer, GeocoderControl } from '@cnmw/maplibre';
+// Both of these are @cnmw/maplibre's, reused as-is rather than
+// reimplemented here:
+//
+//   * `createDrawTool` in `polygon` mode is the "Draw polygon" button. It
+//     was briefly a local `PolygonDrawInteraction.js` in this directory,
+//     written while the shared tool still refused polygon; once that
+//     landed upstream the local copy was deleted rather than left to drift.
+//     The box button still uses this app's older `BboxDrawInteraction`,
+//     which predates the shared tool and also serves `MapSelect.vue`.
+//   * `createEditTool` is the vertex editor behind "Edit shape". It owns
+//     the handles, the drag/insert/delete gestures and the
+//     `provenance.source: 'edited'` lineage; this widget only decides when
+//     it is on and what to do with the Areas it emits.
+import { addAreaLayer, GeocoderControl, createDrawTool, createEditTool } from '@cnmw/maplibre';
 import { toAreaDocument, buildArea, VERSION } from '@cnmw/spec';
 import BboxDrawInteraction from '../components/maps/BboxDrawInteraction.js';
 import { MAP_HOST } from '../components/maps/mapHost.js';
@@ -536,6 +587,11 @@ const MAX_RUN_WARNINGS = 4;
 // that the numbers feel like they belong to the controls.
 const FILTER_DEBOUNCE_MS = 400;
 
+// How long after a vertex drag the estimate re-runs. Shorter than the filter
+// debounce: a dragged corner is one deliberate gesture that has already
+// ended, not a half-typed value, so the numbers should follow it closely.
+const EDIT_DEBOUNCE_MS = 250;
+
 let instanceCounter = 0;
 
 // How close the map zooms to a selected area. Matches MapMixin's cap, which
@@ -609,6 +665,14 @@ export default defineComponent({
       areaError: '',
       dropActive: false,
       drawArmed: false,
+      // The polygon tool is a second armed mode beside the box one. Two
+      // flags rather than one `activeTool` string because the template's
+      // two buttons each want their own pressed state, and only one of the
+      // two can ever be true (arming either disarms the other).
+      polygonArmed: false,
+      // "Edit shape" is a toggle, not a one-shot: the handles stay up until
+      // the user is done nudging them.
+      editing: false,
       // Which parquet table of a multi-asset collection is being
       // downloaded. `null` means "whatever the derivation would pick",
       // which is the first one.
@@ -909,6 +973,9 @@ export default defineComponent({
     this.map = null;
     this.areaLayer = null;
     this.bboxDraw = null;
+    this.polygonDraw = null;
+    this.editTool = null;
+    this.editTimer = null;
     this.searchControl = null;
     this.handle = null;
     this.detachDrop = null;
@@ -1020,7 +1087,11 @@ export default defineComponent({
       }
       this.bboxDraw?.destroy();
       this.bboxDraw = null;
+      this.polygonDraw?.remove();
+      this.polygonDraw = null;
+      this.stopEditing();
       this.drawArmed = false;
+      this.polygonArmed = false;
       this.areaLayer = null;
       this.map = null;
     },
@@ -1047,14 +1118,44 @@ export default defineComponent({
         fillOpacity: 0.07
       }));
       const wasArmed = this.drawArmed;
+      const wasPolygonArmed = this.polygonArmed;
       this.bboxDraw?.destroy();
       this.bboxDraw = markRaw(new BboxDrawInteraction(this.map, extent => this.areaFromExtent(extent)));
       this.drawArmed = this.bboxDraw.setArmed(wasArmed);
+      this.polygonDraw?.remove();
+      this.polygonDraw = markRaw(createDrawTool(this.map, {
+        tools: ['polygon'],
+        id: 'area-download-draw',
+        names: { drawn: this.$t('widgets.areaDownload.area.drawnName') }
+      }));
+      // `on('area')` hands back a finished Area built by @cnmw/spec, so
+      // unlike the box tool there is no extent to turn into one here.
+      this.polygonDraw.on('area', ({ area }) => {
+        this.polygonArmed = false;
+        this.setArea(area);
+      });
+      this.polygonDraw.on('cancel', () => { this.polygonArmed = false; });
+      this.polygonDraw.on('disarmed', () => { this.polygonArmed = false; });
+      if (wasPolygonArmed) {
+        this.polygonDraw.arm('polygon');
+      }
+      this.polygonArmed = this.polygonDraw.armed;
       // The draw rectangle is only the rubber band of a drag in progress.
       // Once there is an area, the amber outline *is* that box, and drawing
       // a dashed blue one over it says nothing extra.
       if (this.area) {
         this.areaLayer.setArea(this.area);
+      }
+      // A style reload drops every source and layer added from outside, the
+      // editor's handles among them -- so switching basemap mid-edit would
+      // otherwise leave the toggle saying "Done editing" over a map with
+      // nothing to drag. Rebuild the editor on the area as it now stands,
+      // keeping the edits already made.
+      if (this.editing) {
+        const edited = this.area;
+        this.stopEditing();
+        this.applyArea(edited);
+        this.startEditing();
       }
     },
     // @cnmw/maplibre's GeocoderControl, built as a MapLibre IControl: it
@@ -1130,7 +1231,75 @@ export default defineComponent({
       if (!this.bboxDraw) {
         return;
       }
+      // Two armed tools at once would race for the same clicks, and the
+      // user only ever means one of them.
+      this.disarmPolygon();
       this.drawArmed = this.bboxDraw.setArmed(!this.drawArmed);
+    },
+    togglePolygonDraw() {
+      if (!this.polygonDraw) {
+        return;
+      }
+      this.drawArmed = this.bboxDraw?.setArmed(false) ?? false;
+      if (this.polygonDraw.armed) {
+        this.polygonDraw.disarm();
+      } else {
+        this.polygonDraw.arm('polygon');
+      }
+      this.polygonArmed = this.polygonDraw.armed;
+    },
+    disarmPolygon() {
+      this.polygonDraw?.disarm();
+      this.polygonArmed = false;
+    },
+
+    // --- editing an existing area ----------------------------------------
+    toggleEdit() {
+      if (this.editing) {
+        this.stopEditing();
+      } else {
+        this.startEditing();
+      }
+    },
+    startEditing() {
+      if (!this.map || !this.area || this.editing) {
+        return;
+      }
+      // Arming a draw tool and editing at the same time means two things
+      // competing for a click on the map.
+      this.drawArmed = this.bboxDraw?.setArmed(false) ?? false;
+      this.disarmPolygon();
+      // The editor draws its own outline and handles, so the static amber
+      // outline underneath would just be a second copy of the same ring
+      // lagging a frame behind every drag.
+      this.areaLayer?.setArea(null);
+      this.editTool = markRaw(createEditTool(this.map, this.area, { id: 'area-download-edit' }));
+      // Every gesture that changes the ring emits a fresh, fully-built Area
+      // with `provenance.source: 'edited'` and a re-derived `filterGeometry`
+      // -- so the estimate below, and any download started after it, filter
+      // on the shape the user is actually looking at.
+      this.editTool.on('change', ({ area }) => this.onEdited(area));
+      this.editing = true;
+    },
+    stopEditing() {
+      clearTimeout(this.editTimer);
+      this.editTimer = null;
+      this.editTool?.remove();
+      this.editTool = null;
+      if (this.editing) {
+        this.editing = false;
+        // Hand the ring back to the static outline.
+        this.areaLayer?.setArea(this.area);
+      }
+    },
+    // A drag emits on mouseup, but a user nudging three corners in a row
+    // would otherwise start three estimates. Debounced on the same timer
+    // idiom the filter controls use.
+    onEdited(area) {
+      this.area = markRaw(area);
+      this.resetDownload();
+      clearTimeout(this.editTimer);
+      this.editTimer = setTimeout(() => this.runEstimate(), EDIT_DEBOUNCE_MS);
     },
     onEscape(event) {
       // The geocoder's combobox owns Escape for closing its listbox.
@@ -1139,6 +1308,19 @@ export default defineComponent({
       }
       if (this.drawArmed) {
         this.drawArmed = this.bboxDraw?.setArmed(false) ?? false;
+        return;
+      }
+      // The polygon tool handles its own Escape (mid-draw it has vertices to
+      // throw away), so by the time one reaches here it is already disarmed
+      // -- but a stray flag would leave the button stuck looking active.
+      if (this.polygonArmed) {
+        this.disarmPolygon();
+        return;
+      }
+      // Escape leaves the editor before it collapses the cluster: the
+      // handles are the most recent thing the user opted into.
+      if (this.editing) {
+        this.stopEditing();
         return;
       }
       if (this.open) {
@@ -1205,6 +1387,9 @@ export default defineComponent({
     // few range requests and no row data -- cheap enough that making the
     // user press a button for it was the wrong trade.
     setArea(area) {
+      // A brand-new area from search/draw/upload: the editor open over the
+      // old one is editing a shape that no longer exists.
+      this.stopEditing();
       // Re-add first, which raises the outline above whatever has been
       // stacked over it since. MapView announces the re-stackings it knows
       // about, but StacMapLayer also re-binds the active style on its own
@@ -1234,6 +1419,7 @@ export default defineComponent({
       this.areaLayer?.setArea(area);
     },
     clearArea() {
+      this.stopEditing();
       this._estimateToken += 1;
       this.area = null;
       this.areaError = '';
@@ -2013,6 +2199,27 @@ export default defineComponent({
 .ad-area-summary {
   margin: 0.15rem 0 0.4rem;
   font-size: 0.75rem;
+  color: $secondary;
+}
+
+.ad-area-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.ad-edit-toggle {
+  flex: 0 0 auto;
+}
+
+// The hint only exists while the editor is open, so it wraps under the
+// button rather than widening the card.
+.ad-edit-hint {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 0.7rem;
+  line-height: 1.25;
   color: $secondary;
 }
 
