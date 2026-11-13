@@ -453,6 +453,12 @@ test.describe('Drawing a polygon, and editing an area', () => {
   });
 
   test('offers "Edit shape" on an area, and leaves the editor on Escape', async ({ page, worker }) => {
+    // Four editor toggles on top of a page load and an upload. Each toggle
+    // adds and removes three map layers, and under six parallel workers
+    // against an on-demand dev server that is comfortably past the default
+    // 30s budget -- the same pressure the `expect.timeout` in
+    // playwright.config.js is raised for. Passes in ~4s run on its own.
+    test.slow();
     const { catalog, collection } = catalogWith(PARQUET_ASSET, VECTOR_TABLE);
     await catalog.createServer(worker);
     await page.goto(collection.getBrowserPath());
