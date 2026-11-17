@@ -18,6 +18,7 @@ import { getBest } from 'stac-js/src/locales';
 import { TYPES } from "../components/ApiCapabilitiesMixin";
 import BrowserStorage from "../browser-store.js";
 import search, { freshSearchState } from './modules/search.js';
+import { entryDocumentCandidates, entryDocumentHits } from '../utils/externalUrlRecovery.js';
 
 // type is either 'collections' or 'items', depending on which endpoint the list was loaded from
 function updateApiChildrenState(state, stac, type, list, next = false, prev = false) {
@@ -1013,6 +1014,24 @@ function getStore(config, router) {
             cx.dispatch('auth/requestLogin').catch(reject);
           });
         }
+      },
+      // Probes the entry documents of an external URL that did not load and
+      // returns the URLs that hold a JSON document. A probe asks for no login,
+      // because a failed probe is a normal result.
+      async probeEntryDocuments(cx, url) {
+        const candidates = entryDocumentCandidates(url);
+        if (candidates.length === 0) {
+          return [];
+        }
+        const results = await Promise.all(candidates.map(async candidate => {
+          try {
+            const response = await cx.dispatch('request', { link: candidate, noRetry: true });
+            return { url: candidate, ok: true, json: isObject(response.data) };
+          } catch (error) {
+            return { url: candidate, ok: false, json: false };
+          }
+        }));
+        return entryDocumentHits(results);
       },
       async load(cx, args) {
         let {
