@@ -116,7 +116,7 @@
 
 <script>
 // The most rows to put in the DOM at once. The loader caps what it decodes
-// (MAX_ROWS, 10k), but rendering even that many at once is fatal on a wide
+// (MAX_ROWS), but rendering every loaded row at once is fatal on a wide
 // table: 10k rows × ~140 columns is over a million table cells, which freezes
 // the tab and grows the heap into the gigabytes long after the data itself (a
 // few hundred MB) decoded fine. Filtering and sorting still work across

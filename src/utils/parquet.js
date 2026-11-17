@@ -285,10 +285,77 @@ export function bboxFromWkb(buffer) {
   }
 }
 
+// hyparquet requests the column chunks it reads all at once, and when the
+// caller names the columns (as the table preview does) it fetches each chunk
+// on its own instead of one range per row group. On a wide file (hundreds of
+// columns, many row groups) that is thousands of parallel requests for a few
+// hundred bytes each; a CDN answers part of such a burst with 503 before the
+// origin, without CORS headers, and the browser reports a network or
+// cross-origin error. This wrapper keeps MAX_CONCURRENT_RANGES requests in
+// flight and merges queued ranges that follow each other in the file (gaps
+// up to MAX_RANGE_GAP, merged ranges up to MAX_MERGED_RANGE) into one fetch.
+export const MAX_CONCURRENT_RANGES = 16;
+export const MAX_RANGE_GAP = 64 * 1024;
+export const MAX_MERGED_RANGE = 8 * 1024 * 1024;
+
+export function limitConcurrency(file, {
+  max = MAX_CONCURRENT_RANGES, gap = MAX_RANGE_GAP, maxMerged = MAX_MERGED_RANGE,
+} = {}) {
+  let active = 0;
+  const queue = [];
+  const next = () => {
+    if (active >= max || queue.length === 0) {return;}
+    active++;
+    // The head, then the queued ranges right after it in file order.
+    const batch = [queue.shift()];
+    let from = batch[0].start;
+    let to = batch[0].end;
+    while (queue.length > 0) {
+      const r = queue[0];
+      if (r.start < from || r.start > to + gap || Math.max(to, r.end) - from > maxMerged) {break;}
+      batch.push(queue.shift());
+      to = Math.max(to, r.end);
+    }
+    Promise.resolve()
+      .then(() => file.slice(from, to))
+      .then(buffer => {
+        for (const r of batch) {r.resolve(buffer.slice(r.start - from, r.end - from));}
+      }, err => {
+        for (const r of batch) {r.reject(err);}
+      })
+      .finally(() => {
+        active--;
+        next();
+      });
+  };
+  // Start fetching one microtask later, once hyparquet has queued every range
+  // of its read, so that the first ones can be merged too.
+  let scheduled = false;
+  const schedule = () => {
+    if (scheduled) {return;}
+    scheduled = true;
+    queueMicrotask(() => {
+      scheduled = false;
+      for (let free = max - active; free > 0 && queue.length > 0; free--) {next();}
+    });
+  };
+  return {
+    byteLength: file.byteLength,
+    slice(start, end = file.byteLength) {
+      return new Promise((resolve, reject) => {
+        queue.push({ start, end, resolve, reject });
+        schedule();
+      });
+    },
+  };
+}
+
 export async function loadParquetMetadata(url, { signal } = {}) {
   // hyparquet spreads `requestInit` into both its byte-length probe and every
   // ranged fetch, so an AbortSignal here cancels the whole download.
-  const file = await asyncBufferFromUrl(signal ? { url, requestInit: { signal } } : { url });
+  const file = limitConcurrency(
+    await asyncBufferFromUrl(signal ? { url, requestInit: { signal } } : { url })
+  );
   const metadata = await parquetMetadataAsync(file);
   const schema = parquetSchema(metadata);
   const columnNames = schema.children.map(e => e.element.name);
