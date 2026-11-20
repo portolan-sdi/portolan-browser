@@ -119,11 +119,12 @@ Renders a dismissible alert banner.
 | `dismissible` | Boolean | `false`     | Whether the user can close the alert. |
 | `allowHTML`   | Boolean | `false`     | Allows HTML tags in the `text`. |
 
-### AreaDownload
+### `AreaDownload`
 
 An on-map download tool, for the [`map-overlay`](#on-map-widgets) hook. It puts a
-"Download data" cluster on the map itself: a place-name search box, a "Draw a box"
-button, a "Draw polygon" button and an "Upload" button, side by side. Picking a place,
+"Download data" cluster on the map itself. The cluster holds a place-name search box,
+a "Draw a box" button, a "Draw polygon" button and an "Upload" button, side by side.
+Picking a place,
 drawing a box or a polygon, uploading
 a GeoJSON or dropping one onto the map outlines that area **on the page's own map**,
 over the collection's data, and opens a compact card with the dataset name, a live
@@ -134,34 +135,35 @@ otherwise as a Blob the widget clicks for you. There is no link to find and clic
 
 GeoJSON and GeoParquet are offered directly; "More formats" adds GeoPackage,
 FlatGeobuf, Shapefile, CSV and Esri JSON. The last five are separate `@cng` packages
-whose writers load the first time someone picks them, so each button says what its
-plugin still has to fetch (`GeoPackage · 133 kB +331 kB`) before anything is downloaded,
-and a format that cannot be fetched says so rather than failing silently. Anything a
-writer has to change to fit its format — Shapefile renaming a column to dBase's
-ten-character limit, for instance — is reported beside the saved file.
+whose writers load the first time someone picks them. Each button states what
+its plugin still has to fetch (`GeoPackage · 133 kB +331 kB`) before anything is
+downloaded, and a format that cannot be fetched says so rather than failing silently.
+Anything a writer has to change to fit its format — Shapefile renaming a column to
+dBase's ten-character limit — is reported beside the saved file.
 
 **Drawing a polygon.** "Draw polygon" is the box tool's sibling, for a region a
 rectangle does not describe. Click each corner; double-click, press <kbd>Enter</kbd>, or
 click the first corner again to close the ring; <kbd>Esc</kbd> cancels. While you draw,
 the corners placed so far are marked and the edge follows the cursor, and once there are
-three the fill shows the shape closing would produce. Arming either draw tool disarms
+three the fill shows the polygon that closing would produce. Arming either draw tool disarms
 the other.
 
 **Editing an area.** Once there is an area — however it arrived — the card offers
 "Edit shape". Turning it on puts handles on the outline: drag a large one to move a
 corner, drag a small one between two corners to add a corner there, double-click a
-corner to remove it. The estimate re-runs as you go, so the row count always describes
-the shape currently on the map, and a download started afterwards uses that shape.
+corner to remove it. The estimate re-runs as you go. The row count always
+describes the outline currently on the map, and a download started afterwards uses that
+outline.
 <kbd>Esc</kbd> or "Done editing" leaves the editor. Editing adjusts the exterior ring of
 the largest polygon; holes and any other parts of a multi-polygon are kept as they are.
 
 The card narrows the request as well as placing it:
 
 - **Which table.** A collection that publishes several parquet `data` assets — Fields of
-  the World's benchmark collections carry field polygons, boundary lines and a chip
+  the World's benchmark collections publish field polygons, boundary lines and a chip
   index side by side — gets a picker labelled with each asset's title, row count and
-  file size. Choosing re-derives the dataset from that asset, so its columns, its bbox
-  covering and its time column are the ones the rest of the card works from. A
+  file size. Choosing re-derives the dataset from that asset. Its columns, its bbox
+  covering and its time column are then the ones the rest of the card works from. A
   partitioned collection has no picker: its source is the partition set.
 - **When.** A table with a declared time column gets a date range, auto-populated from
   the collection's own temporal extent, with "Last 30 days", "Last year" and "Whole
@@ -179,39 +181,37 @@ survived, and on what basis — which is where "this dataset has no bbox coverin
 nothing could be pruned" becomes visible.
 
 A running download shows rows matched and bytes read, and can be paused, resumed or
-cancelled; cancelling keeps nothing. It ends in a success state naming the file, the
-rows, the size and how long it took, or in a failure state that says what went wrong in
-words rather than as an error code.
+cancelled; cancelling keeps nothing. It ends in a success state that reports the file,
+the rows, the size and how long it took, or in a failure state that says what went wrong
+in words rather than as an error code.
 
-Collapsed, the cluster is a single "Download data" pill, which is the discoverability
+Collapsed, the cluster is a "Download data" pill, which is the discoverability
 affordance: on a downloadable collection it pulses once when the page loads (never under
-`prefers-reduced-motion`), so the feature is visible rather than buried in the metadata
-column. <kbd>Esc</kbd> inside the tool disarms a draw if one is armed, then leaves the
-shape editor if it is open, and otherwise collapses the cluster back to the pill; the search box keeps <kbd>Esc</kbd> for its own
-suggestion list. Below 576px the tool starts collapsed to that pill, both
-it and the card span the width of the map instead of sitting in a lane down its
-right-hand side, and the card is capped at just under half the map's height so the
-style picker and its legend stay reachable underneath.
+`prefers-reduced-motion`), so the feature is visible in the map instead of hidden in the
+metadata column. <kbd>Esc</kbd> inside the tool disarms a draw if one is armed, then
+closes the editor if it is open, and otherwise returns the cluster to the pill; the
+search box keeps <kbd>Esc</kbd> for its own suggestion list. Below 576px the tool starts
+as that pill, both it and the card span the width of the map instead of sitting in a lane
+down its right-hand side, and the card is capped at just under half the map's height. The
+style picker and its legend are still usable underneath.
 
 The browser reads only the row groups the area touches, straight from the collection's
 parquet files. The widget is built on the `@cng` cloud-native map widget packages,
-which are consumed from a sibling `cng-map-widgets` checkout through a Vite alias until
-they are published to npm. See
-[.github/DOWNLOAD_WIDGET_NOTES.md](../.github/DOWNLOAD_WIDGET_NOTES.md) for the
-architecture, the setup it needs, and what is portolan-specific about it.
+published from the [cng-map-widgets](https://github.com/cholmes/cng-map-widgets)
+workspace.
 
-The widget needs no `condition` of its own: the one in `widgets.config.js` keeps it off
-any entity with no downloadable vector data, so a raster, Zarr or PMTiles-only collection
-shows nothing at all — no card, no cluster, not even the pill. It must be placed on
-`map-overlay`; in any other hook it has no map to draw on and says so in the console.
+The widget needs no `condition` of its own. The one in `widgets.config.js` keeps it off
+any entity with no downloadable vector data. A raster, Zarr or PMTiles-only collection
+renders none of the tool, down to the pill. The widget must be placed on
+`map-overlay`. In any other hook it finds no map and reports that in the console.
 
 | Props            | Type   | Default      | Description |
 | ---------------- | ------ | ------------ | ----------- |
-| `indexUrl`       | String | the published geoBoundaries names index | The place-name index the search box reads, as a `cnmw-index/1.0` manifest URL. `null` hides the search box entirely (no Geocoder is created, no fetch is made for it); draw, upload and download keep working. In `widgets.config.js`, this is wired to the [`areaSearchIndexUrl`](options.md#areasearchindexurl) config option rather than hardcoded. |
+| `indexUrl`       | String | the published geoBoundaries names index | The place-name index the search box reads, as a `cnmw-index/1.0` manifest URL. `null` hides the search box entirely, and the widget then builds no Geocoder and fetches no index. Draw, upload and download keep working. In `widgets.config.js`, this is wired to the [`areaSearchIndexUrl`](options.md#areasearchindexurl) config option rather than hardcoded. |
 | `allowedFormats` | Array  | `null`       | Restricts the format buttons offered to this list of ids: any of `'geojson'`, `'geoparquet'`, `'gpkg'`, `'flatgeobuf'`, `'shapefile'`, `'csv'`, `'esrijson'` (see `src/utils/download/formats.js`). `null` or `[]` offers every registered format. In `widgets.config.js`, this is wired to the [`areaDownloadFormats`](options.md#areadownloadformats) config option. |
-| `where`          | Array  | `[]`         | Attribute predicates applied to every download, in `@cng` `FilterSpec` form, e.g. `[{ col: 'confidence', op: '>=', value: 0.9 }]`. The card's own column filters are ANDed onto these, not instead of them. |
+| `where`          | Array  | `[]`         | Attribute predicates applied to every download, in `@cng` `FilterSpec` form, such as `[{ col: 'confidence', op: '>=', value: 0.9 }]`. The card's own column filters are ANDed onto these, not instead of them. |
 | `limit`          | Number | `100000`     | Hard cap on the rows a download writes. Distinct from the safety ceiling, which is a refusal the user can accept. |
-| `directSave`     | String | `'auto'`     | How the finished file reaches the disk: `'picker'` always asks the File System Access API for a destination, `'anchor'` always writes a Blob and clicks it, `'auto'` prefers the picker where it exists and is not driven by automation. |
+| `directSave`     | String | `'auto'`     | The destination the widget writes the finished file to. `'picker'` always asks the File System Access API for a destination, `'anchor'` always writes a Blob and clicks it, `'auto'` prefers the picker where it exists and is not driven by automation. |
 
 The widget itself is only registered on `map-overlay` when the
 [`enableAreaDownload`](options.md#enableareadownload) config option is `true` (the
@@ -325,10 +325,10 @@ Each hook has an ID like `view-catalog-meta-start` that you use as the key in
 
 *Note: This list is auto-generated. Run `npm run docs:hooks` to update it after adding new hooks.*
 
-## On-map Widgets
+## On-map widgets
 
 `map-overlay` is not like the other hooks. It renders **inside the map container**, as a
-transparent layer over the map, so a widget there can draw on the map and position
+transparent layer over the map, so a widget there can render onto the map and position
 itself over the data. It is how [`AreaDownload`](#areadownload) works.
 
 It is opt-in per map: `MapView` only renders the hook when it is given the
@@ -416,8 +416,8 @@ The map's corners are mostly spoken for, and a widget should stay out of them: t
 left is the map's notice (`.map-textcontrol`, which says why a layer did not draw), the
 top right and the right edge are MapLibre's navigation buttons, the bottom left is the
 style picker and layer control, and the bottom right corner is the attribution button.
-`AreaDownload` uses the lane between the right edge's buttons and the middle of the map,
-which is why it insets by 52px rather than 10px.
+`AreaDownload` uses the lane between the right edge's buttons and the middle of the map.
+It insets by 52px rather than 10px.
 
 ## Developer Guide
 

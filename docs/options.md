@@ -644,7 +644,7 @@ getStacLayerOptions: (type, options, reference) => {
 }
 ```
 
-### enableAreaDownload
+### `enableAreaDownload`
 
 Master switch for the [`AreaDownload`](widgets.md#areadownload) widget (the on-map
 "Download data" tool: place-name search, draw, upload and dataset download).
@@ -661,7 +661,7 @@ geoBoundaries names index on Source Cooperative (52,398 names, ADM0-2).
 Set to `null` to hide the search box entirely; drawing, uploading and downloading keep
 working.
 
-### areaDownloadFormats
+### `areaDownloadFormats`
 
 Restricts the output formats [`AreaDownload`](widgets.md#areadownload) offers to this
 array of format ids. Valid ids are `'geojson'`, `'geoparquet'`, `'gpkg'`, `'flatgeobuf'`,

@@ -979,7 +979,7 @@ export default defineComponent({
     // different destination with a different commit. So no test that runs
     // under WebDriver exercises the picker path, and a commit bug in that
     // sink once shipped past this whole suite (0-byte files under a card
-    // reporting 7.3 MB; see .github/DOWNLOAD_WIDGET_NOTES.md). The
+    // reporting 7.3 MB). The
     // regression test for it lives in @cng/download-core, driving a real
     // OPFS writable, because that is the layer that can be tested headless.
     usePicker() {

@@ -14,8 +14,7 @@
 // injection seam, once, before the first read. Both packages have the seam;
 // a host with both calls both.
 //
-// Verified against hyparquet 1.26.0 (see tests/unit/downloadHyparquet.spec.js
-// and the notes in .github/DOWNLOAD_WIDGET_NOTES.md):
+// Verified against hyparquet 1.26.0 (see tests/unit/downloadHyparquet.spec.js):
 //   - `geoparquet: false` is honoured. It is not cosmetic and it is not a
 //     no-op on this version: 1.26.0 marks a GeoParquet geometry column with
 //     a GEOMETRY logical type by default, and download-core needs the raw

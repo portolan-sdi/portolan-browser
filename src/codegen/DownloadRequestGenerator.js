@@ -18,8 +18,7 @@
 // (`language`, `outputFile`, `highlightLanguage`, and a one-argument
 // `generate`) so the existing CodeBox/CodeHighlighted components can render
 // them unchanged, but they take a DownloadRequest instead of search filters
-// and are registered under a separate export. See
-// .github/DOWNLOAD_WIDGET_NOTES.md.
+// and are registered under a separate export.
 
 export default class DownloadRequestGenerator {
   get language() {
