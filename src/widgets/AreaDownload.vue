@@ -63,8 +63,12 @@
               </button>
             </div>
             <div class="ad-tools-row">
-              <!-- @cng/maplibre's GeocoderControl lands here; see mountSearch(). -->
-              <div ref="search" class="ad-search" />
+              <!-- @cng/maplibre's GeocoderControl lands here; see mountSearch().
+                   v-show, not v-if: `ref="search"` must stay resolvable so a
+                   later `indexUrl` is never possible (it is not reactive --
+                   see mountSearch()) and so this never races the Transition
+                   above over the same element. -->
+              <div v-show="indexUrl" ref="search" class="ad-search" />
               <button
                 type="button"
                 class="ad-button"
@@ -631,9 +635,23 @@ export default defineComponent({
   },
   props: {
     // The geocoder's names index, as a `cnmw-index/1.0` manifest URL.
+    // `null` (settable via the app's `areaSearchIndexUrl` config option)
+    // hides the search box entirely -- no Geocoder is constructed and no
+    // request is made for it -- leaving draw, upload and download working.
+    // Vue skips type/default handling for an explicit `null` on a
+    // non-required prop, so passing it through unchanged is enough.
     indexUrl: {
       type: String,
       default: 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json'
+    },
+    // Restricts the format buttons offered to this list of ids (any of
+    // `src/utils/download/formats.js`'s FORMAT_ORDER: 'geojson',
+    // 'geoparquet', 'gpkg', 'flatgeobuf', 'shapefile', 'csv', 'esrijson').
+    // `null` or an empty array offers every registered format, which is
+    // the default (the app's `areaDownloadFormats` config option).
+    allowedFormats: {
+      type: Array,
+      default: null
     },
     // Attribute filters applied to every request, as @cng Predicates.
     where: {
@@ -900,7 +918,14 @@ export default defineComponent({
       void this.formatsVersion;
       const rows = this.estimateResult?.rows;
       const schema = (this.estimateResult?.columns || []).map(name => ({ name, type: 'unknown' }));
-      return listFormats().map(entry => {
+      // `allowedFormats` (the app's `areaDownloadFormats` config option)
+      // restricts the offer to these ids; null or empty means "all of
+      // them", which is also what today's behaviour without the prop set
+      // must stay identical to.
+      const available = Array.isArray(this.allowedFormats) && this.allowedFormats.length > 0
+        ? listFormats().filter(entry => this.allowedFormats.includes(entry.id))
+        : listFormats();
+      return available.map(entry => {
         const bounded = rows && entry.estimateBytes
           ? describeBounded(entry.estimateBytes(schema, rows), formatBytes)
           : null;
@@ -1174,7 +1199,10 @@ export default defineComponent({
     // `map.addControl` would do with it) so that it sits beside the draw and
     // upload buttons as one tool, instead of stacking above them.
     mountSearch() {
-      if (!this.$refs.search || this.searchControl) {
+      // No gazetteer configured (`indexUrl: null`): no GeocoderControl, no
+      // Geocoder, no fetch -- draw/upload/download are unaffected, since
+      // none of them go through this method.
+      if (!this.indexUrl || !this.$refs.search || this.searchControl) {
         return;
       }
       const control = new GeocoderControl({

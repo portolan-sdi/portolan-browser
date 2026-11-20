@@ -205,6 +205,23 @@
         },
         "required": ["label", "url"]
       }
+    },
+    "enableAreaDownload": {
+      "type": "boolean",
+      "description": "Master switch for the on-map AreaDownload widget (place-name search, draw, upload, dataset download); false registers nothing at all"
+    },
+    "areaSearchIndexUrl": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "The cnmw-index/1.0 gazetteer manifest AreaDownload's search box reads; null hides the search box but keeps draw/upload/download working"
+    },
+    "areaDownloadFormats": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "string",
+        "enum": ["geojson", "geoparquet", "gpkg", "flatgeobuf", "shapefile", "csv", "esrijson"]
+      },
+      "description": "Restricts AreaDownload's output formats to this list (geojson, geoparquet, gpkg, flatgeobuf, shapefile, csv, esrijson); null offers all available formats"
     }
   }
 }

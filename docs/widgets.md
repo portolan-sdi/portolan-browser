@@ -205,12 +205,18 @@ any entity with no downloadable vector data, so a raster, Zarr or PMTiles-only c
 shows nothing at all — no card, no cluster, not even the pill. It must be placed on
 `map-overlay`; in any other hook it has no map to draw on and says so in the console.
 
-| Props        | Type   | Default      | Description |
-| ------------ | ------ | ------------ | ----------- |
-| `indexUrl`   | String | the published geoBoundaries names index | The place-name index the search box reads, as a `cnmw-index/1.0` manifest URL. |
-| `where`      | Array  | `[]`         | Attribute predicates applied to every download, in `@cng` `FilterSpec` form, e.g. `[{ col: 'confidence', op: '>=', value: 0.9 }]`. The card's own column filters are ANDed onto these, not instead of them. |
-| `limit`      | Number | `100000`     | Hard cap on the rows a download writes. Distinct from the safety ceiling, which is a refusal the user can accept. |
-| `directSave` | String | `'auto'`     | How the finished file reaches the disk: `'picker'` always asks the File System Access API for a destination, `'anchor'` always writes a Blob and clicks it, `'auto'` prefers the picker where it exists and is not driven by automation. |
+| Props            | Type   | Default      | Description |
+| ---------------- | ------ | ------------ | ----------- |
+| `indexUrl`       | String | the published geoBoundaries names index | The place-name index the search box reads, as a `cnmw-index/1.0` manifest URL. `null` hides the search box entirely (no Geocoder is created, no fetch is made for it); draw, upload and download keep working. In `widgets.config.js`, this is wired to the [`areaSearchIndexUrl`](options.md#areasearchindexurl) config option rather than hardcoded. |
+| `allowedFormats` | Array  | `null`       | Restricts the format buttons offered to this list of ids: any of `'geojson'`, `'geoparquet'`, `'gpkg'`, `'flatgeobuf'`, `'shapefile'`, `'csv'`, `'esrijson'` (see `src/utils/download/formats.js`). `null` or `[]` offers every registered format. In `widgets.config.js`, this is wired to the [`areaDownloadFormats`](options.md#areadownloadformats) config option. |
+| `where`          | Array  | `[]`         | Attribute predicates applied to every download, in `@cng` `FilterSpec` form, e.g. `[{ col: 'confidence', op: '>=', value: 0.9 }]`. The card's own column filters are ANDed onto these, not instead of them. |
+| `limit`          | Number | `100000`     | Hard cap on the rows a download writes. Distinct from the safety ceiling, which is a refusal the user can accept. |
+| `directSave`     | String | `'auto'`     | How the finished file reaches the disk: `'picker'` always asks the File System Access API for a destination, `'anchor'` always writes a Blob and clicks it, `'auto'` prefers the picker where it exists and is not driven by automation. |
+
+The widget itself is only registered on `map-overlay` when the
+[`enableAreaDownload`](options.md#enableareadownload) config option is `true` (the
+default); set to `false`, `widgets.config.js` omits it from the hook entirely, so
+nothing is registered and nothing renders.
 
 ### CustomText
 

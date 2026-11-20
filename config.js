@@ -69,5 +69,8 @@ export default {
   transactionsRequireLogin: true,
   transactionsRequirePreflight: true,
   crs: {},
-  footerLinks: null
+  footerLinks: null,
+  enableAreaDownload: true,
+  areaSearchIndexUrl: "https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json",
+  areaDownloadFormats: null
 };
