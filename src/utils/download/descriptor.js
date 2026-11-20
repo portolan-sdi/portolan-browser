@@ -1,7 +1,7 @@
-// stac-js entity -> `@cnmw/download-core` DatasetDescriptor.
+// stac-js entity -> `@cng/download-core` DatasetDescriptor.
 //
 // The §2.4 mapping itself (collection JSON -> descriptor) lives in
-// `@cnmw/download-core`, where it is shared with the Python side and with
+// `@cng/download-core`, where it is shared with the Python side and with
 // any other host. This module is the portolan-browser-specific half, and it
 // is deliberately small: turn the store's stac-js object back into plain
 // JSON, make every asset href absolute the way the rest of this app does,
@@ -10,7 +10,7 @@
 // Everything here is glue. A stac-browser widget would keep this file and
 // change nothing in it (stac-js is upstream's object model too).
 
-import { collectionDownloadSupport } from '@cnmw/download-core';
+import { collectionDownloadSupport } from '@cng/download-core';
 import { assetHref } from '../mapAssets.js';
 import { narrowToAsset, parquetDataAssets } from './assets.js';
 

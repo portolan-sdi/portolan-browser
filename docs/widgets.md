@@ -133,7 +133,7 @@ the file straight away — through `showSaveFilePicker` where the browser has it
 otherwise as a Blob the widget clicks for you. There is no link to find and click.
 
 GeoJSON and GeoParquet are offered directly; "More formats" adds GeoPackage,
-FlatGeobuf, Shapefile, CSV and Esri JSON. The last five are separate `@cnmw` packages
+FlatGeobuf, Shapefile, CSV and Esri JSON. The last five are separate `@cng` packages
 whose writers load the first time someone picks them, so each button says what its
 plugin still has to fetch (`GeoPackage · 133 kB +331 kB`) before anything is downloaded,
 and a format that cannot be fetched says so rather than failing silently. Anything a
@@ -194,8 +194,8 @@ right-hand side, and the card is capped at just under half the map's height so t
 style picker and its legend stay reachable underneath.
 
 The browser reads only the row groups the area touches, straight from the collection's
-parquet files. The widget is built on the `@cnmw` cloud-native map widget packages,
-which are consumed from a sibling `cn-geocoding` checkout through a Vite alias until
+parquet files. The widget is built on the `@cng` cloud-native map widget packages,
+which are consumed from a sibling `cng-map-widgets` checkout through a Vite alias until
 they are published to npm. See
 [.github/DOWNLOAD_WIDGET_NOTES.md](../.github/DOWNLOAD_WIDGET_NOTES.md) for the
 architecture, the setup it needs, and what is portolan-specific about it.
@@ -208,7 +208,7 @@ shows nothing at all — no card, no cluster, not even the pill. It must be plac
 | Props        | Type   | Default      | Description |
 | ------------ | ------ | ------------ | ----------- |
 | `indexUrl`   | String | the published geoBoundaries names index | The place-name index the search box reads, as a `cnmw-index/1.0` manifest URL. |
-| `where`      | Array  | `[]`         | Attribute predicates applied to every download, in `@cnmw` `FilterSpec` form, e.g. `[{ col: 'confidence', op: '>=', value: 0.9 }]`. The card's own column filters are ANDed onto these, not instead of them. |
+| `where`      | Array  | `[]`         | Attribute predicates applied to every download, in `@cng` `FilterSpec` form, e.g. `[{ col: 'confidence', op: '>=', value: 0.9 }]`. The card's own column filters are ANDed onto these, not instead of them. |
 | `limit`      | Number | `100000`     | Hard cap on the rows a download writes. Distinct from the safety ceiling, which is a refusal the user can accept. |
 | `directSave` | String | `'auto'`     | How the finished file reaches the disk: `'picker'` always asks the File System Access API for a destination, `'anchor'` always writes a Blob and clicks it, `'auto'` prefers the picker where it exists and is not driven by automation. |
 

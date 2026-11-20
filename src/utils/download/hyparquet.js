@@ -1,6 +1,6 @@
 // One hyparquet on the page.
 //
-// The @cnmw packages are built to run with no bundler, so they load
+// The @cng packages are built to run with no bundler, so they load
 // hyparquet with `import(CDN.hyparquet)` from a pinned jsdelivr URL (their
 // design doc §4.2: a bare specifier would not resolve in a zero-build page
 // and an inlined copy would blow their size budget). That specifier is
@@ -27,8 +27,8 @@
 
 import * as hyparquet from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
-import { setHyparquetModules as setDownloadHyparquet } from '@cnmw/download-core';
-import { setHyparquetModules as setGeocoderHyparquet } from '@cnmw/geocoder-core';
+import { setHyparquetModules as setDownloadHyparquet } from '@cng/download-core';
+import { setHyparquetModules as setGeocoderHyparquet } from '@cng/geocoder-core';
 
 let writerPromise = null;
 let injected = false;
@@ -40,7 +40,7 @@ function inject(writer) {
 }
 
 /**
- * Point the @cnmw packages at this app's hyparquet.
+ * Point the @cng packages at this app's hyparquet.
  *
  * @param {{ writer?: boolean }} [options] `writer: true` also loads
  *   hyparquet-writer, which only GeoParquet *output* needs -- it is a

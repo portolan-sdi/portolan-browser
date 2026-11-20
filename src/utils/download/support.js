@@ -2,11 +2,11 @@
 //
 // This is the cheap gate the "Download data" widget's `condition` in
 // widgets.config.js runs on every render. It is deliberately *not* the
-// authoritative answer: that is `@cnmw/download-core`'s §2.4 derivation,
+// authoritative answer: that is `@cng/download-core`'s §2.4 derivation,
 // which `utils/download/descriptor.js` runs inside the widget's own lazy
 // chunk. The split exists because widgets.config.js is imported eagerly by
 // WidgetHook, so anything it pulls in lands in the main bundle -- and
-// `@cnmw/download-core` plus `@cnmw/spec` is not something every catalog
+// `@cng/download-core` plus `@cng/spec` is not something every catalog
 // page should pay for to decide not to show a panel.
 //
 // So: this module must stay dependency-light (it imports only the app's own

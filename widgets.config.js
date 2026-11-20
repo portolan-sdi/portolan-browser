@@ -13,7 +13,7 @@ import { mayHaveDownloadableVector } from './src/utils/download/support.js';
 //
 // `condition` runs on every render of the hook and must stay cheap, so it
 // uses a small app-local predicate rather than the authoritative
-// `@cnmw/download-core` derivation -- see src/utils/download/support.js for
+// `@cng/download-core` derivation -- see src/utils/download/support.js for
 // why (this file is in the main bundle; the widget is not).
 const areaDownload = {
   id: 'AreaDownload',

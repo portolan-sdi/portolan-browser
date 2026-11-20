@@ -1,7 +1,7 @@
 // Which parquet asset does "download this dataset" mean?
 //
 // For most Portolan collections the answer is "the one data asset", and
-// `@cnmw/download-core`'s §2.4 derivation finds it. But a real catalog
+// `@cng/download-core`'s §2.4 derivation finds it. But a real catalog
 // routinely publishes several: Fields of the World's benchmark collections
 // carry `fields` (2.6M polygons, 889 MB), `fields_filtered`,
 // `boundary_lines` and `chips` (14,506 rows, 1.4 MB), all with role `data`
@@ -17,7 +17,7 @@
 // how to read those.
 //
 // Host-agnostic apart from importing this app's parquet predicates; the
-// §2.4 derivation itself stays in `@cnmw/download-core`.
+// §2.4 derivation itself stays in `@cng/download-core`.
 
 import { isParquetAsset, hasGlobPattern } from '../parquetShared.js';
 

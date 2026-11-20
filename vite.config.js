@@ -34,50 +34,50 @@ const optionsForType = (type) =>
 
 const defaultConfigPath = fileURLToPath(new URL("./config.js", import.meta.url));
 
-// The @cnmw cloud-native map widget packages (geocoder/upload/download cores
+// The @cng cloud-native map widget packages (geocoder/upload/download cores
 // and the MapLibre adapter) that the "Download data" widget is built on.
 //
 // They are not published to npm yet, so this branch consumes them from a
-// sibling checkout of the cn-geocoding workspace rather than from
+// sibling checkout of the cng-map-widgets workspace rather than from
 // node_modules: a Vite alias, not an npm `file:` dependency. The alias is
 // one reviewable file and leaves pnpm-lock.yaml untouched, where `file:`
 // links would rewrite the lockfile with paths that only resolve on a
 // machine that has the sibling repo anyway.
 //
-// WHEN THESE PACKAGES ARE PUBLISHED, this block and SB_CNMW_ROOT go away and
+// WHEN THESE PACKAGES ARE PUBLISHED, this block and SB_CNG_ROOT go away and
 // these names become ordinary version-pinned dependencies in package.json.
 // Nothing else in the app changes: every import is by package name already.
 //
-// Override the location with SB_CNMW_ROOT (absolute, or relative to this
+// Override the location with SB_CNG_ROOT (absolute, or relative to this
 // file's directory).
-const cnmwPackagesPath = (() => {
-  const fromEnv = process.env.SB_CNMW_ROOT;
+const cngPackagesPath = (() => {
+  const fromEnv = process.env.SB_CNG_ROOT;
   if (fromEnv) {
     return resolve(fileURLToPath(new URL(".", import.meta.url)), fromEnv);
   }
-  return fileURLToPath(new URL("../cn-geocoding/packages", import.meta.url));
+  return fileURLToPath(new URL("../cng-map-widgets/packages", import.meta.url));
 })();
 
-const cnmwAvailable = (() => {
+const cngAvailable = (() => {
   try {
-    accessSync(resolve(cnmwPackagesPath, "download-core/src/index.js"));
+    accessSync(resolve(cngPackagesPath, "download-core/src/index.js"));
     return true;
   } catch {
     return false;
   }
 })();
 
-if (!cnmwAvailable) {
+if (!cngAvailable) {
   // Fail loudly here rather than as an unresolved-import error 200 lines
   // into a build log.
   console.warn(
-    `[portolan-browser] The @cnmw widget packages were not found at ${cnmwPackagesPath}. ` +
-      "The \"Download data\" widget will not build. Check out cn-geocoding beside this repo, " +
-      "or point SB_CNMW_ROOT at it, or remove the widget from widgets.config.js."
+    `[portolan-browser] The @cng widget packages were not found at ${cngPackagesPath}. ` +
+      "The \"Download data\" widget will not build. Check out cng-map-widgets beside this repo, " +
+      "or point SB_CNG_ROOT at it, or remove the widget from widgets.config.js."
   );
 }
 
-const cnmwAliases = Object.fromEntries(
+const cngAliases = Object.fromEntries(
   [
     "spec",
     "geocoder-core",
@@ -93,8 +93,8 @@ const cnmwAliases = Object.fromEntries(
     "format-shapefile",
     "format-extras",
   ].map((name) => [
-    `@cnmw/${name}`,
-    resolve(cnmwPackagesPath, `${name}/src/index.js`),
+    `@cng/${name}`,
+    resolve(cngPackagesPath, `${name}/src/index.js`),
   ])
 );
 
@@ -300,7 +300,7 @@ export default defineConfig(async ({ mode }) => {
       // a WKT definition the same way. @developmentseed/proj pins an older
       // copy, and two parsers can disagree once one of them gains a fix.
       // hyparquet is deduped for the same class of reason: the app pins
-      // hyparquet 1.26.0, and the @cnmw packages are aliased in from outside
+      // hyparquet 1.26.0, and the @cng packages are aliased in from outside
       // this project's node_modules, where a stray second copy would
       // otherwise be resolvable. The parquet reader must be one instance --
       // two would mean two WASM-less decoders, two module caches, and twice
@@ -310,7 +310,7 @@ export default defineConfig(async ({ mode }) => {
       alias: {
         "@": fileURLToPath(new URL("./src", import.meta.url)),
         "@stac-browser-external-config": externalConfigPath,
-        ...cnmwAliases,
+        ...cngAliases,
       },
     },
     server: {
@@ -318,10 +318,10 @@ export default defineConfig(async ({ mode }) => {
         allow: [
           searchForWorkspaceRoot(process.cwd()),
           externalConfigPath,
-          // The aliased @cnmw packages live outside this project, so the dev
+          // The aliased @cng packages live outside this project, so the dev
           // server must be allowed to serve them. Drops out with the alias
           // once the packages are published.
-          cnmwPackagesPath
+          cngPackagesPath
         ],
       },
       port: 8080,

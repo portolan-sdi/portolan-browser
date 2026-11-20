@@ -15,7 +15,7 @@ import { mayHaveDownloadableVector } from '../../src/utils/download/support.js'
 import { describeDataset, toPlainStacJson } from '../../src/utils/download/descriptor.js'
 import { createMapHost } from '../../src/components/maps/mapHost.js'
 import BboxDrawInteraction from '../../src/components/maps/BboxDrawInteraction.js'
-import { createDrawTool } from '@cnmw/maplibre'
+import { createDrawTool } from '@cng/maplibre'
 import DownloadRequestGenerator from '../../src/codegen/DownloadRequestGenerator.js'
 import DuckDbSqlGenerator from '../../src/codegen/DuckDbSqlGenerator.js'
 
@@ -214,17 +214,17 @@ const AREA_DOCUMENT = {
 function request(overrides = {}) {
   const { descriptor } = describeDataset(adm0())
   return {
-    spec: 'cnmw-request/1.0',
+    spec: 'cng-request/1.0',
     dataset: descriptor,
     filter: {
-      spec: 'cnmw-filter/1.0',
+      spec: 'cng-filter/1.0',
       area: AREA_DOCUMENT,
       spatial: { mode: 'intersects' },
       where: [{ col: 'area_km2', op: '>=', value: 10 }],
       limit: 100000,
       ...overrides.filter
     },
-    output: { spec: 'cnmw-output/1.0', format: 'geoparquet', filename: 'adm0.parquet' },
+    output: { spec: 'cng-output/1.0', format: 'geoparquet', filename: 'adm0.parquet' },
     generator: { name: 'portolan-browser/AreaDownload', version: 'test', at: '2026-11-12T00:00:00Z' }
   }
 }
@@ -235,7 +235,7 @@ describe('DownloadRequestGenerator', () => {
     const code = generator.generate(request())
     expect(generator.outputFile).toBe('download-request.json')
     expect(generator.highlightLanguage).toBe('json')
-    expect(JSON.parse(code).spec).toBe('cnmw-request/1.0')
+    expect(JSON.parse(code).spec).toBe('cng-request/1.0')
     expect(JSON.parse(code).dataset.source.url).toMatch(/cgaz_adm0\.parquet$/)
   })
 
@@ -467,7 +467,7 @@ describe('BboxDrawInteraction armed mode (the "Draw a box" button)', () => {
   })
 })
 
-// The "Draw polygon" button is @cnmw/maplibre's shared `createDrawTool` in
+// The "Draw polygon" button is @cng/maplibre's shared `createDrawTool` in
 // polygon mode, consumed through the Vite alias -- not a local class. The
 // gesture logic has its own unit tests upstream; what is worth asserting
 // *here* is that the package this app actually resolves behaves the way the

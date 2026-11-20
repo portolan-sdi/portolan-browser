@@ -2,7 +2,7 @@
 // "documented SQL recipes", generated rather than documented, so the snippet
 // always matches the area and filters the user actually picked.
 //
-// The translation follows the @cnmw design doc §2.9 table verbatim, because
+// The translation follows the @cng design doc §2.9 table verbatim, because
 // that table is also what the QGIS plugin's Python side implements:
 //   spatial.mode 'bbox'       -> covering-column comparison only
 //   spatial.mode 'intersects' -> covering comparison AND ST_Intersects(geom)
@@ -237,7 +237,7 @@ export default class DuckDbSqlGenerator {
   }
 
   /**
-   * @param {object} request a `cnmw-request/1.0` DownloadRequest
+   * @param {object} request a `cng-request/1.0` DownloadRequest
    * @returns {string}
    */
   generate(request) {

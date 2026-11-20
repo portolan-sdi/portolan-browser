@@ -4,7 +4,7 @@
 
 Notes for the reviewer of the `download-widget` branch, and for whoever
 later extracts this into a widget for upstream STAC Browser. Written against
-the cloud-native map widgets design document in `cn-geocoding`
+the cloud-native map widgets design document in `cng-map-widgets`
 (`docs/design/widgets-architecture.md`), whose section numbers are cited
 throughout.
 
@@ -80,8 +80,8 @@ calling the same three methods, so this is the shape to offer upstream.
 Two consequences worth knowing:
 
 - **The search box is now the adapter's control, not the app's.** Design §5.3
-  always said to mount `@cnmw/maplibre`'s `GeocoderControl` on the map; the
-  panel could not, so it drove `@cnmw/geocoder-core` from a `b-form-input`
+  always said to mount `@cng/maplibre`'s `GeocoderControl` on the map; the
+  panel could not, so it drove `@cng/geocoder-core` from a `b-form-input`
   instead and the note below argued for that. With a real map to mount on,
   the decision reverses. The control's element is appended into the widget's
   cluster rather than handed to `map.addControl`, which would only put it in
@@ -102,19 +102,19 @@ Two consequences worth knowing:
 
 ### Drawing and editing an area
 
-Two of the three area tools are `@cnmw/maplibre`'s, consumed through the Vite
+Two of the three area tools are `@cng/maplibre`'s, consumed through the Vite
 alias; one is this app's own, for historical reasons worth writing down.
 
 | Tool | Implementation | Why |
 | --- | --- | --- |
 | "Draw a box" | `src/components/maps/BboxDrawInteraction.js` (this app) | Predates the shared tool and is also used by `MapSelect.vue`'s search-view bbox picker. Swapping it for `createDrawTool`'s `rectangle` mode is a cleanup worth doing, but it touches a second caller. |
-| "Draw polygon" | `createDrawTool(map, { tools: ['polygon'] })` (`@cnmw/maplibre`) | Shared. |
-| "Edit shape" | `createEditTool(map, area)` (`@cnmw/maplibre`) | Shared. |
+| "Draw polygon" | `createDrawTool(map, { tools: ['polygon'] })` (`@cng/maplibre`) | Shared. |
+| "Edit shape" | `createEditTool(map, area)` (`@cng/maplibre`) | Shared. |
 
 **Polygon started here and moved upstream.** When this work began,
 `createDrawTool` declared `polygon` in its type but deliberately threw from
 `arm('polygon')`, on the grounds that a half-working draw tool is worse than
-none, and pointed hosts at terra-draw plus `@cnmw/upload-core`'s
+none, and pointed hosts at terra-draw plus `@cng/upload-core`'s
 `areaFromGeoJson` instead. That escape hatch costs roughly 262 KB of CDN
 dependency for what turned out to be about a hundred lines of click handling,
 so polygon was first written here as a local `PolygonDrawInteraction.js`
@@ -245,11 +245,11 @@ Output size is per format, from each format plugin's own `estimateBytes`
 (GeoJSON text of the same rows runs roughly three times a GeoParquet file),
 shown on the button that would produce it. "Why this estimate" expands into
 the pruning cascade stage by stage, with each stage's own basis sentence
-from `@cnmw/download-core`, plus the files, row groups, requests, output
+from `@cng/download-core`, plus the files, row groups, requests, output
 columns and whether the row cap bound.
 
 **Seven formats, two of which cost something to offer.** GeoJSON and
-GeoParquet are built into `@cnmw/download-core`. GeoPackage, FlatGeobuf,
+GeoParquet are built into `@cng/download-core`. GeoPackage, FlatGeobuf,
 Shapefile, CSV and Esri JSON are separate packages (E10) that register a
 *descriptor* — id, label, extension, media type, a synchronous
 `estimateBytes` and an `approxBytes` weight — through
@@ -333,7 +333,7 @@ Cancel, success and failure are three separate end states:
   to do; an unknown code still falls back to `CODE: message`.
 
 **The ceiling is a pause, not a failure, and `requestHandle.result` now says
-so by rejecting.** A download-core hardening pass (cn-geocoding, design doc
+so by rejecting.** A download-core hardening pass (cng-map-widgets, design doc
 §3.4's "blocked handles reject" amendment) changed `DownloadHandle.result`
 from a promise that waited forever while `blocked` to one that *rejects*
 with `CeilingExceededError` (`code: 'CEILING_EXCEEDED'`) the moment the
@@ -372,21 +372,21 @@ The widget's packages are not published to npm yet, so the branch consumes
 them from a sibling checkout:
 
 ```sh
-git clone <cn-geocoding> ../cn-geocoding   # beside this repo
+git clone <cng-map-widgets> ../cng-map-widgets   # beside this repo
 pnpm install && pnpm start
 ```
 
-`vite.config.js` aliases `@cnmw/*` to `../cn-geocoding/packages/*/src/index.js`
-and allows the dev server to serve from there. `SB_CNMW_ROOT` overrides the
+`vite.config.js` aliases `@cng/*` to `../cng-map-widgets/packages/*/src/index.js`
+and allows the dev server to serve from there. `SB_CNG_ROOT` overrides the
 location. **When the packages are published this becomes a version pin:** the
-alias block and `SB_CNMW_ROOT` are deleted, the four names move into
+alias block and `SB_CNG_ROOT` are deleted, the four names move into
 `package.json` dependencies with exact versions, and no import changes,
 because every import is already by package name. `vitest.config.js` carries
 the same alias and has to be kept in step until then.
 
 The place-name search needs a `cnmw-index/1.0` index. The default
 `indexUrl` in `widgets.config.js` points at a locally served copy of the
-provisional geoBoundaries index (49,530 rows, 2.5 MB) from cn-geocoding's
+provisional geoBoundaries index (49,530 rows, 2.5 MB) from cng-map-widgets's
 `examples/geocoder-demo/data/`. **It flips to the published
 `portolan-mirrors/geoboundaries-catalog` names index on Source Cooperative
 once that catalog is live**, and it is a widget prop, so a deployment can
@@ -428,7 +428,7 @@ MSW fixture cannot serve range requests over a 797 MB file.
 ## What is reusable and what is portolan glue
 
 Everything that understands areas, parquet, pruning, estimates and output
-formats lives in the `@cnmw` packages and is host-agnostic. This repo adds
+formats lives in the `@cng` packages and is host-agnostic. This repo adds
 about 3,500 lines, of which the widget itself is most:
 
 | File | Lines | Portolan-specific? |
@@ -459,9 +459,9 @@ lines inside one component, not a fork of the logic.
 
 ### Why the search box is the adapter's control
 
-Design §5.3 says to mount `@cnmw/maplibre`'s `GeocoderControl` on the map,
+Design §5.3 says to mount `@cng/maplibre`'s `GeocoderControl` on the map,
 and now that there is a map to mount it on, that is what happens. (The first
-cut drove `@cnmw/geocoder-core` from a `b-form-input` and a `b-list-group`
+cut drove `@cng/geocoder-core` from a `b-form-input` and a `b-list-group`
 instead, on the argument that a search box belongs in a panel's flow rather
 than floating over a 240px map. That argument died with the 240px map.)
 
@@ -497,11 +497,11 @@ The control's `document.addEventListener('click', …)` (for closing the
 listbox) is not removed by its `onRemove`. One listener per map instance,
 and `Catalog.vue` keys its root on `data.id` so navigating rebuilds the
 whole widget anyway — but it is a real leak and a one-line fix in
-`@cnmw/maplibre`.
+`@cng/maplibre`.
 
 ## The hyparquet version reconciliation
 
-This app pins **hyparquet 1.26.0**. The `@cnmw` packages pin **1.33.0**, as
+This app pins **hyparquet 1.26.0**. The `@cng` packages pin **1.33.0**, as
 exact CDN URLs they `import()` at runtime so they work with no bundler at all
 (design §4.2). Those specifiers are computed at runtime, so **no bundler can
 rewrite them**: left alone, a page would fetch a second hyparquet from
@@ -529,7 +529,7 @@ Three facts were measured rather than assumed, and are pinned by
   present. The spec writes a GeoParquet file and reads it back.
 
 `resolve.dedupe` lists the three packages as a second line of defence, so an
-import originating inside the aliased cn-geocoding tree still resolves here.
+import originating inside the aliased cng-map-widgets tree still resolves here.
 
 The one thing to re-check when this app's hyparquet moves: run
 `tests/unit/downloadHyparquet.spec.js`, and bump the override.
@@ -552,9 +552,9 @@ the code:
 
 **Wrong, and worth correcting in the design document.**
 
-- **There is no `@cnmw/stac` package.** §5.3 and §5.4 both assume a
+- **There is no `@cng/stac` package.** §5.3 and §5.4 both assume a
   `stacToDescriptor` from one. The §2.4 derivation lives in
-  `@cnmw/download-core`'s `dataset-resolve.js` and was not exported. E7 added
+  `@cng/download-core`'s `dataset-resolve.js` and was not exported. E7 added
   `descriptorFromCollection` and `collectionDownloadSupport` there rather
   than reimplementing the mapping in this app — reimplementing it is exactly
   what §5.4 says keeps a stac-browser port a small diff.
@@ -586,7 +586,7 @@ the code:
   interface, so `CodeBox.vue` renders them unchanged. That reuse is the part
   §5.3 got right.
 
-**One real bug found in the §2.4 derivation**, fixed in cn-geocoding: a
+**One real bug found in the §2.4 derivation**, fixed in cng-map-widgets: a
 collection whose only `data`-role asset was a COG or PMTiles file came back as
 `{ kind: 'parquet' }` with the raster's href, because of an unconditional
 "first data asset" fallback. Design call #8's graceful refusal became a parquet
@@ -629,7 +629,7 @@ before the next:
 - *Not a schema or geo-metadata wrinkle.* The per-zone files read fine in
   DuckDB, and the estimate never got far enough to parse one.
 
-**The actual root cause**, in `@cnmw/download-core`'s
+**The actual root cause**, in `@cng/download-core`'s
 `src/partitions.js`: `partFromMirrorRow` read each mirror row's
 `assets.data.href` **verbatim and never resolved it against a base URL**.
 FTW's mirror stores relative hrefs — `./utm01.parquet` for an item whose
@@ -670,7 +670,7 @@ works on this collection too.
   `data.source.coop`, 31 of them under a `zone=NN/` path, and **none**
   resolved against the app's own origin.
 
-The fix is in `@cnmw/download-core`, not this app: it is a bug for every host
+The fix is in `@cng/download-core`, not this app: it is a bug for every host
 that reads a Portolan partitioned collection whose mirror uses relative
 hrefs, and nothing about it is portolan-browser-specific.
 
@@ -693,7 +693,7 @@ port is:
    to render rather than failing.
 3. **Swap `BboxDrawInteraction`** for whatever upstream has, or carry the
    class: it is ~160 dependency-free lines, including the armed mode.
-   cn-geocoding's `@cnmw/openlayers` adapter may be the better answer for an
+   cng-map-widgets's `@cng/openlayers` adapter may be the better answer for an
    OpenLayers host.
 4. **Expect poorer metadata.** Upstream catalogs rarely carry `partition:*`,
    `table:*` or a GeoParquet 1.1 covering. The derivation already falls back
@@ -702,24 +702,24 @@ port is:
    widget should say so rather than appear to offer the same thing.
 5. **Drop nothing else.** No Portolan styles or render-order code is involved.
 
-## What this branch needs from cn-geocoding
+## What this branch needs from cng-map-widgets
 
-The widget depends on four additions to the `@cnmw` packages, made while
+The widget depends on four additions to the `@cng` packages, made while
 building it and committed there as `E7: host seams for a bundler, and the
 §2.4 derivation on an in-memory collection`. They are additive — every
 existing test in that repo still passes (237) — but this branch does not
-build without them, so a reviewer needs a cn-geocoding checkout that
+build without them, so a reviewer needs a cng-map-widgets checkout that
 includes that commit.
 
-1. `@cnmw/download-core` exports `descriptorFromCollection` and
+1. `@cng/download-core` exports `descriptorFromCollection` and
    `collectionDownloadSupport`: the §2.4 derivation run against a collection
    JSON already in memory, and its non-throwing form. The design assumed a
-   `@cnmw/stac` package for this; the mapping has always lived in
+   `@cng/stac` package for this; the mapping has always lived in
    download-core.
-2. `@cnmw/download-core` exports `setHyparquetModules` / `loadHyparquet` /
+2. `@cng/download-core` exports `setHyparquetModules` / `loadHyparquet` /
    `loadHyparquetWriter`, and its injection seam is documented as a host
    path rather than test-only.
-3. `@cnmw/geocoder-core` gains the same seam. It had two private copies of
+3. `@cng/geocoder-core` gains the same seam. It had two private copies of
    the CDN loader, in `index-loader.js` and `geometry-resolver.js`; both now
    use one in `cdn.js`.
 4. Asset hrefs are resolved against the collection's own URL during
@@ -735,8 +735,8 @@ Since then the card has also come to depend on **E10's lazy format
 registry** — `registerLazyFormat`, `resolveFormat`, `getFormat`,
 `formatLoadState`, the `loading-format` progress event and the
 `FORMAT_LOAD_FAILED` code — and on four new packages:
-`@cnmw/format-gpkg`, `@cnmw/format-flatgeobuf`, `@cnmw/format-shapefile`
-and `@cnmw/format-extras`. They are in the same sibling checkout and are
+`@cng/format-gpkg`, `@cng/format-flatgeobuf`, `@cng/format-shapefile`
+and `@cng/format-extras`. They are in the same sibling checkout and are
 aliased the same way; a checkout without them fails to build the widget's
 chunk, which is why the alias list in `vite.config.js` and
 `vitest.config.js` names all nine packages.
@@ -815,7 +815,7 @@ chunk, which is why the alias list in `vite.config.js` and
   `fileSystemSink.close()` was a no-op, the `FileSystemWritableFileStream`
   was never closed, and the browser discarded the `.crswap` file holding
   every byte. Users got a 0-byte file under a card that said
-  "Saved … 7.3 MB". Fixed in `@cnmw/download-core`'s `sinks.js` and held by
+  "Saved … 7.3 MB". Fixed in `@cng/download-core`'s `sinks.js` and held by
   `packages/download-core/test/browser/filesystem-sink.verify.mjs` over
   there, which drives the real `download()` into a real OPFS writable —
   same commit semantics, no dialog. If this widget grows picker-path

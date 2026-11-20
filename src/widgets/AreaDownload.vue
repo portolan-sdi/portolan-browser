@@ -63,7 +63,7 @@
               </button>
             </div>
             <div class="ad-tools-row">
-              <!-- @cnmw/maplibre's GeocoderControl lands here; see mountSearch(). -->
+              <!-- @cng/maplibre's GeocoderControl lands here; see mountSearch(). -->
               <div ref="search" class="ad-search" />
               <button
                 type="button"
@@ -456,7 +456,7 @@
                 after: line.after,
                 unit: $t(`widgets.areaDownload.prune.${line.unit}`)
               }) }}
-              <!-- The basis sentence comes from @cnmw/download-core, which
+              <!-- The basis sentence comes from @cng/download-core, which
                    has no i18n of its own: shown verbatim as the technical
                    footnote it is, rather than paraphrased into something
                    that could drift from what the code did. -->
@@ -496,10 +496,10 @@
 <script>
 import { defineComponent, markRaw } from 'vue';
 import { mapState } from 'vuex';
-import { estimate, blobSink, fileSystemSink, downloadRequest, onFormatState } from '@cnmw/download-core';
-import { Geocoder } from '@cnmw/geocoder-core';
-import { areaFromFile, attachDropTarget } from '@cnmw/upload-core';
-// Both of these are @cnmw/maplibre's, reused as-is rather than
+import { estimate, blobSink, fileSystemSink, downloadRequest, onFormatState } from '@cng/download-core';
+import { Geocoder } from '@cng/geocoder-core';
+import { areaFromFile, attachDropTarget } from '@cng/upload-core';
+// Both of these are @cng/maplibre's, reused as-is rather than
 // reimplemented here:
 //
 //   * `createDrawTool` in `polygon` mode is the "Draw polygon" button. It
@@ -512,8 +512,8 @@ import { areaFromFile, attachDropTarget } from '@cnmw/upload-core';
 //     the handles, the drag/insert/delete gestures and the
 //     `provenance.source: 'edited'` lineage; this widget only decides when
 //     it is on and what to do with the Areas it emits.
-import { addAreaLayer, GeocoderControl, createDrawTool, createEditTool } from '@cnmw/maplibre';
-import { toAreaDocument, buildArea, VERSION } from '@cnmw/spec';
+import { addAreaLayer, GeocoderControl, createDrawTool, createEditTool } from '@cng/maplibre';
+import { toAreaDocument, buildArea, VERSION } from '@cng/spec';
 import BboxDrawInteraction from '../components/maps/BboxDrawInteraction.js';
 import { MAP_HOST } from '../components/maps/mapHost.js';
 import CodeBox from '../components/CodeBox.vue';
@@ -542,7 +542,7 @@ import { downloadGenerators } from '../../codeGenerators.config.js';
 
 // Every estimate warning the packages raise, in words. Three of them carry
 // numbers only and have always needed the widget to supply the sentence;
-// the other four carry an English `message` from @cnmw/download-core, which
+// the other four carry an English `message` from @cng/download-core, which
 // is still said here instead, because a licence obligation and a "nothing
 // could be pruned" explanation are both things a translated UI should say
 // in its own language. Anything not listed falls back to its `message`.
@@ -556,7 +556,7 @@ const WARNING_KEYS = {
   'no-statistics': 'widgets.areaDownload.warnings.noStatistics'
 };
 
-// The formats on offer come from `@cnmw/download-core`'s registry, each
+// The formats on offer come from `@cng/download-core`'s registry, each
 // with its own bytes-per-row model -- so the size beside a button is that
 // format's own estimate and not one number for all of them (GeoJSON text
 // of the same rows runs roughly three times a GeoParquet file). GeoJSON
@@ -614,7 +614,7 @@ const NARROW_MAP = '(max-width: 575.98px)';
 // map, which it gets from the injected map host -- see
 // src/components/maps/mapHost.js and docs/widgets.md.
 //
-// That is why the area picker here is @cnmw/maplibre's GeocoderControl and
+// That is why the area picker here is @cng/maplibre's GeocoderControl and
 // not a bootstrap-vue-next form: the adapter's controls were written to be
 // mounted on a map, and now there is a map to mount them on. The user sees
 // the area they picked outlined over the actual data, which is the whole
@@ -635,7 +635,7 @@ export default defineComponent({
       type: String,
       default: 'https://data.source.coop/portolan-mirrors/geoboundaries-catalog/names/index.json'
     },
-    // Attribute filters applied to every request, as @cnmw Predicates.
+    // Attribute filters applied to every request, as @cng Predicates.
     where: {
       type: Array,
       default: () => []
@@ -955,7 +955,7 @@ export default defineComponent({
     // under WebDriver exercises the picker path, and a commit bug in that
     // sink once shipped past this whole suite (0-byte files under a card
     // reporting 7.3 MB; see .github/DOWNLOAD_WIDGET_NOTES.md). The
-    // regression test for it lives in @cnmw/download-core, driving a real
+    // regression test for it lives in @cng/download-core, driving a real
     // OPFS writable, because that is the layer that can be tested headless.
     usePicker() {
       if (this.directSave === 'anchor' || typeof window.showSaveFilePicker !== 'function') {
@@ -1137,7 +1137,7 @@ export default defineComponent({
         id: 'area-download-draw',
         names: { drawn: this.$t('widgets.areaDownload.area.drawnName') }
       }));
-      // `on('area')` hands back a finished Area built by @cnmw/spec, so
+      // `on('area')` hands back a finished Area built by @cng/spec, so
       // unlike the box tool there is no extent to turn into one here.
       this.polygonDraw.on('area', ({ area }) => {
         this.polygonArmed = false;
@@ -1167,7 +1167,7 @@ export default defineComponent({
         this.startEditing();
       }
     },
-    // @cnmw/maplibre's GeocoderControl, built as a MapLibre IControl: it
+    // @cng/maplibre's GeocoderControl, built as a MapLibre IControl: it
     // takes the real map, reads the real viewport to bias ranking, and
     // brings its own combobox a11y. Its element goes into this widget's
     // cluster rather than a MapLibre corner container (which is all
@@ -1583,7 +1583,7 @@ export default defineComponent({
     buildFilter() {
       const time = this.timeEnabled && !this.timeInverted ? toTimeFilter(this.timeWindow) : null;
       return {
-        spec: 'cnmw-filter/1.0',
+        spec: 'cng-filter/1.0',
         spatial: { mode: this.area ? 'intersects' : 'bbox' },
         // The prop's predicates are the deployment's; the card's are the
         // user's. Both apply, ANDed, which is what `FilterSpec.where` is.
@@ -1620,7 +1620,7 @@ export default defineComponent({
     stageKey(stage) {
       return String(stage).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
     },
-    // The cascade's stage names come from @cnmw/download-core, which is
+    // The cascade's stage names come from @cng/download-core, which is
     // free to grow one. A stage this app has no sentence for is shown by
     // its own name rather than as a missing-key path.
     stageLabel(stage) {
@@ -1664,7 +1664,7 @@ export default defineComponent({
     updateRequest(format) {
       const filter = this.buildFilter();
       this.request = markRaw({
-        spec: 'cnmw-request/1.0',
+        spec: 'cng-request/1.0',
         dataset: this.descriptor,
         filter: this.area ? { ...filter, area: toAreaDocument(this.area) } : filter,
         output: this.outputFor(format),
@@ -1684,7 +1684,7 @@ export default defineComponent({
       const base = (this.descriptor?.id || 'download').replace(/[^\w.-]+/g, '-');
       const entry = this.formatEntry(format);
       return {
-        spec: 'cnmw-output/1.0',
+        spec: 'cng-output/1.0',
         format,
         filename: `${base}.${entry?.extension || format}`
       };
@@ -1975,7 +1975,7 @@ export default defineComponent({
     // is a stack trace with a colon in it, not an explanation.
     // A warning in words. The ones that carry only numbers get their
     // sentence from the locale; the ones a format plugin raises carry
-    // their own English `message` (there is no i18n inside the @cnmw
+    // their own English `message` (there is no i18n inside the @cng
     // packages), which is better than printing a code.
     warningText(warning) {
       const key = WARNING_KEYS[warning.code];

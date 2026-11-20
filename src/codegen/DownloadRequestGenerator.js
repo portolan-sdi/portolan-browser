@@ -1,5 +1,5 @@
 // Emit the serialized `DownloadRequest` for what the download widget is
-// about to do (the @cnmw design doc's §2.3 wire format).
+// about to do (the @cng design doc's §2.3 wire format).
 //
 // WHY THIS DOES NOT EXTEND CodeGenerator
 //
@@ -45,7 +45,7 @@ export default class DownloadRequestGenerator {
   }
 
   /**
-   * @param {object} request a `cnmw-request/1.0` DownloadRequest
+   * @param {object} request a `cng-request/1.0` DownloadRequest
    * @returns {string}
    */
   generate(request) {
