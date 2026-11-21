@@ -6,8 +6,14 @@ import en from '../../src/locales/en/texts.json'
 import {
   loadParquetMetadata, loadParquetRows, readMirrorRowTotal, resolveParquetGlob,
 } from '../../src/utils/parquet'
+import { isPartitionPlaceholder } from '../../src/utils/parquetGlob.js'
 
-vi.mock('../../src/utils/parquet', () => ({
+// The placeholder factory comes from the real module: its shape is the
+// contract between the viewer and the resolver, and a hand-written stub here
+// would let the two drift apart.
+vi.mock('../../src/utils/parquet', async () => ({
+  createPartitionPlaceholder: (await vi.importActual('../../src/utils/parquetGlob.js'))
+    .createPartitionPlaceholder,
   findParquetAssets: assets => assets,
   loadParquetMetadata: vi.fn(),
   loadParquetRows: vi.fn(),
@@ -284,6 +290,137 @@ describe('ParquetViewer glob resolution', () => {
     await wrapper.setData({ selectedAssetKey: 'cells' })
     await flushPromises()
     expect(wrapper.find('.parquet-partition-note').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+// A Portolan v0.3 partitioned collection declares `partition:glob` and may
+// publish no concrete parquet data asset, because the spec forbids a wildcard
+// href. The viewer then offers one synthetic entry for the partitioned data.
+const partitionedCollection = ({ glob = 's3://ftw/at/year=*/*.parquet', fileCount = 54 } = {}) => ({
+  getMetadata: field => ({
+    'partition:glob': glob,
+    'partition:file_count': fileCount,
+    'storage:schemes': {},
+  })[field],
+  getAssets: () => [],
+  getStacLinksWithRel: () => [],
+})
+
+const mirrorAsset = context => ({
+  getKey: () => 'items',
+  title: 'Item mirror',
+  getAbsoluteUrl: () => 'https://data.test/ftw/at/items.parquet',
+  hasRole: role => role === 'collection-mirror',
+  getContext: () => context,
+})
+
+const dataAsset = context => ({
+  getKey: () => 'data',
+  title: 'All data',
+  getAbsoluteUrl: () => 'https://data.test/ftw/at/all.parquet',
+  hasRole: role => role === 'data',
+  getContext: () => context,
+})
+
+describe('ParquetViewer partitioned collection without a concrete asset', () => {
+  it('offers a partitioned entry and previews it by default', async () => {
+    resolveParquetGlob.mockResolvedValue({
+      url: PARTITION_HREF, partition: partitionOf({ title: 'part-0.parquet' }),
+    })
+    tableLoads()
+    const wrapper = viewer([mirrorAsset(partitionedCollection())])
+    await flushPromises()
+    expect(wrapper.vm.parquetAssets).toHaveLength(2)
+    expect(wrapper.findAll('option').map(option => option.text()))
+      .toContain('Partitioned data (54 files)')
+    expect(wrapper.vm.selectedAssetTitle).toBe('Partitioned data (54 files)')
+    expect(isPartitionPlaceholder(resolveParquetGlob.mock.calls[0][0])).toBe(true)
+    expect(loadParquetMetadata).toHaveBeenCalledWith(PARTITION_HREF)
+    expect(wrapper.find('.parquet-partition-note').text())
+      .toBe('Preview of the first of 54 partitions: part-0.parquet.')
+    wrapper.unmount()
+  })
+
+  it('names the entry without a count when the collection declares none', async () => {
+    resolveParquetGlob.mockResolvedValue({ url: PARTITION_HREF, partition: partitionOf() })
+    tableLoads()
+    const wrapper = viewer([mirrorAsset(partitionedCollection({ fileCount: null }))])
+    await flushPromises()
+    expect(wrapper.vm.selectedAssetTitle).toBe('Partitioned data')
+    wrapper.unmount()
+  })
+
+  it('offers no partitioned entry when the collection has a concrete data asset', async () => {
+    resolveParquetGlob.mockResolvedValue({
+      url: 'https://data.test/ftw/at/all.parquet', partition: null,
+    })
+    tableLoads()
+    const wrapper = viewer([dataAsset(partitionedCollection())])
+    await flushPromises()
+    expect(wrapper.vm.parquetAssets).toHaveLength(1)
+    expect(wrapper.vm.selectedAssetTitle).toBe('All data')
+    expect(isPartitionPlaceholder(resolveParquetGlob.mock.calls[0][0])).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('offers no partitioned entry when the collection declares no glob', async () => {
+    resolveParquetGlob.mockResolvedValue({
+      url: 'https://data.test/ftw/at/items.parquet', partition: null,
+    })
+    tableLoads()
+    const wrapper = viewer([mirrorAsset(partitionedCollection({ glob: null }))])
+    await flushPromises()
+    expect(wrapper.vm.parquetAssets).toHaveLength(1)
+    expect(wrapper.vm.selectedAssetTitle).toBe('Item mirror')
+    wrapper.unmount()
+  })
+
+  it('falls back to a readable asset when the expansion fails', async () => {
+    const error = new Error('Listing matched no files for the partition glob')
+    error.code = 'globUnresolved'
+    resolveParquetGlob.mockImplementation(asset => isPartitionPlaceholder(asset)
+      ? Promise.reject(error)
+      : Promise.resolve({ url: asset.getAbsoluteUrl(), partition: null }))
+    tableLoads()
+    const wrapper = viewer([mirrorAsset(partitionedCollection())])
+    await flushPromises()
+    expect(wrapper.vm.selectedAssetKey).toBe('items')
+    expect(loadParquetMetadata).toHaveBeenCalledWith('https://data.test/ftw/at/items.parquet')
+    wrapper.unmount()
+  })
+
+  it('falls back to a wildcard href, which the items of the collection expand', async () => {
+    // A v0.2 collection declares both `partition:glob` and a wildcard data
+    // asset. A listing the browser cannot reach must not cost the reader the
+    // item path, which the resolver still walks for that asset.
+    const error = new Error('Listing matched no files for the partition glob')
+    error.code = 'globUnresolved'
+    resolveParquetGlob.mockImplementation(asset => isPartitionPlaceholder(asset)
+      ? Promise.reject(error)
+      : Promise.resolve({ url: PARTITION_HREF, partition: partitionOf() }))
+    tableLoads()
+    const wildcard = { ...globAsset, getContext: () => partitionedCollection() }
+    const wrapper = viewer([wildcard])
+    await flushPromises()
+    expect(wrapper.vm.selectedAssetKey).toBe('data')
+    expect(wrapper.find('.parquet-error').exists()).toBe(false)
+    expect(loadParquetMetadata).toHaveBeenCalledWith(PARTITION_HREF)
+    wrapper.unmount()
+  })
+
+  it('reports the expansion failure when the reader picked the entry themselves', async () => {
+    const error = new Error('Listing matched no files for the partition glob')
+    error.code = 'globUnresolved'
+    resolveParquetGlob.mockImplementation(asset => isPartitionPlaceholder(asset)
+      ? Promise.reject(error)
+      : Promise.resolve({ url: asset.getAbsoluteUrl(), partition: null }))
+    tableLoads()
+    const wrapper = viewer([mirrorAsset(partitionedCollection())])
+    await flushPromises()
+    await wrapper.setData({ selectedAssetKey: 'partition:glob' })
+    await flushPromises()
+    expect(wrapper.find('.parquet-error').text()).toContain('a pattern over many files')
     wrapper.unmount()
   })
 })

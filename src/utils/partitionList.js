@@ -10,7 +10,7 @@
 // path that must not pull hyparquet or any other heavy dependency into the
 // bundle. Only constants from parquetShared.js come in.
 
-import { WILDCARD } from './parquetShared.js';
+import { GLOB_UNRESOLVED, WILDCARD } from './parquetShared.js';
 
 // Cap on the files one glob may expand to. A listing walks every page of the
 // prefix, so an unbounded pattern over a large bucket would spend many
@@ -23,12 +23,6 @@ export const MAX_PARTITION_KEYS = 1000;
 // walk: a prefix that holds a million objects none of which the pattern
 // matches would page forever.
 const MAX_LIST_REQUESTS = 20;
-
-// Shares the rejection code of utils/parquetGlob.js, whose GLOB_UNRESOLVED has
-// the same meaning: the pattern names files this client cannot reach. The
-// caller turns the code into its own message, because this module does no
-// localization.
-const GLOB_UNRESOLVED = 'globUnresolved';
 
 function unresolved(message) {
   const error = new Error(message);
@@ -45,8 +39,8 @@ function unresolved(message) {
  * spellings of the wildcard are accepted, because a percent-encoded href
  * reaches a caller as `%2A` (see parquetShared.WILDCARD).
  *
- * The semantics match the private globToRegExp of utils/parquetGlob.js, which
- * resolves an asset href against a collection's items rather than a bucket.
+ * utils/parquetGlob.js matches an asset href against a collection's items
+ * with this same matcher, so a pattern means one thing in both paths.
  */
 export function globToRegExp(pattern) {
   const body = pattern

@@ -55,6 +55,7 @@ import { BCollapse, BBadge } from 'bootstrap-vue-next';
 import BIconChevronDown from '~icons/bi/chevron-down';
 import BIconChevronRight from '~icons/bi/chevron-right';
 import {
+  createPartitionPlaceholder,
   findParquetAssets,
   loadParquetMetadata,
   loadParquetRows,
@@ -65,6 +66,22 @@ import {
   readMirrorRowTotal,
   resolveParquetGlob,
 } from '../utils/parquet';
+import { readPartitionMetadata } from '../utils/partitionList';
+
+// The asset that makes a partitioned collection's data readable as one file,
+// and so settles whether the collection needs the synthetic entry below. The
+// role is read both ways, because a plain STAC asset object carries `roles`
+// while a stac-js Asset answers hasRole.
+function hasDataRole(asset) {
+  if (typeof asset.hasRole === 'function') {
+    return asset.hasRole('data');
+  }
+  return Array.isArray(asset.roles) && asset.roles.includes('data');
+}
+
+function isConcreteDataAsset(asset) {
+  return isLoadableParquetAsset(asset) && hasDataRole(asset);
+}
 
 export default {
   name: 'ParquetViewer',
@@ -103,8 +120,34 @@ export default {
     };
   },
   computed: {
+    // The STAC object the assets belong to. A partitioned collection declares
+    // `partition:glob` once and stac-js hands every one of its assets the same
+    // context, so the first asset that knows its context answers for all.
+    partitionContext() {
+      return this.assets.map(asset => asset.getContext?.()).find(Boolean) || null;
+    },
+    // Portolan v0.3 forbids a wildcard href, so a partitioned collection may
+    // publish no parquet data asset: `partition:glob` is the only statement of
+    // where the data lives. One synthetic entry gives the reader something to
+    // select, and the resolver expands the glob when they do. A concrete data
+    // asset keeps winning, and a collection that has one lists nothing extra.
+    partitionPlaceholder() {
+      const metadata = readPartitionMetadata(this.partitionContext);
+      if (!metadata || this.assets.some(isConcreteDataAsset)) {
+        return null;
+      }
+      const count = Number(metadata.fileCount) || 0;
+      return createPartitionPlaceholder(this.partitionContext, {
+        title: this.$t('parquet.partitionedData', {
+          count: count.toLocaleString(this.$i18n.locale)
+        }, count),
+      });
+    },
     parquetAssets() {
-      return findParquetAssets(this.assets);
+      const assets = findParquetAssets(this.assets);
+      // First, so the default selection previews the collection's data rather
+      // than a side asset such as its item mirror.
+      return this.partitionPlaceholder ? [this.partitionPlaceholder, ...assets] : assets;
     },
     selectedAsset() {
       if (!this.selectedAssetKey) {return this.parquetAssets[0] || null;}
@@ -218,11 +261,18 @@ export default {
         if (loadId !== this.loadId) {return;}
         console.error('ParquetViewer: failed to load', err);
         if (err.code === GLOB_UNRESOLVED) {
-          // The default pick fell on a glob that no item expands. Show the
-          // first loadable asset instead; an error about the glob belongs to
-          // the user's own pick, not to a pick they never made.
-          const fallback = !this.selectedAssetKey
-            && this.parquetAssets.find(a => isLoadableParquetAsset(a));
+          // The default pick fell on a glob that no item expands. Show
+          // another asset instead; an error about the glob belongs to the
+          // user's own pick, not to a pick they never made. Over the real
+          // assets, so the synthetic partition entry is never the fallback
+          // for its own failed expansion. When that entry was the pick, any
+          // parquet asset will do, including a v0.2 wildcard href the
+          // resolver expands through the collection's items; when a wildcard
+          // href was the pick, only an asset that names one file can help.
+          const assets = findParquetAssets(this.assets);
+          const fallback = !this.selectedAssetKey && (this.partitionPlaceholder
+            ? assets[0]
+            : assets.find(a => isLoadableParquetAsset(a)));
           if (fallback) {
             this.selectedAssetKey = fallback.getKey();
             return;
