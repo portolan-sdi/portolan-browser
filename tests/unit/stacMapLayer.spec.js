@@ -1298,6 +1298,41 @@ describe('StacMapLayer', () => {
       expect(notices).toEqual([null, { format: 'geoparquet', reason: 'error' }])
     })
 
+    // Portolan v0.3 (PORTO-CORE-023): a catalog may list the s3:// store as
+    // the asset's href and the browser-readable URL as an alternate. The
+    // alternate is what the map downloads.
+    it('renders an s3 parquet asset through its https alternate', async () => {
+      const calls = injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
+      await layer.setAssets([parquetAsset({
+        href: 's3://example-bucket/data.parquet',
+        getAbsoluteUrl: () => 's3://example-bucket/data.parquet',
+        alternate: { https: { href: 'https://example.com/data.parquet' } },
+      })])
+
+      expect([...calls]).toEqual(['https://example.com/data.parquet'])
+      expect(map.sources.has('stac-parquet-0')).toBe(true)
+      expect(notices).toEqual([null])
+    })
+
+    it('refuses an s3 parquet asset that offers no http(s) alternate', async () => {
+      const calls = injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        await layer.setAssets([parquetAsset({
+          href: 's3://example-bucket/data.parquet',
+          getAbsoluteUrl: () => 's3://example-bucket/data.parquet',
+          alternate: { s3: { href: 's3://example-bucket/data.parquet' } },
+        })])
+      } finally {
+        warn.mockRestore()
+      }
+
+      expect(calls).toHaveLength(0)
+      expect(calls.depsLoads.count).toBe(0)
+      expect(map.sources.has('stac-parquet-0')).toBe(false)
+      expect(notices).toEqual([null, { format: 'geoparquet', reason: 'error' }])
+    })
+
     it('never touches parquet when a tile asset is present', async () => {
       const calls = injectParquetDeps(layer, () => ({ exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }))
       await layer.setAssets([xyzVectorAsset(), parquetAsset()])

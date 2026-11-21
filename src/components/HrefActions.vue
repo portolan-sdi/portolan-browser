@@ -51,6 +51,7 @@ import { Asset } from 'stac-js';
 import { browserProtocols } from 'stac-js/src/http';
 import { svgMediaType, zarrMediaTypes } from 'stac-js/src/mediatypes';
 import { isMapRenderableAsset } from '../utils/mapAssets.js';
+import { fetchableAssetHref } from '../utils/fetchableHref.js';
 
 const disableDownloadTypes = [...zarrMediaTypes];
 
@@ -175,7 +176,7 @@ export default {
     downloadProps() {
       if (this.canDownload && !this.useAltDownloadMethod) {
         const props = {
-          href: this.href,
+          href: this.fetchableHref,
           target: '_blank',
         };
         if (!this.browserCanOpenFile) {
@@ -198,9 +199,14 @@ export default {
       return false;
     },
     protocol() {
-      if (typeof this.href === 'string') {
-        if (this.href) {
-          let match = this.href.match(/^(\w+):\/\//);
+      // The scheme that decides what the buttons can do is the one of the URL
+      // they would act on. For an `s3://` asset with an https alternate that
+      // is the alternate; for one without, it stays the asset's own href, so
+      // the button still names the source it cannot read from.
+      const url = this.fetchableHref || this.href;
+      if (typeof url === 'string') {
+        if (url) {
+          let match = url.match(/^(\w+):\/\//);
           if (match) {
             return match[1].toLowerCase();
           }
@@ -219,11 +225,23 @@ export default {
         return this.data.rel === 'preview' && this.data.canBrowserDisplayImage();
       }
     },
+    // The href as the catalog states it: what the page displays and what the
+    // copy button copies, whatever scheme it uses.
     href() {
       if (typeof this.data.href !== 'string') {
         return null;
       }
       return this.getRequestUrl(this.data.getAbsoluteUrl());
+    },
+    // The href the browser can actually fetch: the asset's own when it is
+    // http(s), otherwise its https alternate (Portolan v0.3), otherwise null.
+    // Everything that downloads, opens or renders the asset uses this one.
+    fetchableHref() {
+      if (typeof this.data.href !== 'string') {
+        return null;
+      }
+      const url = fetchableAssetHref(this.data);
+      return url === null ? null : this.getRequestUrl(url);
     },
     from() {
       return this.protocolName(this.protocol);
@@ -285,7 +303,7 @@ export default {
   methods: {
     async altDownload() {
       if (!window.isSecureContext) {
-        window.location.href = this.href;
+        window.location.href = this.fetchableHref;
         return;
       }
 
@@ -323,9 +341,10 @@ export default {
     },
     show() {
       // Clone the asset to change the href. The MapLibre map adds no credentials,
-      // so this.href carries the auth query parameters from getRequestUrl.
+      // so fetchableHref carries the auth query parameters from getRequestUrl —
+      // and resolves an `s3://` asset to the alternate the map can read.
       const data = new Asset(this.data);
-      data.href = this.href;
+      data.href = this.fetchableHref;
       this.$emit('show', data);
     },
     handleAuthButton() {

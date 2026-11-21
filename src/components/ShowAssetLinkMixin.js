@@ -4,6 +4,7 @@ import { stacBrowserSpecialHandling } from "../rels";
 import { orderedRenderLayers } from '../utils/renderOrder.js';
 import { resolveRenders } from '../utils/renders.js';
 import { isHttpZarrHref, isZarrAsset } from '../utils/zarrSource.js';
+import { fetchableAssetHref } from '../utils/fetchableHref.js';
 
 const COG_MIME_TYPES = [
   'image/tiff',
@@ -141,8 +142,12 @@ export default {
         // would say "show only this asset" about an asset that draws nothing,
         // which would take the item's other layers — its children, its vector
         // tiles, its GeoParquet — off the map with it.
-        const zarrAssets = assets.filter(asset => isZarrAsset(asset)
-          && isHttpZarrHref(asset.getAbsoluteUrl?.() || asset.href || ''));
+        // A store whose href is `s3://` still counts when the asset names a
+        // readable URL in its `alternate`: the map opens the store there.
+        const zarrAssets = assets.filter(asset => {
+          const url = fetchableAssetHref(asset);
+          return isZarrAsset(asset) && url !== null && isHttpZarrHref(url);
+        });
         if (zarrAssets.length === 0) {return;}
         this.selectedAssets = zarrAssets;
         this.hasAutoSelected = true;

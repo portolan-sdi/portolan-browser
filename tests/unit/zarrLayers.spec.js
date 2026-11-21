@@ -515,6 +515,47 @@ describe('makeZarrLayerProps', () => {
     warn.mockRestore()
   })
 
+  it('opens an s3-primary store at its https alternate', async () => {
+    // Portolan v0.3 (PORTO-CORE-023): the asset's own href names the s3://
+    // store and an alternate names the https one. The reader is handed the
+    // https URL, which is the only one it can fetch. The Icechunk reader is
+    // tried first for an Icechunk asset, so it records the URL the store is
+    // opened at before falling through to the plain reader.
+    fake.nodes = goesNodes()
+    const opened = []
+    const descriptor = {
+      kind: 'zarr',
+      id: 'zarr:icechunk:Power',
+      asset: {
+        key: 'icechunk',
+        getKey: () => 'icechunk',
+        type: 'application/x-icechunk',
+        href: 's3://example-bucket/fire.icechunk',
+        getAbsoluteUrl: () => 's3://example-bucket/fire.icechunk',
+        alternate: { https: { href: url } },
+      },
+      variable: { name: 'Power' },
+      title: 'Fire Radiative Power',
+      render: {},
+    }
+    await makeZarrLayerProps(descriptor, {
+      zarr: fakeZarr,
+      bbox,
+      deps: {
+        parseGeoZarrMetadata: attrs => parse(attrs),
+        icechunk: {
+          IcechunkStore: {
+            open: async (target) => {
+              opened.push(target)
+              throw new Error('not a repository')
+            },
+          },
+        },
+      },
+    })
+    expect(opened).toEqual([url])
+  })
+
   describe('what the variable is coloured with', () => {
     it('stretches the ramp to the declared statistics of a variable that also has a no-data value', async () => {
       // The GOES case. Both are declared, and the no-data value alone used to

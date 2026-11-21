@@ -26,6 +26,7 @@ import {
   unsupportedCodecs, unusableCrs, withMultiscalesLayout, zarrZoomGuard,
 } from './zarrSource.js';
 import { assetBands, makeZarrRenderTileLoader, withAssetEmptiness } from './renders.js';
+import { fetchableAssetHref } from './fetchableHref.js';
 
 /** Notice reasons the map surfaces for a Zarr asset it will not draw. */
 export const ZARR_NOTICE_CHUNK_SHAPE = 'zarr-chunk-shape';
@@ -616,7 +617,11 @@ function openLevelArray(zarr, group, path) {
  */
 export async function makeZarrLayerProps(descriptor, { zarr, bbox, deps = null }) {
   const { asset, variable, render } = descriptor;
-  const url = asset.getAbsoluteUrl?.() || asset.href;
+  // The store opens at the URL the browser can fetch: the asset's own href, or
+  // the https alternate of an `s3://` one (Portolan v0.3). A store with
+  // neither is not listed (see StacMapLayer._collectZarrAssets), so the
+  // fallback only keeps the error message below honest.
+  const url = fetchableAssetHref(asset) || asset.getAbsoluteUrl?.() || asset.href;
   const root = await orZarrError(
     `Could not open the Zarr store at ${url}`,
     () => openZarrRoot(url, { icechunk: isIcechunkAsset(asset), deps }),
