@@ -1,5 +1,15 @@
-import { describe, it, expect } from 'vitest'
-import { isLoadableParquetAsset, isParquetAsset, findParquetAssets, parseWkbType, bboxFromWkb } from '../../src/utils/parquet.js'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { afterEach, beforeAll, beforeEach, describe, it, expect, vi } from 'vitest'
+import {
+  isLoadableParquetAsset,
+  isParquetAsset,
+  findParquetAssets,
+  parseWkbType,
+  bboxFromWkb,
+  loadParquetMetadata,
+  loadGeoJsonFromParquet,
+} from '../../src/utils/parquet.js'
 
 describe('parquet utilities', () => {
   describe('isParquetAsset', () => {
@@ -226,5 +236,64 @@ describe('parquet utilities', () => {
       const bbox = bboxFromWkb(new Uint8Array(buffer))
       expect(bbox).toEqual([0, 0, 10, 10])
     })
+  })
+})
+
+// Exercises the real hyparquet reader over a committed fixture whose geometry
+// column uses the native Parquet GEOMETRY logical type instead of a
+// GeoParquet `geo` key (see tests/fixtures/make-native-geometry.py). The file
+// is served through a stubbed `fetch`, so the loader runs its own byte-length
+// probe and range read without a network.
+describe('native GEOMETRY logical type', () => {
+  const FIXTURE_URL = 'https://example.test/native-geometry.parquet'
+  let fixture
+
+  beforeAll(() => {
+    // vitest runs with the repository root as the working directory.
+    fixture = readFileSync(resolve(process.cwd(), 'tests/fixtures/native-geometry.parquet'))
+  })
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', async (url, init = {}) => {
+      if (url !== FIXTURE_URL) {
+        return new Response(null, { status: 404 })
+      }
+      const headers = { 'Content-Length': String(fixture.byteLength) }
+      if (init.method === 'HEAD') {
+        return new Response(null, { status: 200, headers })
+      }
+      // Status 200 for a ranged GET tells hyparquet the server ignores Range,
+      // so it buffers the whole (tiny) file and slices it itself.
+      const body = fixture.buffer.slice(fixture.byteOffset, fixture.byteOffset + fixture.byteLength)
+      return new Response(body, { status: 200, headers })
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reads a fixture that carries neither a geo key nor a conventional column name', async () => {
+    const { metadata, columnNames } = await loadParquetMetadata(FIXTURE_URL)
+    expect(metadata.key_value_metadata?.some(kv => kv.key === 'geo')).toBeFalsy()
+    expect(columnNames).toEqual(['id', 'name', 'shape'])
+  })
+
+  it('detects the geometry column from the schema and reports no declared CRS', async () => {
+    const result = await loadParquetMetadata(FIXTURE_URL)
+    expect(result.geometryColumn).toBe('shape')
+    expect(result.crs).toBeNull()
+    expect(result.crsDefinition).toBeNull()
+  })
+
+  it('loads the geometries as GeoJSON features', async () => {
+    const result = await loadGeoJsonFromParquet(FIXTURE_URL, { fields: ['name'] })
+    expect(result.exceeded).toBe(false)
+    expect(result.reprojectedFrom).toBeNull()
+    const { features } = result.featureCollection
+    expect(features).toHaveLength(3)
+    expect(features.map(f => f.geometry.type)).toEqual(['Point', 'Point', 'Polygon'])
+    expect(features[0].geometry.coordinates).toEqual([10, 20])
+    expect(features.map(f => f.properties.name)).toEqual(['one', 'two', 'three'])
   })
 })

@@ -74,6 +74,40 @@ function parseGeoMetadata(metadata) {
   }
 }
 
+// Parquet's own GEOMETRY and GEOGRAPHY logical types mark a WKB column in the
+// schema, so a file that carries one needs no GeoParquet `geo` key. Portolan
+// v0.3 accepts such a file as vector data. hyparquet decodes a column with
+// either logical type to GeoJSON itself, the same as a `geo`-marked column,
+// so no change to the read path is needed.
+//
+// `crs` is an optional string on the logical type. The format says an unset
+// CRS means OGC:CRS84 (lon/lat), which is reported as null so consumers apply
+// their own default, the same as a file with no `geo` key at all. Any other
+// string is passed through unchanged for MAP_RENDERABLE_CRS and proj4 to
+// judge; the format defines no way to carry a CRS *definition* here, so
+// `crsDefinition` stays null.
+function detectNativeGeometryColumn(metadata, columnNames) {
+  const elements = metadata?.schema;
+  if (!Array.isArray(elements)) {
+    return null;
+  }
+  for (const element of elements) {
+    const type = element?.logical_type?.type;
+    if (type !== 'GEOMETRY' && type !== 'GEOGRAPHY') {
+      continue;
+    }
+    // Only a top-level column can be read as the geometry, matching
+    // hyparquet's own name-based column selection.
+    if (!columnNames.includes(element.name)) {
+      continue;
+    }
+    const declared = element.logical_type.crs;
+    const crs = typeof declared === 'string' && declared.trim() !== '' ? declared.trim() : null;
+    return { geometryColumn: element.name, bboxMapping: null, crs, crsDefinition: null };
+  }
+  return null;
+}
+
 function detectGeometryInfo(metadata, columnNames) {
   const geo = parseGeoMetadata(metadata);
   if (geo) {
@@ -119,8 +153,14 @@ function detectGeometryInfo(metadata, columnNames) {
     };
   }
 
-  // No GeoParquet `geo` metadata → no declared CRS (null); consumers apply
-  // the lon/lat default themselves.
+  // No `geo` key: the schema itself may still declare the geometry column.
+  const native = detectNativeGeometryColumn(metadata, columnNames);
+  if (native) {
+    return native;
+  }
+
+  // No GeoParquet `geo` metadata and no logical type → no declared CRS
+  // (null); consumers apply the lon/lat default themselves.
   const geomCol = columnNames.find(n => n === 'geometry' || n === 'geom');
   return geomCol ? { geometryColumn: geomCol, bboxMapping: null, crs: null, crsDefinition: null } : null;
 }
