@@ -157,7 +157,7 @@ describe('AreaDownload.vue (indexUrl and allowedFormats props)', () => {
     expect(primary).toHaveLength(2) // GeoJSON, GeoParquet
     await wrapper.find('.ad-formats .ad-link-button').trigger('click')
     const more = wrapper.findAll('.ad-formats-more .ad-button')
-    expect(more).toHaveLength(5) // GeoPackage, FlatGeobuf, Shapefile, CSV, Esri JSON
+    expect(more).toHaveLength(6) // GeoPackage, FlatGeobuf, Shapefile, CSV, Esri JSON, raw GeoParquet
   })
 
   it('hides the search box, and never builds a Geocoder, when indexUrl is null', async () => {

@@ -5,15 +5,15 @@ allowBuilds:
   vue-demi: false
 
 minimumReleaseAgeExclude:
-  - '@cngeo/extract-core@0.2.0'
-  - '@cngeo/format-extras@0.2.0'
-  - '@cngeo/format-flatgeobuf@0.2.0'
-  - '@cngeo/format-gpkg@0.2.0'
-  - '@cngeo/format-shapefile@0.2.0'
-  - '@cngeo/geocoder-core@0.2.0'
-  - '@cngeo/maplibre@0.2.0'
-  - '@cngeo/spec@0.2.0'
-  - '@cngeo/upload-core@0.2.0'
+  - '@cngeo/extract-core@0.3.0'
+  - '@cngeo/format-extras@0.3.0'
+  - '@cngeo/format-flatgeobuf@0.3.0'
+  - '@cngeo/format-gpkg@0.3.0'
+  - '@cngeo/format-shapefile@0.3.0'
+  - '@cngeo/geocoder-core@0.3.0'
+  - '@cngeo/maplibre@0.3.0'
+  - '@cngeo/spec@0.3.0'
+  - '@cngeo/upload-core@0.3.0'
 
 # Upstream pins rollup: 4.63.0 breaks tree-shaking (radiantearth/stac-browser#1002)
 overrides:

@@ -466,6 +466,9 @@ describe('describeBounded (O12)', () => {
     expect(describeBounded(null)).toBeNull()
     expect(formatCount(undefined)).toBe('0')
     expect(formatBytes(0)).toBe('0 B')
+    // The raw path reports `max: Infinity` when a source size is unknown
+    // (upstream R9); the card says a dash, never "Infinity TB".
+    expect(formatBytes(Infinity)).toBe('\u2014')
   })
 })
 
@@ -487,15 +490,27 @@ describe('pruneLines', () => {
 })
 
 describe('the format registry the card offers from', () => {
-  it('lists the two built-ins and the five optional packages, in offer order', () => {
+  it('lists the built-ins, the five optional packages and the raw passthrough, in offer order', () => {
     const ids = listFormats().map(entry => entry.id)
-    expect(ids.slice(0, 7)).toEqual(FORMAT_ORDER)
+    expect(ids.slice(0, FORMAT_ORDER.length)).toEqual(FORMAT_ORDER)
+    // 0.3.0 registers the raw passthrough itself; the card offers it last.
+    expect(FORMAT_ORDER[FORMAT_ORDER.length - 1]).toBe('parquet-raw')
   })
 
-  it('gives every format a human label and a byte model', () => {
+  it('gives every format a human label, and every writer a byte model', () => {
     for (const entry of listFormats()) {
       expect(entry.label).toBeTruthy()
       expect(entry.label).not.toBe('geojson') // core labels an eager plugin with its own id
+      if (entry.id === 'parquet-raw') {
+        // The raw passthrough is not a writer: it has no schema+rows byte
+        // model at all -- its size comes from the source parts, which only
+        // a routed estimate() can report. The registry labels an eager
+        // plugin with its id, so the label here proves listFormats() asked
+        // the descriptor itself.
+        expect(entry.estimateBytes).toBeUndefined()
+        expect(entry.label).toContain('original files')
+        continue
+      }
       expect(typeof entry.estimateBytes).toBe('function')
       const bytes = entry.estimateBytes([{ name: 'a' }, { name: 'geometry' }], { min: 0, max: 100, estimate: 10 })
       expect(bytes.max).toBeGreaterThan(bytes.estimate)

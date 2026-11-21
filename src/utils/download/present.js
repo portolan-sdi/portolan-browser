@@ -6,6 +6,11 @@
 /** Human-readable bytes. */
 export function formatBytes(bytes) {
   const value = Number(bytes) || 0;
+  // The raw path reports `max: Infinity` when a source size is unknown
+  // (upstream ruling R9); "Infinity TB" is not a sentence.
+  if (!Number.isFinite(value)) {
+    return '—';
+  }
   const units = ['B', 'kB', 'MB', 'GB', 'TB'];
   let index = 0;
   let scaled = value;

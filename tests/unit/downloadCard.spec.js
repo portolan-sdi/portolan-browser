@@ -118,9 +118,12 @@ describe('the download card, rendered', () => {
   })
 
   it('says "up to" when the row cap, not the data, decided the number', async () => {
+    // 0.3.0 dropped the default row cap (the ceilings and size warnings
+    // guard the common hazards), so the cap is a deployment's own choice.
     const wrapper = factory({
       estimateResult: estimate({ rows: { min: 0, max: 100000, estimate: 100000, exact: false } })
     })
+    await wrapper.setProps({ limit: 100000 })
     await wrapper.vm.$nextTick()
     expect(wrapper.find('dl.estimate dd .ad-value').text()).toContain('estimate.upTo')
     expect(wrapper.find('dl.estimate dd .ad-hedge').text()).toContain('estimate.theLimit')
@@ -236,7 +239,7 @@ describe('the download card, rendered', () => {
     expect(wrapper.vm.formatError({ code: 'WAT', message: 'boom' })).toBe('WAT: boom')
   })
 
-  it('offers two formats, then five more, each with its own size', async () => {
+  it('offers two formats, then six more, each writer with its own size', async () => {
     const wrapper = factory({ estimateResult: estimate() })
     await wrapper.vm.$nextTick()
     const primary = wrapper.findAll('.ad-formats .ad-button')
@@ -253,7 +256,10 @@ describe('the download card, rendered', () => {
     // The label is separated from its size by a non-breaking space, so
     // that a button never wraps between a format and its number.
     expect(more.map(button => button.text().split(/[\s·]+/u)[0])).toEqual([
-      'GeoPackage', 'FlatGeobuf', 'Shapefile', 'CSV', 'Esri'
+      'GeoPackage', 'FlatGeobuf', 'Shapefile', 'CSV', 'Esri',
+      // The raw passthrough, labelled in the UI's own language rather
+      // than by the descriptor's English prose.
+      'widgets.areaDownload.download.rawLabel'
     ])
     // The one with a wasm behind it says so before it is clicked.
     expect(more[0].text()).toContain('download.weight')
@@ -271,5 +277,89 @@ describe('the download card, rendered', () => {
 
     await wrapper.find('.area-download').trigger('keydown.esc')
     expect(wrapper.vm.open).toBe(false)
+  })
+})
+
+describe('the 0.3.0 size warnings and the confirmation gate', () => {
+  const LARGE = { code: 'large-download', bytes: 2_000_000_000, estimatedSeconds: 200 }
+  const SLOW = { code: 'slow-download', estimatedSeconds: 90 }
+
+  it('renders large/slow-download ahead of the ordinary warnings, dressed to be seen', async () => {
+    const wrapper = factory({
+      estimateResult: estimate({
+        warnings: [
+          { code: 'share-alike', attribution: [{ license: 'ODbL-1.0' }] },
+          LARGE,
+          SLOW
+        ]
+      })
+    })
+    await wrapper.vm.$nextTick()
+    const strong = wrapper.findAll('.ad-warning-strong')
+    expect(strong).toHaveLength(2)
+    expect(strong[0].text()).toContain('warnings.largeDownload')
+    // The flat payload's own numbers, interpolated: bytes said as bytes,
+    // seconds as a count.
+    expect(strong[0].text()).toContain('1.9 GB')
+    expect(strong[1].text()).toContain('warnings.slowDownload')
+    const ordinary = wrapper.findAll('.ad-warning:not(.ad-warning-strong)')
+    expect(ordinary).toHaveLength(1)
+    expect(ordinary[0].text()).toContain('warnings.shareAlike')
+  })
+
+  it('says the three raw-* warnings with their payload fields', () => {
+    const wrapper = factory()
+    expect(wrapper.vm.warningText({ code: 'raw-size-unknown', partsWithoutSize: 2, partsTotal: 3 }))
+      .toContain('"parts":"2","total":"3"')
+    expect(wrapper.vm.warningText({ code: 'raw-no-pruning', basis: 'bbox' }))
+      .toContain('"basis":"bbox"')
+    expect(wrapper.vm.warningText({ code: 'raw-passthrough-unfiltered', dropped: ['columns', 'where'] }))
+      .toContain('"dropped":"columns, where"')
+  })
+
+  it('gates a large download behind a confirmation, and cancel clears it', async () => {
+    const wrapper = factory({ estimateResult: estimate({ warnings: [LARGE] }) })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.startDownload('geojson')
+    await wrapper.vm.$nextTick()
+    // Nothing ran: the gate holds the sentences instead.
+    expect(wrapper.vm.downloading).toBe(false)
+    expect(wrapper.vm.pendingConfirm).toBeTruthy()
+    expect(wrapper.vm.pendingConfirm.format).toBe('geojson')
+    const box = wrapper.find('.ad-confirm')
+    expect(box.exists()).toBe(true)
+    expect(box.text()).toContain('warnings.largeDownload')
+    // The second button clears the gate without running anything.
+    await box.findAll('.ad-button')[1].trigger('click')
+    expect(wrapper.vm.pendingConfirm).toBe(null)
+  })
+
+  it('needs no confirmation when the estimate raised no size warning', async () => {
+    const wrapper = factory({ estimateResult: estimate() })
+    expect(await wrapper.vm.confirmationFor('geojson')).toBe(null)
+  })
+
+  it('names a multi-file raw download .zip and a single-file one .parquet', () => {
+    const wrapper = factory()
+    expect(wrapper.vm.outputFor('parquet-raw', 1).filename.endsWith('.parquet')).toBe(true)
+    expect(wrapper.vm.outputFor('parquet-raw', 3).filename.endsWith('.zip')).toBe(true)
+    // A writer format never zips, whatever the file count.
+    expect(wrapper.vm.outputFor('geojson', 3).filename.endsWith('.geojson')).toBe(true)
+  })
+
+  it('omits the row cap from the filter unless a deployment sets one', async () => {
+    const wrapper = factory()
+    expect('limit' in wrapper.vm.buildFilter()).toBe(false)
+    await wrapper.setProps({ limit: 500 })
+    expect(wrapper.vm.buildFilter().limit).toBe(500)
+  })
+
+  it('narrates the raw copying phase in files and bytes, indeterminate when sizes are unknown', () => {
+    const wrapper = factory()
+    wrapper.vm.onProgress({ phase: 'copying', fileIndex: 2, fileCount: 3, bytesWritten: 1_048_576, bytesTotal: 4_194_304 })
+    expect(wrapper.vm.progressPercent).toBe(25)
+    expect(wrapper.vm.progress).toContain('download.copying')
+    wrapper.vm.onProgress({ phase: 'copying', fileIndex: 1, fileCount: 1, bytesWritten: 10, bytesTotal: null })
+    expect(wrapper.vm.progressPercent).toBe(null)
   })
 })

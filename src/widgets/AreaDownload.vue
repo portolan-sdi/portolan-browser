@@ -282,6 +282,9 @@
           </dd>
         </dl>
 
+        <ul v-if="prominentWarnings.length > 0" class="ad-warnings">
+          <li v-for="(warning, index) of prominentWarnings" :key="index" class="ad-warning ad-warning-strong">{{ warning }}</li>
+        </ul>
         <ul v-if="warnings.length > 0" class="ad-warnings">
           <li v-for="(warning, index) of warnings" :key="index" class="ad-warning">{{ warning }}</li>
         </ul>
@@ -367,6 +370,29 @@
               class="ad-weight"
             >&nbsp;{{ format.weight }}</span>
           </button>
+        </div>
+
+        <!-- The confirmation gate (extract-core 0.3.0): a large download,
+             or the raw original-files format, states what it is about to
+             do and waits for a second click. That second click is its own
+             user activation, so the save dialog can still open from it. -->
+        <p v-if="confirmPreparing" class="ad-status">{{ $t('widgets.areaDownload.confirm.preparing') }}</p>
+        <div v-if="pendingConfirm && !downloading" class="ad-confirm">
+          <p v-for="(line, index) of pendingConfirm.lines" :key="index">{{ line }}</p>
+          <details v-if="pendingConfirm.sources.length > 0" class="ad-why">
+            <summary>{{ $t('widgets.areaDownload.confirm.sources') }}</summary>
+            <ul class="ad-why-list">
+              <li v-for="url of pendingConfirm.sources" :key="url" class="ad-source-url">{{ url }}</li>
+            </ul>
+          </details>
+          <div class="ad-confirm-actions">
+            <button type="button" class="ad-button ad-button-warning" @click="startDownload(pendingConfirm.format, true)">
+              {{ $t('widgets.areaDownload.confirm.proceed') }}
+            </button>
+            <button type="button" class="ad-button" @click="pendingConfirm = null">
+              {{ $t('widgets.areaDownload.confirm.cancel') }}
+            </button>
+          </div>
         </div>
 
         <!-- The run: a bar, the numbers behind it, and the three things a
@@ -500,7 +526,7 @@
 <script>
 import { defineComponent, markRaw } from 'vue';
 import { mapState } from 'vuex';
-import { estimate, blobSink, fileSystemSink, downloadRequest, onFormatState } from '@cngeo/extract-core';
+import { estimate, blobSink, fileSystemSink, downloadRequest, onFormatState, RAW_FORMAT_ID } from '@cngeo/extract-core';
 import { Geocoder } from '@cngeo/geocoder-core';
 import { areaFromFile, attachDropTarget } from '@cngeo/upload-core';
 // Both of these are @cngeo/maplibre's, reused as-is rather than
@@ -557,8 +583,30 @@ const WARNING_KEYS = {
   'no-covering': 'widgets.areaDownload.warnings.noCovering',
   'single-row-group': 'widgets.areaDownload.warnings.singleRowGroup',
   'degraded-to-bbox': 'widgets.areaDownload.warnings.degradedToBbox',
-  'no-statistics': 'widgets.areaDownload.warnings.noStatistics'
+  'no-statistics': 'widgets.areaDownload.warnings.noStatistics',
+  'large-download': 'widgets.areaDownload.warnings.largeDownload',
+  'slow-download': 'widgets.areaDownload.warnings.slowDownload',
+  'raw-size-unknown': 'widgets.areaDownload.warnings.rawSizeUnknown',
+  'raw-no-pruning': 'widgets.areaDownload.warnings.rawNoPruning',
+  'raw-passthrough-unfiltered': 'widgets.areaDownload.warnings.rawUnfiltered'
 };
+
+// The warnings a user must not scroll past: extract-core 0.3.0's size
+// warnings and the raw-passthrough disclosures. They render ahead of the
+// others in the ceiling's own alarm styling, and `large-download` /
+// `slow-download` additionally gate the download behind a confirmation --
+// see `confirmationFor`.
+const PROMINENT_WARNINGS = new Set([
+  'large-download',
+  'slow-download',
+  'raw-size-unknown',
+  'raw-no-pruning',
+  'raw-passthrough-unfiltered'
+]);
+
+// `confirmationFor`'s "the preflight itself failed" verdict: distinct from
+// both null (run it) and a confirm payload (ask first).
+const FAILED_CONFIRM = Symbol('failed-confirm');
 
 // The formats on offer come from `@cngeo/extract-core`'s registry, each
 // with its own bytes-per-row model -- so the size beside a button is that
@@ -658,10 +706,13 @@ export default defineComponent({
       type: Array,
       default: () => []
     },
-    // Hard row cap on a download. The ceiling is a separate, louder thing.
+    // Hard row cap on a download, when a deployment wants one. The 0.3.0
+    // packages guard the common hazards themselves -- derived ceilings on
+    // bytes and files, and the large/slow-download confirmation -- so the
+    // default is no cap at all: the whole selected area, however big.
     limit: {
       type: Number,
-      default: 100000
+      default: null
     },
     // How the finished file reaches the disk. `'picker'` always asks the
     // File System Access API for a destination, `'anchor'` always writes a
@@ -732,6 +783,11 @@ export default defineComponent({
       // called by `acceptCeiling()`/`cancel()` with which way the user
       // went. See `startDownload`'s doc comment for why this exists.
       ceilingGate: null,
+      // The confirmation gate's payload: the sentences to read and the
+      // format they clear, or null when nothing needs confirming. See
+      // `confirmationFor`.
+      pendingConfirm: null,
+      confirmPreparing: false,
       showCode: false,
       request: null,
       geocoder: null,
@@ -834,7 +890,16 @@ export default defineComponent({
     // obligation and "this estimate is wide" are different kinds of thing
     // and reading them as one run-on sentence loses both.
     warnings() {
-      return (this.estimateResult?.warnings || []).map(warning => this.warningText(warning));
+      return (this.estimateResult?.warnings || [])
+        .filter(warning => !PROMINENT_WARNINGS.has(warning.code))
+        .map(warning => this.warningText(warning));
+    },
+    // The size warnings, said ahead of the others and dressed to be seen:
+    // a licence note can wait, "this is about 2 GB" cannot.
+    prominentWarnings() {
+      return (this.estimateResult?.warnings || [])
+        .filter(warning => PROMINENT_WARNINGS.has(warning.code))
+        .map(warning => this.warningText(warning));
     },
     // --- the estimate, said honestly (O12) ------------------------------
     rowsBounded() {
@@ -875,12 +940,12 @@ export default defineComponent({
     // between an estimate and a coincidence.
     limitBinds() {
       const rows = this.estimateResult?.rows;
-      return Boolean(rows && this.limit !== undefined && rows.max >= this.limit);
+      return Boolean(rows && this.limit != null && rows.max >= this.limit);
     },
     // An estimate whose own upper bound is zero: there is nothing in this
     // request, whatever the format buttons would otherwise suggest.
     emptyEstimate() {
-      return Boolean(this.estimateResult && this.estimateResult.rows.max === 0);
+      return Boolean(this.estimateResult && this.estimateResult.rows?.max === 0);
     },
     // ...and the date window is why, which the cascade says outright: a
     // stage that went to zero is the one that emptied the request.
@@ -934,9 +999,16 @@ export default defineComponent({
         // 340 KB wasm is worth knowing about, and worth not fetching for
         // the user who wanted GeoParquet.
         const weight = pluginWeight(entry);
+        // The raw descriptor's label is English prose, not a format name,
+        // so it is the one label said in the UI's own language -- and its
+        // hover title explains the passthrough instead of repeating the
+        // label, since it has no byte model to show.
+        const isRaw = entry.id === RAW_FORMAT_ID;
+        const label = isRaw ? this.$t('widgets.areaDownload.download.rawLabel') : entry.label;
+        const bareTitle = isRaw ? this.$t('widgets.areaDownload.download.rawTitle') : label;
         return {
           id: entry.id,
-          label: entry.label,
+          label,
           size: bounded ? this.boundedPrimary(bounded) : '',
           weight: weight ? this.$t('widgets.areaDownload.download.weight', { bytes: formatBytes(weight) }) : '',
           // The two that need nothing are the ones most people want, and
@@ -945,11 +1017,11 @@ export default defineComponent({
           title: [
             bounded
               ? this.$t('widgets.areaDownload.download.sizeHint', {
-                format: entry.label,
+                format: label,
                 min: bounded.min,
                 max: bounded.max
               })
-              : entry.label,
+              : bareTitle,
             weight ? this.$t('widgets.areaDownload.download.weightHint', { bytes: formatBytes(weight) }) : ''
           ].filter(Boolean).join(' — ')
         };
@@ -987,6 +1059,11 @@ export default defineComponent({
         return false;
       }
       return this.directSave === 'picker' || !navigator.webdriver;
+    },
+    // What `startDownload` will write through, as the sink `kind` the
+    // 0.3.0 ceiling derivation switches on.
+    sinkKind() {
+      return this.usePicker ? 'filesystem' : 'blob';
     }
   },
   watch: {
@@ -1617,7 +1694,7 @@ export default defineComponent({
         // user's. Both apply, ANDed, which is what `FilterSpec.where` is.
         where: [...this.where, ...this.activePredicates],
         ...(time ? { time } : {}),
-        limit: this.limit
+        ...(this.limit != null ? { limit: this.limit } : {})
       };
     },
     boundedPrimary(described) {
@@ -1671,8 +1748,12 @@ export default defineComponent({
       this.estimating = true;
       this.estimateResult = null;
       this.estimateError = '';
+      this.pendingConfirm = null;
       try {
-        const result = await estimate(this.descriptor, this.area, this.buildFilter());
+        // The sink kind is known before any download starts, and the
+        // ceiling derivation reads it: a blob-backed save is capped by
+        // what the browser can hold in memory, a picker save is not.
+        const result = await estimate(this.descriptor, this.area, this.buildFilter(), { sink: { kind: this.sinkKind } });
         if (token !== this._estimateToken) {
           return;
         }
@@ -1689,13 +1770,13 @@ export default defineComponent({
         }
       }
     },
-    updateRequest(format) {
+    updateRequest(format, filesSelected) {
       const filter = this.buildFilter();
       this.request = markRaw({
         spec: 'cng-request/1.0',
         dataset: this.descriptor,
         filter: this.area ? { ...filter, area: toAreaDocument(this.area) } : filter,
-        output: this.outputFor(format),
+        output: this.outputFor(format, filesSelected),
         generator: {
           name: 'portolan-browser/AreaDownload',
           version: VERSION,
@@ -1708,22 +1789,132 @@ export default defineComponent({
     formatEntry(format) {
       return listFormats().find(entry => entry.id === format);
     },
-    outputFor(format) {
+    outputFor(format, filesSelected) {
       const base = (this.descriptor?.id || 'download').replace(/[^\w.-]+/g, '-');
       const entry = this.formatEntry(format);
+      // A raw download of more than one source file arrives as one zip
+      // archive (0.3.0's streaming zip64 writer), and the library honours
+      // `output.filename` as given -- naming the archive is the caller's
+      // job (upstream ruling R15). `filesSelected` is the preflight
+      // estimate's `files.selected`, known before the save dialog opens.
+      let extension = entry?.extension || format;
+      if (format === RAW_FORMAT_ID && filesSelected > 1) {
+        extension = 'zip';
+      }
       return {
         spec: 'cng-output/1.0',
         format,
-        filename: `${base}.${entry?.extension || format}`
+        filename: `${base}.${extension}`
       };
     },
 
+    // Which downloads need a second look before they run, and what that
+    // look should say. Returns null (just run it), a payload for
+    // `pendingConfirm`, or FAILED_CONFIRM when the raw preflight itself
+    // failed and the error is already on screen.
+    //
+    // The raw path runs a routed `estimate()` first -- decode-free, no
+    // parquet footers (0.3.0's public router) -- because its answer IS the
+    // disclosure: how many original files, how many bytes, and the raw-*
+    // warnings. This is also upstream's prescribed mitigation (ruling R7)
+    // for the save dialog opening just before a ceiling refusal: estimate,
+    // confirm, then download.
+    async confirmationFor(format) {
+      if (format === RAW_FORMAT_ID) {
+        this.confirmPreparing = true;
+        try {
+          const preflight = await estimate(this.descriptor, this.area, this.buildFilter(), {
+            output: this.outputFor(format),
+            sink: { kind: this.sinkKind }
+          });
+          const lines = [this.$t('widgets.areaDownload.confirm.raw', {
+            files: formatCount(preflight.files?.selected ?? 0)
+          })];
+          const bytes = preflight.outputBytes;
+          // `min` stays finite when any part size is known; the unknown
+          // remainder is the `raw-size-unknown` warning's job to say.
+          if (bytes && Number.isFinite(bytes.exact ? bytes.estimate : bytes.min)) {
+            lines.push(bytes.exact
+              ? this.$t('widgets.areaDownload.confirm.rawBytes', { bytes: formatBytes(bytes.estimate) })
+              : this.$t('widgets.areaDownload.confirm.rawBytesAtLeast', { bytes: formatBytes(bytes.min) }));
+          }
+          // `rows` is null on the raw path whenever a selected part
+          // declares no row count -- never modelled, only summed.
+          if (!preflight.rows) {
+            lines.push(this.$t('widgets.areaDownload.confirm.rawRows'));
+          }
+          for (const warning of preflight.warnings || []) {
+            lines.push(this.warningText(warning));
+          }
+          return markRaw({
+            format,
+            lines,
+            filesSelected: preflight.files?.selected,
+            sources: this.rawSourceUrls()
+          });
+        } catch (error) {
+          this.downloadError = this.formatError(error);
+          return FAILED_CONFIRM;
+        } finally {
+          this.confirmPreparing = false;
+        }
+      }
+      // Decoded formats confirm only when the estimate itself said "large"
+      // or "slow" -- the generic byte model, which download() re-checks
+      // against the format's own.
+      const size = (this.estimateResult?.warnings || [])
+        .filter(warning => warning.code === 'large-download' || warning.code === 'slow-download');
+      if (size.length === 0) {
+        return null;
+      }
+      return markRaw({
+        format,
+        lines: size.map(warning => this.warningText(warning)),
+        filesSelected: undefined,
+        sources: []
+      });
+    },
+    // The URLs a raw download would fetch verbatim, where the descriptor
+    // states them. A hive or stac-geoparquet source enumerates its parts
+    // at plan time, so the confirm box then has only the count.
+    rawSourceUrls() {
+      const source = this.descriptor?.source;
+      if (!source) {
+        return [];
+      }
+      if (source.kind === 'parquet' && source.url) {
+        return [source.url];
+      }
+      if (source.kind === 'parquet-set') {
+        const parts = source.parts || source.urls || [];
+        return parts.map(part => part?.url || part).filter(url => typeof url === 'string');
+      }
+      return [];
+    },
+
     // --- download ------------------------------------------------------
-    async startDownload(format) {
-      if (this.downloading) {
+    async startDownload(format, confirmed = false) {
+      if (this.downloading || this.confirmPreparing) {
         return;
       }
-      const output = this.outputFor(format);
+      // The gate between the click and the bytes. A download that needs a
+      // second look gets its sentences rendered and stops here; the
+      // confirm button calls back with `confirmed`, carrying its own user
+      // activation for the save dialog below.
+      const filesSelected = confirmed ? this.pendingConfirm?.filesSelected : undefined;
+      if (!confirmed) {
+        this.pendingConfirm = null;
+        const confirm = await this.confirmationFor(format);
+        if (confirm === FAILED_CONFIRM) {
+          return;
+        }
+        if (confirm) {
+          this.pendingConfirm = confirm;
+          return;
+        }
+      }
+      this.pendingConfirm = null;
+      const output = this.outputFor(format, filesSelected);
 
       // The save dialog has to open inside this click's own activation
       // window. Anything awaited before it -- the hyparquet-writer import,
@@ -1732,14 +1923,15 @@ export default defineComponent({
       let handle = null;
       if (this.usePicker) {
         const entry = this.formatEntry(format);
+        const accept = output.filename.endsWith('.zip')
+          ? { 'application/zip': ['.zip'] }
+          : { [entry?.mediaType || 'application/octet-stream']: [pickerExtension(entry?.extension || format)] };
         try {
           handle = await window.showSaveFilePicker({
             suggestedName: output.filename,
             types: [{
               description: entry?.label || format,
-              accept: {
-                [entry?.mediaType || 'application/octet-stream']: [pickerExtension(entry?.extension || format)]
-              }
+              accept
             }]
           });
         } catch (error) {
@@ -1759,7 +1951,7 @@ export default defineComponent({
       this.progressPercent = null;
       this.progress = this.$t('widgets.areaDownload.download.planning');
       this.startedAt = Date.now();
-      this.updateRequest(format);
+      this.updateRequest(format, filesSelected);
       try {
         // GeoParquet output needs hyparquet-writer, loaded on demand so a
         // GeoJSON download never pays for it.
@@ -1881,6 +2073,19 @@ export default defineComponent({
           rows: formatCount(event.rowsMatched),
           bytes: formatBytes(event.bytesRead)
         });
+      } else if (event.phase === 'copying') {
+        // The raw path: original files streaming through, counted in
+        // bytes because rows are never decoded. `bytesTotal` is null when
+        // the source never declared a size -- exactly the
+        // `raw-size-unknown` case -- and the bar goes indeterminate.
+        this.progressPercent = event.bytesTotal
+          ? Math.min(100, Math.round((event.bytesWritten / event.bytesTotal) * 100))
+          : null;
+        this.progress = this.$t('widgets.areaDownload.download.copying', {
+          index: formatCount(event.fileIndex || 1),
+          count: formatCount(event.fileCount || 1),
+          bytes: formatBytes(event.bytesWritten || 0)
+        });
       } else if (event.phase === 'loading-format') {
         // The one moment this widget fetches code: a format plugin the
         // user just picked. Named, because "loading..." over a 340 KB wasm
@@ -1988,6 +2193,8 @@ export default defineComponent({
       this.cancelled = null;
       this.runWarnings = [];
       this.notice = '';
+      this.pendingConfirm = null;
+      this.confirmPreparing = false;
     },
 
     // --- formatting ----------------------------------------------------
@@ -2012,7 +2219,15 @@ export default defineComponent({
           ratio: Math.round(warning.ratio || 0),
           boxes: warning.boxes,
           files: warning.files,
-          licenses: (warning.attribution || []).map(entry => entry.license).join(', ')
+          licenses: (warning.attribution || []).map(entry => entry.license).join(', '),
+          // The 0.3.0 size and raw-passthrough codes. Flat payloads, per
+          // upstream ruling R8 -- fields read directly off the warning.
+          bytes: formatBytes(warning.bytes || 0),
+          seconds: formatCount(warning.estimatedSeconds || 0),
+          parts: formatCount(warning.partsWithoutSize || 0),
+          total: formatCount(warning.partsTotal || 0),
+          basis: warning.basis || '',
+          dropped: (warning.dropped || []).join(', ')
         });
       }
       return warning.message || warning.code;
@@ -2459,6 +2674,39 @@ export default defineComponent({
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.ad-warning-strong {
+  margin: 0.15rem 0;
+  padding: 0.25rem 0.35rem;
+  border-radius: $border-radius;
+  background: rgba($warning, 0.15);
+  color: darken($warning, 25%);
+  font-weight: 600;
+}
+
+// --- the confirmation gate ---------------------------------------------
+.ad-confirm {
+  margin: 0.3rem 0;
+  padding: 0.35rem 0.4rem;
+  border-radius: $border-radius;
+  background: rgba($warning, 0.15);
+  font-size: 0.75rem;
+
+  p {
+    margin: 0 0 0.3rem;
+  }
+}
+
+.ad-confirm-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.ad-source-url {
+  font-family: monospace;
+  font-size: 0.65rem;
+  word-break: break-all;
 }
 
 // --- "why this estimate" ----------------------------------------------

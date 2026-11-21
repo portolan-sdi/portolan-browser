@@ -599,6 +599,16 @@
         "show": "Ver esta descarga como código",
         "sql": "SQL de DuckDB"
       },
+      "confirm": {
+        "cancel": "Cancelar",
+        "preparing": "Comprobando qué descargaría…",
+        "proceed": "Descargar de todos modos",
+        "raw": "Esto guarda los archivos originales completos del conjunto de datos: {files} archivo(s), seleccionados por su área y fechas pero sin filtrar por dentro.",
+        "rawBytes": "Tamaño de la descarga: {bytes}.",
+        "rawBytesAtLeast": "Tamaño de la descarga: al menos {bytes}.",
+        "rawRows": "Las filas no se cuentan para archivos originales.",
+        "sources": "¿Qué archivo(s)?"
+      },
       "download": {
         "acceptCeiling": "Descargar igualmente",
         "again": "Descargar otro",
@@ -609,6 +619,7 @@
         "cancelling": "Cancelando…",
         "ceiling": "Esta descarga supera el límite de seguridad ({breaches}).",
         "ceilingAhead": "Reduce el área, las fechas o las columnas, o descarga igualmente cuando se pregunte.",
+        "copying": "Archivo {index} de {count} — {bytes} copiados.",
         "dismiss": "Descartar",
         "dismissed": "No se guardó nada: se cerró el diálogo de guardado.",
         "elapsed": "Duración",
@@ -618,6 +629,7 @@
         "moreFormats": "Más formatos",
         "pause": "Pausar",
         "phases": {
+          "copying": "Copiando…",
           "finalizing": "Terminando el archivo…",
           "planning": "Planificando…",
           "reading": "Leyendo…",
@@ -625,6 +637,8 @@
         },
         "planning": "Planificando…",
         "progressLabel": "Progreso de la descarga",
+        "rawLabel": "GeoParquet — archivos originales",
+        "rawTitle": "Los archivos originales del conjunto de datos, byte a byte — sin conversión, exactamente lo que publicó el editor. Más de un archivo llega como zip.",
         "reading": "Grupo de filas {done} de {total} — {rows} filas coincidentes, {bytes} leídos.",
         "resume": "Continuar",
         "retry": "Intentar de nuevo",
@@ -721,10 +735,15 @@
         "antimeridianSplit": "Esta área cruza el antimeridiano, así que se comprueba como {boxes} cajas separadas.",
         "degradedToBbox": "El contorno exacto del área no estaba disponible, así que las filas se filtran con su caja envolvente: habrá filas de más en los bordes.",
         "estimateWide": "Esta estimación es amplia: el número real de filas podría ser hasta {ratio} veces mayor.",
+        "largeDownload": "Esta descarga es grande: alrededor de {bytes}, aproximadamente {seconds} s con una conexión típica.",
         "noCovering": "Este conjunto no declara una columna de bbox de cobertura, así que el área no puede reducir la lectura: cada archivo seleccionado se lee completo.",
         "noStatistics": "Este conjunto no declara una columna de tiempo, así que el filtro de fechas no pudo descartar ningún grupo de filas.",
+        "rawNoPruning": "Ningún archivo de origen pudo excluirse ({basis}), así que cada archivo del conjunto de datos se descarga completo.",
+        "rawSizeUnknown": "{parts} de {total} archivo(s) de origen no declaran su tamaño, así que la descarga real puede ser mayor que la mostrada.",
+        "rawUnfiltered": "Los archivos originales se copian enteros. No se aplica dentro de ellos: {dropped}.",
         "shareAlike": "Estos datos tienen una licencia share-alike ({licenses}). Lo que publiques a partir de ellos debe llevar la misma licencia y atribución.",
-        "singleRowGroup": "{files} archivo(s) seleccionado(s) guardan todas sus filas en un solo grupo de filas, así que el área no puede reducir la lectura dentro de ellos."
+        "singleRowGroup": "{files} archivo(s) seleccionado(s) guardan todas sus filas en un solo grupo de filas, así que el área no puede reducir la lectura dentro de ellos.",
+        "slowDownload": "Esta descarga podría tardar aproximadamente {seconds} s con una conexión típica."
       },
       "where": {
         "add": "+ Añadir un filtro de columna",

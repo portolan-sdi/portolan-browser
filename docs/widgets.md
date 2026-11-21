@@ -134,12 +134,32 @@ the file straight away — through `showSaveFilePicker` where the browser has it
 otherwise as a Blob the widget clicks for you. There is no link to find and click.
 
 GeoJSON and GeoParquet are offered directly; "More formats" adds GeoPackage,
-FlatGeobuf, Shapefile, CSV and Esri JSON. The last five are separate `@cngeo` packages
-whose writers load the first time someone picks them. Each button states what
+FlatGeobuf, Shapefile, CSV, Esri JSON and the raw original files. The five
+writers are separate `@cngeo` packages
+that load the first time someone picks them. Each button states what
 its plugin still has to fetch (`GeoPackage · 133 kB +331 kB`) before anything is
 downloaded, and a format that cannot be fetched says so rather than failing silently.
 Anything a writer has to change to fit its format — Shapefile renaming a column to
 dBase's ten-character limit — is reported beside the saved file.
+
+**The raw original files.** The last entry, "GeoParquet — original files", is not a
+writer: it streams the dataset's own source file(s) byte for byte, exactly as the
+publisher uploaded them. The area and the date window select **which** files are
+fetched; nothing filters inside them, and the card says so before anything runs. The
+click first runs a decode-free estimate — the files it would fetch, their summed
+size where the sources declare one, and every `raw-*` warning — and waits for a
+second click on "Download anyway". Where the collection names its source URLs, the
+confirmation lists them. More than one selected file arrives as a single zip archive
+(`<dataset>.zip`), written by `@cngeo/extract-core` 0.3.0's streaming zip64 writer
+with an `ATTRIBUTION.txt` entry alongside the data.
+
+**Size warnings and the confirmation gate.** An estimate that crosses the packages'
+large-download threshold (about 1 GB), or that would take minutes at a typical
+connection, is said in its own highlighted line above the ordinary warnings — and the
+format click then stops at a confirmation instead of running. The estimate also knows
+how the file will be saved: a Blob-backed save (any browser without the File System
+Access API) is capped by what the browser can hold in memory, and the ceiling notice
+reflects that before the download starts.
 
 **Drawing a polygon.** "Draw polygon" is the box tool's sibling, for a region a
 rectangle does not describe. Click each corner; double-click, press <kbd>Enter</kbd>, or
@@ -208,9 +228,9 @@ renders none of the tool, down to the pill. The widget must be placed on
 | Props            | Type   | Default      | Description |
 | ---------------- | ------ | ------------ | ----------- |
 | `indexUrl`       | String | the published geoBoundaries names index | The place-name index the search box reads, as a `cnmw-index/1.0` manifest URL. `null` hides the search box entirely, and the widget then builds no Geocoder and fetches no index. Draw, upload and download keep working. In `widgets.config.js`, this is wired to the [`areaSearchIndexUrl`](options.md#areasearchindexurl) config option rather than hardcoded. |
-| `allowedFormats` | Array  | `null`       | Restricts the format buttons offered to this list of ids: any of `'geojson'`, `'geoparquet'`, `'gpkg'`, `'flatgeobuf'`, `'shapefile'`, `'csv'`, `'esrijson'` (see `src/utils/download/formats.js`). `null` or `[]` offers every registered format. In `widgets.config.js`, this is wired to the [`areaDownloadFormats`](options.md#areadownloadformats) config option. |
+| `allowedFormats` | Array  | `null`       | Restricts the format buttons offered to this list of ids: any of `'geojson'`, `'geoparquet'`, `'gpkg'`, `'flatgeobuf'`, `'shapefile'`, `'csv'`, `'esrijson'`, `'parquet-raw'` (see `src/utils/download/formats.js`). `null` or `[]` offers every registered format. In `widgets.config.js`, this is wired to the [`areaDownloadFormats`](options.md#areadownloadformats) config option. |
 | `where`          | Array  | `[]`         | Attribute predicates applied to every download, in `@cngeo` `FilterSpec` form, such as `[{ col: 'confidence', op: '>=', value: 0.9 }]`. The card's own column filters are ANDed onto these, not instead of them. |
-| `limit`          | Number | `100000`     | Hard cap on the rows a download writes. Distinct from the safety ceiling, which is a refusal the user can accept. |
+| `limit`          | Number | `null`       | Hard cap on the rows a download writes, when a deployment wants one. The default is no cap: the `@cngeo` 0.3.0 packages guard the hazards themselves, with byte- and file-count ceilings derived from the format and the save destination, and a confirmation ahead of a large or slow download. Distinct from the safety ceiling, which is a refusal the user can accept. |
 | `directSave`     | String | `'auto'`     | The destination the widget writes the finished file to. `'picker'` always asks the File System Access API for a destination, `'anchor'` always writes a Blob and clicks it, `'auto'` prefers the picker where it exists and is not driven by automation. |
 
 The widget itself is only registered on `map-overlay` when the

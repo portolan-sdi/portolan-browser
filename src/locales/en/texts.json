@@ -599,6 +599,16 @@
         "show": "Show this download as code",
         "sql": "DuckDB SQL"
       },
+      "confirm": {
+        "cancel": "Cancel",
+        "preparing": "Checking what this would fetch…",
+        "proceed": "Download anyway",
+        "raw": "This saves the dataset's complete original file(s): {files} file(s), selected by your area and dates but not filtered inside.",
+        "rawBytes": "Download size: {bytes}.",
+        "rawBytesAtLeast": "Download size: at least {bytes}.",
+        "rawRows": "Rows are not counted for original files.",
+        "sources": "Which file(s)?"
+      },
       "download": {
         "acceptCeiling": "Download anyway",
         "again": "Download another",
@@ -609,6 +619,7 @@
         "cancelling": "Cancelling…",
         "ceiling": "This download is larger than the safety ceiling ({breaches}).",
         "ceilingAhead": "Narrow the area, the dates or the columns, or download anyway when asked.",
+        "copying": "File {index} of {count} — {bytes} copied.",
         "dismiss": "Dismiss",
         "dismissed": "Nothing saved: the save dialog was dismissed.",
         "elapsed": "Took",
@@ -618,6 +629,7 @@
         "moreFormats": "More formats",
         "pause": "Pause",
         "phases": {
+          "copying": "Copying…",
           "finalizing": "Finishing the file…",
           "planning": "Planning…",
           "reading": "Reading…",
@@ -625,6 +637,8 @@
         },
         "planning": "Planning…",
         "progressLabel": "Download progress",
+        "rawLabel": "GeoParquet — original files",
+        "rawTitle": "The dataset's own file(s), byte for byte — no conversion, exactly what the publisher uploaded. More than one file arrives as a zip.",
         "reading": "Row group {done} of {total} — {rows} rows matched, {bytes} read.",
         "resume": "Resume",
         "retry": "Try again",
@@ -721,10 +735,15 @@
         "antimeridianSplit": "This area crosses the antimeridian, so it is tested as {boxes} separate boxes.",
         "degradedToBbox": "The area's exact outline was unavailable, so rows are filtered against its bounding box instead — expect some extra rows at the edges.",
         "estimateWide": "This estimate is wide: the real row count could be up to {ratio} times it.",
+        "largeDownload": "This is a large download: about {bytes}, roughly {seconds} s on a typical connection.",
         "noCovering": "This dataset declares no bbox covering column, so the area cannot narrow the read: every selected file is read in full.",
         "noStatistics": "This dataset declares no time column, so the date filter could not drop any row groups.",
+        "rawNoPruning": "No source file could be excluded ({basis}), so every file of the dataset is fetched in full.",
+        "rawSizeUnknown": "{parts} of {total} source file(s) do not declare a size, so the real download may be larger than shown.",
+        "rawUnfiltered": "Original files are copied whole. Not applied inside them: {dropped}.",
         "shareAlike": "This data is share-alike licensed ({licenses}). Anything you publish from it must carry the same licence and attribution.",
-        "singleRowGroup": "{files} selected file(s) hold all their rows in one row group, so the area cannot narrow the read within them."
+        "singleRowGroup": "{files} selected file(s) hold all their rows in one row group, so the area cannot narrow the read within them.",
+        "slowDownload": "This download could take roughly {seconds} s on a typical connection."
       },
       "where": {
         "add": "+ Add a column filter",

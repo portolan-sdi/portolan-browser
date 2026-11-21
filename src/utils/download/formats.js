@@ -22,6 +22,14 @@
 // | shapefile  | resolves locally, no fetch  | ~2 KB  |
 // | csv        | resolves locally, no fetch  | — |
 // | esrijson   | resolves locally, no fetch  | — |
+// | parquet-raw | built in, eager            | — |
+//
+// `parquet-raw` (@cngeo/extract-core 0.3.0) is not a writer at all: it
+// streams the dataset's original source file(s) byte for byte, zipped when
+// the source is more than one file. It has no `estimateBytes` -- its size
+// comes from the parts' own metadata, which only a routed `estimate()`
+// call can report -- so the card gives it no size caption and gates it
+// behind its own confirmation instead.
 //
 // The two CDN ones are the only part of this widget that fetches code at
 // runtime, and they fail loudly (`FORMAT_LOAD_FAILED`, said in words by the
@@ -29,7 +37,7 @@
 // five formats and loses two, which is a better trade than bundling a
 // 340 KB wasm into every page that shows a map.
 
-import { registerLazyFormat, formats, getFormat, formatLoadState } from '@cngeo/extract-core';
+import { registerLazyFormat, formats, getFormat, formatLoadState, RAW_FORMAT_ID } from '@cngeo/extract-core';
 import { gpkgFormatDescriptor } from '@cngeo/format-gpkg';
 import { flatGeobufFormatDescriptor } from '@cngeo/format-flatgeobuf';
 import { shapefileFormatDescriptor } from '@cngeo/format-shapefile';
@@ -38,7 +46,7 @@ import { csvFormatDescriptor, esriJsonFormatDescriptor } from '@cngeo/format-ext
 // The order they are offered in: the two that need nothing first, then the
 // interchange formats, then the two text ones. Any format registered by a
 // host but not named here still appears, after these.
-export const FORMAT_ORDER = ['geojson', 'geoparquet', 'gpkg', 'flatgeobuf', 'shapefile', 'csv', 'esrijson'];
+export const FORMAT_ORDER = ['geojson', 'geoparquet', 'gpkg', 'flatgeobuf', 'shapefile', 'csv', 'esrijson', RAW_FORMAT_ID];
 
 // `formats()` labels an eagerly-registered plugin with its own id, because
 // core has no human name for it. These two do.
@@ -93,7 +101,12 @@ export function listFormats() {
     const plugin = entry.lazy ? null : getFormat(entry.id);
     return {
       ...entry,
-      label: BUILT_IN_LABELS[entry.id] || entry.label || entry.id,
+      // `formats()` labels an EAGER plugin `label: p.id`, which drops the
+      // raw descriptor's own human label -- so for an eager entry whose
+      // registry label is just its id, ask the plugin itself.
+      label: BUILT_IN_LABELS[entry.id]
+        || (entry.label && entry.label !== entry.id ? entry.label : plugin?.label)
+        || entry.id,
       estimateBytes: entry.estimateBytes || plugin?.estimateBytes,
       loadState: entry.loadState || formatLoadState(entry.id)
     };
