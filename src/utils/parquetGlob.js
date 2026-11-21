@@ -7,20 +7,24 @@
 // expansion: each item of a partitioned collection is one partition and
 // declares that partition's file as an asset.
 //
+// Portolan v0.3 forbids that wildcard href: a partitioned collection states
+// where its data lives in `partition:glob` and may publish no concrete parquet
+// data asset at all. That collection resolves through utils/partitionList.js,
+// which lists the bucket over its provider's anonymous HTTP API, and the
+// caller selects the expansion through the synthetic entry below.
+//
 // The table preview reads one partition, not the whole collection. Reading
 // further partitions would need a second reader: the preview holds one
 // hyparquet file handle and maps a clicked row back to a row index in it (see
 // getBboxForRow), which a concatenation of files would break.
 
-import { hasGlobPattern, isParquetAsset, WILDCARD } from './parquetShared.js';
+import { fetchableAssetHref } from './fetchableHref.js';
+import { expandPartitionGlob, globToRegExp, readPartitionMetadata } from './partitionList.js';
+import { GLOB_UNRESOLVED, hasGlobPattern, isParquetAsset } from './parquetShared.js';
 
-// Re-exported so the resolver's callers and tests reach the detector through
-// this module, which owns the glob behavior.
-export { hasGlobPattern };
-
-// Error code on the rejection when the pattern cannot be expanded. The caller
-// turns it into its own message, because this module does no localization.
-export const GLOB_UNRESOLVED = 'globUnresolved';
+// Re-exported so the resolver's callers and tests reach the detector and the
+// rejection code through this module, which owns the glob behavior.
+export { GLOB_UNRESOLVED, hasGlobPattern };
 
 function unresolved(message) {
   const error = new Error(message);
@@ -28,16 +32,37 @@ function unresolved(message) {
   return error;
 }
 
-// A wildcard matches within one path segment, as it does for DuckDB and for
-// the `partition:glob` field of the Portolan partition extension. A pattern
-// over `zone=*` must not reach into `zone=01/deeper`. Every other character of
-// the pattern is matched literally.
-function globToRegExp(pattern) {
-  const body = pattern
-    .split(WILDCARD)
-    .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('[^/]*');
-  return new RegExp(`^${body}$`);
+// The key of the synthetic entry, and the property that marks it. A
+// partitioned collection of Portolan v0.3 may publish no concrete parquet data
+// asset at all: the spec forbids a wildcard href, so the only statement of
+// where the data lives is the collection's `partition:glob`. ParquetViewer
+// offers one entry for it, and this marker tells the resolver to expand that
+// field by listing the bucket instead of reading an item.
+const PLACEHOLDER_KEY = 'partition:glob';
+const PLACEHOLDER_FLAG = 'portolanPartitionPlaceholder';
+
+/**
+ * The synthetic asset entry for a collection whose data sits behind
+ * `partition:glob`. Carries the title its caller shows in the asset list and
+ * reads every metadata field through the collection, so the resolver finds
+ * `table:row_count` and the partition fields where it finds them on a real
+ * asset.
+ */
+export function createPartitionPlaceholder(context, { title = '' } = {}) {
+  return {
+    [PLACEHOLDER_FLAG]: true,
+    title,
+    getKey: () => PLACEHOLDER_KEY,
+    getContext: () => context || null,
+    getMetadata: field => context?.getMetadata?.(field),
+    // No href names the data: the glob does, and only the resolver expands it.
+    getAbsoluteUrl: () => null,
+  };
+}
+
+/** True for an entry createPartitionPlaceholder made, false for a real asset. */
+export function isPartitionPlaceholder(asset) {
+  return Boolean(asset?.[PLACEHOLDER_FLAG]);
 }
 
 async function fetchItemJson(url, signal) {
@@ -96,6 +121,62 @@ function findPartitionHref(item, pattern, itemUrl) {
   return dataRole ? dataRole.url : null;
 }
 
+// The file name the expansion ends in, decoded: a listing builds its URLs
+// with percent-encoded path segments, and `year%3D2021` names no partition to
+// a reader. Query and fragment are cut first, so a signed URL still reports
+// its file.
+function basename(url) {
+  const path = String(url).split('#')[0].split('?')[0];
+  const last = path.slice(path.lastIndexOf('/') + 1);
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+}
+
+// The partitioned-collection branch: no asset names the data, so the
+// collection's `partition:glob` is expanded against its bucket and the first
+// file in lexicographic order is the preview. `count` is the number of files
+// the glob matched, which is what the partition note states.
+async function resolvePartitionGlob(asset, { signal, listGlob }) {
+  const metadata = readPartitionMetadata(asset);
+  if (!metadata) {
+    throw unresolved('The collection declares no partition:glob to expand');
+  }
+
+  const context = asset.getContext?.();
+  let files;
+  try {
+    files = await listGlob(metadata.glob, context?.getMetadata?.('storage:schemes'), { signal });
+  } catch (error) {
+    // Every way a listing can fail reads the same to the caller: the files the
+    // glob names are out of reach. A rejection with no code, such as the bare
+    // TypeError a blocked cross-origin request throws, would otherwise reach
+    // the caller as a load failure and cost it its fallback.
+    if (error?.code === GLOB_UNRESOLVED || signal?.aborted || error?.name === 'AbortError') {
+      throw error;
+    }
+    throw unresolved(`The partition glob ${metadata.glob} could not be expanded: ${error.message}`);
+  }
+  // expandPartitionGlob sorts by key and rejects an empty expansion, so the
+  // first entry is the first partition. The guard holds for any other lister.
+  if (!files || files.length === 0) {
+    throw unresolved(`The expansion of the partition glob ${metadata.glob} named no files`);
+  }
+
+  const totalRows = declaredTotalRows(asset);
+  return {
+    url: files[0],
+    partition: {
+      title: basename(files[0]),
+      count: files.length,
+      totalRows,
+      mirrorUrl: totalRows ? null : mirrorUrl(context),
+    },
+  };
+}
+
 /**
  * Resolve a parquet asset to one file the browser can read.
  *
@@ -103,7 +184,10 @@ function findPartitionHref(item, pattern, itemUrl) {
  * itself with a null `partition` and costs no request. A wildcard href resolves
  * to the parquet asset of the first `item` link of the asset's collection, and
  * `partition` reports that partition's `title` and the collection's partition
- * `count` so the caller can state which partition it shows.
+ * `count` so the caller can state which partition it shows. The synthetic
+ * entry of createPartitionPlaceholder resolves to the first file of the
+ * collection's expanded `partition:glob`, with that file's name as the
+ * partition `title` and the number of matched files as the `count`.
  *
  * `partition` also carries the row count over every partition, so a count over
  * one file does not read as a count over the collection. `totalRows` holds the
@@ -112,16 +196,27 @@ function findPartitionHref(item, pattern, itemUrl) {
  * Both are null when neither is available.
  *
  * Rejects with `error.code === GLOB_UNRESOLVED` when the collection lists no
- * items, when the asset has no collection, or when the first item declares no
- * parquet asset. A failed item request rejects with that request's own error.
+ * items, when the asset has no collection, when the first item declares no
+ * parquet asset, when a placeholder's collection declares no glob, and
+ * whenever the expansion of a glob fails. A failed item request rejects with
+ * that request's own error.
  *
- * `fetchJson` is the item reader, injected for tests. `signal` (an
- * AbortSignal) is forwarded to it.
+ * `fetchJson` is the item reader and `listGlob` the glob expander, both
+ * injected for tests. `signal` (an AbortSignal) is forwarded to them.
  */
-export async function resolveParquetGlob(asset, { signal, fetchJson = fetchItemJson } = {}) {
+export async function resolveParquetGlob(asset, {
+  signal, fetchJson = fetchItemJson, listGlob = expandPartitionGlob,
+} = {}) {
+  if (isPartitionPlaceholder(asset)) {
+    return resolvePartitionGlob(asset, { signal, listGlob });
+  }
+
   const url = asset.getAbsoluteUrl?.() || asset.href || '';
   if (!hasGlobPattern(url)) {
-    return { url, partition: null };
+    // An s3:// primary href previews through the https alternate the v0.3
+    // spec requires beside it; fetchableAssetHref answers the href itself
+    // whenever it is already one a browser can read.
+    return { url: fetchableAssetHref(asset) || url, partition: null };
   }
 
   const context = asset.getContext?.();

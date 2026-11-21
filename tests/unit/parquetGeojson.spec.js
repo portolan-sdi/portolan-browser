@@ -106,14 +106,20 @@ const RD_AMSTERDAM_LONLAT = [4.898009884440856, 52.37421815184261]
 // Wires the hyparquet mocks so that loadParquetMetadata sees a GeoParquet
 // file with a `geometry` column, `numRows` rows, and (optionally) a CRS, and
 // parquetRead delivers `rows` in whatever format the caller asked for.
-function mockParquetFile({ numRows, rows = [], crs = null, geo = true, columns = ['geometry', 'name'], byteLength = 1000 }) {
+// `schema` stands in for the footer's own schema elements, so a test can give
+// a column a native GEOMETRY/GEOGRAPHY logical type instead of a `geo` key.
+function mockParquetFile({ numRows, rows = [], crs = null, geo = true, columns = ['geometry', 'name'], byteLength = 1000, schema = undefined, keyValueMetadata = [] }) {
   const geoMeta = {
     primary_column: 'geometry',
     columns: { geometry: crs ? { crs } : {} },
   }
   const metadata = {
     num_rows: BigInt(numRows),
-    key_value_metadata: geo ? [{ key: 'geo', value: JSON.stringify(geoMeta) }] : [],
+    key_value_metadata: [
+      ...(geo ? [{ key: 'geo', value: JSON.stringify(geoMeta) }] : []),
+      ...keyValueMetadata,
+    ],
+    schema,
   }
   asyncBufferFromUrl.mockResolvedValue({ byteLength })
   parquetMetadataAsync.mockResolvedValue(metadata)
@@ -647,6 +653,94 @@ describe('loadGeoJsonFromParquet reprojection', () => {
       numRows: 1,
       rows: [{ geometry: { type: 'Point', coordinates: [1113194.9079327357, 0] } }],
       crs: { id: { authority: 'EPSG', code: 3857 } },
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/webmerc.parquet')
+    expect(result.reprojectedFrom).toBe('EPSG:3857')
+    closeTo(result.featureCollection.features[0].geometry.coordinates, [10, 0])
+  })
+
+  it('reads a native GEOGRAPHY column, whose CRS is a string rather than PROJJSON', async () => {
+    // A GEOGRAPHY logical type is always a geographic CRS, so OGC:CRS84 needs
+    // no reprojection. The fixture-backed GEOMETRY case lives in
+    // tests/unit/parquet.spec.js.
+    mockParquetFile({
+      numRows: 1,
+      rows: [{ shape: POLYGON }],
+      geo: false,
+      columns: ['id', 'shape'],
+      schema: [
+        { name: 'schema', num_children: 2 },
+        { name: 'id', type: 'INT32' },
+        { name: 'shape', type: 'BYTE_ARRAY', logical_type: { type: 'GEOGRAPHY', crs: 'OGC:CRS84' } },
+      ],
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/geography.parquet')
+    expect(result.reprojectedFrom).toBeNull()
+    expect(result.featureCollection.features[0].geometry).toEqual(POLYGON)
+    expect(parquetRead).toHaveBeenCalledWith(expect.objectContaining({ columns: ['shape'] }))
+  })
+
+  // Parquet's Geospatial.md suggests four forms for the `crs` string of a
+  // native logical type, and Portolan v0.3 asks a file without a `geo` key
+  // for one of the two PROJJSON ones. Each form gets a case below.
+  const nativeCrsFile = (crs, extra = {}) => mockParquetFile({
+    numRows: 1,
+    rows: [{ shape: { type: 'Point', coordinates: RD_ORIGIN } }],
+    geo: false,
+    columns: ['shape'],
+    schema: [
+      { name: 'schema', num_children: 1 },
+      { name: 'shape', type: 'BYTE_ARRAY', logical_type: { type: 'GEOMETRY', crs } },
+    ],
+    ...extra,
+  })
+
+  it('reprojects a native GEOMETRY column from inline PROJJSON in the logical type', async () => {
+    nativeCrsFile(JSON.stringify(RD_NEW_PROJJSON))
+    const result = await loadGeoJsonFromParquet('https://example.com/native-rd.parquet')
+    expect(result.reprojectedFrom).toBe('EPSG:28992')
+    closeTo(result.featureCollection.features[0].geometry.coordinates, RD_ORIGIN_LONLAT)
+  })
+
+  it('resolves a projjson:<key> reference against the file key-value metadata', async () => {
+    nativeCrsFile('projjson:rd_new', {
+      keyValueMetadata: [{ key: 'rd_new', value: JSON.stringify(RD_NEW_PROJJSON) }],
+    })
+    const result = await loadGeoJsonFromParquet('https://example.com/native-rd.parquet')
+    expect(result.reprojectedFrom).toBe('EPSG:28992')
+    closeTo(result.featureCollection.features[0].geometry.coordinates, RD_ORIGIN_LONLAT)
+  })
+
+  it('refuses a projjson:<key> reference the file does not carry', async () => {
+    nativeCrsFile('projjson:absent')
+    await expect(loadGeoJsonFromParquet('https://example.com/native-rd.parquet'))
+      .rejects.toThrow('GeoParquet CRS unidentified is not supported for map display')
+  })
+
+  it('refuses inline PROJJSON that will not parse rather than guessing lon/lat', async () => {
+    nativeCrsFile('{"type":"ProjectedCRS"')
+    await expect(loadGeoJsonFromParquet('https://example.com/native-rd.parquet'))
+      .rejects.toThrow('GeoParquet CRS unidentified is not supported for map display')
+  })
+
+  it('refuses an srid: reference, which identifies no CRS on its own', async () => {
+    // An SRID is database-specific: 4326 happens to be WGS84 in PostGIS, but
+    // the number alone cannot be assumed to mean that.
+    nativeCrsFile('srid:4326')
+    await expect(loadGeoJsonFromParquet('https://example.com/native-rd.parquet'))
+      .rejects.toThrow('GeoParquet CRS unidentified is not supported for map display')
+  })
+
+  it('reprojects a native GEOMETRY column whose logical type names a projected CRS', async () => {
+    mockParquetFile({
+      numRows: 1,
+      rows: [{ shape: { type: 'Point', coordinates: [1113194.9079327357, 0] } }],
+      geo: false,
+      columns: ['shape'],
+      schema: [
+        { name: 'schema', num_children: 1 },
+        { name: 'shape', type: 'BYTE_ARRAY', logical_type: { type: 'GEOMETRY', crs: 'EPSG:3857' } },
+      ],
     })
     const result = await loadGeoJsonFromParquet('https://example.com/webmerc.parquet')
     expect(result.reprojectedFrom).toBe('EPSG:3857')
