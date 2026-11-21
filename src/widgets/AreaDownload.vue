@@ -63,7 +63,7 @@
               </button>
             </div>
             <div class="ad-tools-row">
-              <!-- @cng/maplibre's GeocoderControl lands here; see mountSearch().
+              <!-- @cngeo/maplibre's GeocoderControl lands here; see mountSearch().
                    v-show, not v-if: `ref="search"` must stay resolvable so a
                    later `indexUrl` is never possible (it is not reactive --
                    see mountSearch()) and so this never races the Transition
@@ -460,7 +460,7 @@
                 after: line.after,
                 unit: $t(`widgets.areaDownload.prune.${line.unit}`)
               }) }}
-              <!-- The basis sentence comes from @cng/download-core, which
+              <!-- The basis sentence comes from @cngeo/extract-core, which
                    has no i18n of its own: shown verbatim as the technical
                    footnote it is, rather than paraphrased into something
                    that could drift from what the code did. -->
@@ -500,10 +500,10 @@
 <script>
 import { defineComponent, markRaw } from 'vue';
 import { mapState } from 'vuex';
-import { estimate, blobSink, fileSystemSink, downloadRequest, onFormatState } from '@cng/download-core';
-import { Geocoder } from '@cng/geocoder-core';
-import { areaFromFile, attachDropTarget } from '@cng/upload-core';
-// Both of these are @cng/maplibre's, reused as-is rather than
+import { estimate, blobSink, fileSystemSink, downloadRequest, onFormatState } from '@cngeo/extract-core';
+import { Geocoder } from '@cngeo/geocoder-core';
+import { areaFromFile, attachDropTarget } from '@cngeo/upload-core';
+// Both of these are @cngeo/maplibre's, reused as-is rather than
 // reimplemented here:
 //
 //   * `createDrawTool` in `polygon` mode is the "Draw polygon" button. It
@@ -516,8 +516,8 @@ import { areaFromFile, attachDropTarget } from '@cng/upload-core';
 //     the handles, the drag/insert/delete gestures and the
 //     `provenance.source: 'edited'` lineage; this widget only decides when
 //     it is on and what to do with the Areas it emits.
-import { addAreaLayer, GeocoderControl, createDrawTool, createEditTool } from '@cng/maplibre';
-import { toAreaDocument, buildArea, VERSION } from '@cng/spec';
+import { addAreaLayer, GeocoderControl, createDrawTool, createEditTool } from '@cngeo/maplibre';
+import { toAreaDocument, buildArea, VERSION } from '@cngeo/spec';
 import BboxDrawInteraction from '../components/maps/BboxDrawInteraction.js';
 import { MAP_HOST } from '../components/maps/mapHost.js';
 import CodeBox from '../components/CodeBox.vue';
@@ -546,7 +546,7 @@ import { downloadGenerators } from '../../codeGenerators.config.js';
 
 // Every estimate warning the packages raise, in words. Three of them carry
 // numbers only and have always needed the widget to supply the sentence;
-// the other four carry an English `message` from @cng/download-core, which
+// the other four carry an English `message` from @cngeo/extract-core, which
 // is still said here instead, because a licence obligation and a "nothing
 // could be pruned" explanation are both things a translated UI should say
 // in its own language. Anything not listed falls back to its `message`.
@@ -560,7 +560,7 @@ const WARNING_KEYS = {
   'no-statistics': 'widgets.areaDownload.warnings.noStatistics'
 };
 
-// The formats on offer come from `@cng/download-core`'s registry, each
+// The formats on offer come from `@cngeo/extract-core`'s registry, each
 // with its own bytes-per-row model -- so the size beside a button is that
 // format's own estimate and not one number for all of them (GeoJSON text
 // of the same rows runs roughly three times a GeoParquet file). GeoJSON
@@ -618,7 +618,7 @@ const NARROW_MAP = '(max-width: 575.98px)';
 // map, which it gets from the injected map host -- see
 // src/components/maps/mapHost.js and docs/widgets.md.
 //
-// That is why the area picker here is @cng/maplibre's GeocoderControl and
+// That is why the area picker here is @cngeo/maplibre's GeocoderControl and
 // not a bootstrap-vue-next form: the adapter's controls were written to be
 // mounted on a map, and now there is a map to mount them on. The user sees
 // the area they picked outlined over the actual data, which is the whole
@@ -653,7 +653,7 @@ export default defineComponent({
       type: Array,
       default: null
     },
-    // Attribute filters applied to every request, as @cng Predicates.
+    // Attribute filters applied to every request, as @cngeo Predicates.
     where: {
       type: Array,
       default: () => []
@@ -980,7 +980,7 @@ export default defineComponent({
     // under WebDriver exercises the picker path, and a commit bug in that
     // sink once shipped past this whole suite (0-byte files under a card
     // reporting 7.3 MB). The
-    // regression test for it lives in @cng/download-core, driving a real
+    // regression test for it lives in @cngeo/extract-core, driving a real
     // OPFS writable, because that is the layer that can be tested headless.
     usePicker() {
       if (this.directSave === 'anchor' || typeof window.showSaveFilePicker !== 'function') {
@@ -1162,7 +1162,7 @@ export default defineComponent({
         id: 'area-download-draw',
         names: { drawn: this.$t('widgets.areaDownload.area.drawnName') }
       }));
-      // `on('area')` hands back a finished Area built by @cng/spec, so
+      // `on('area')` hands back a finished Area built by @cngeo/spec, so
       // unlike the box tool there is no extent to turn into one here.
       this.polygonDraw.on('area', ({ area }) => {
         this.polygonArmed = false;
@@ -1192,7 +1192,7 @@ export default defineComponent({
         this.startEditing();
       }
     },
-    // @cng/maplibre's GeocoderControl, built as a MapLibre IControl: it
+    // @cngeo/maplibre's GeocoderControl, built as a MapLibre IControl: it
     // takes the real map, reads the real viewport to bias ranking, and
     // brings its own combobox a11y. Its element goes into this widget's
     // cluster rather than a MapLibre corner container (which is all
@@ -1648,7 +1648,7 @@ export default defineComponent({
     stageKey(stage) {
       return String(stage).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
     },
-    // The cascade's stage names come from @cng/download-core, which is
+    // The cascade's stage names come from @cngeo/extract-core, which is
     // free to grow one. A stage this app has no sentence for is shown by
     // its own name rather than as a missing-key path.
     stageLabel(stage) {
@@ -2003,7 +2003,7 @@ export default defineComponent({
     // is a stack trace with a colon in it, not an explanation.
     // A warning in words. The ones that carry only numbers get their
     // sentence from the locale; the ones a format plugin raises carry
-    // their own English `message` (there is no i18n inside the @cng
+    // their own English `message` (there is no i18n inside the @cngeo
     // packages), which is better than printing a code.
     warningText(warning) {
       const key = WARNING_KEYS[warning.code];

@@ -83,7 +83,7 @@ export function camelCode(code) {
     .replace(/_([a-z0-9])/g, (_, char) => char.toUpperCase());
 }
 
-// Every code in `@cng/spec`'s taxonomy that can reach this widget, plus
+// Every code in `@cngeo/spec`'s taxonomy that can reach this widget, plus
 // `CANCELLED`. The taxonomy's own rule is that the code is the API and the
 // message is for humans and may be reworded — so the widget rewords it,
 // into something that says what to do next, and falls back to the thrown
@@ -111,7 +111,7 @@ export const ERROR_CODES = [
   'CEILING_EXCEEDED',
   'FORMAT_UNAVAILABLE',
   'FORMAT_CAPABILITY',
-  // Not in `@cng/spec`'s own typedef yet: `registerLazyFormat`'s loader
+  // Not in `@cngeo/spec`'s own typedef yet: `registerLazyFormat`'s loader
   // throws it when a format plugin cannot be fetched (E10). Listed here so
   // the card says "that format's writer could not be loaded" instead of
   // printing the code.

@@ -18,6 +18,33 @@ importers:
       '@apidevtools/json-schema-ref-parser':
         specifier: ^15.2.2
         version: 15.3.5(@types/json-schema@7.0.15)
+      '@cngeo/extract-core':
+        specifier: 0.2.0
+        version: 0.2.0
+      '@cngeo/format-extras':
+        specifier: 0.2.0
+        version: 0.2.0
+      '@cngeo/format-flatgeobuf':
+        specifier: 0.2.0
+        version: 0.2.0
+      '@cngeo/format-gpkg':
+        specifier: 0.2.0
+        version: 0.2.0
+      '@cngeo/format-shapefile':
+        specifier: 0.2.0
+        version: 0.2.0
+      '@cngeo/geocoder-core':
+        specifier: 0.2.0
+        version: 0.2.0
+      '@cngeo/maplibre':
+        specifier: 0.2.0
+        version: 0.2.0(maplibre-gl@5.24.0)
+      '@cngeo/spec':
+        specifier: 0.2.0
+        version: 0.2.0
+      '@cngeo/upload-core':
+        specifier: 0.2.0
+        version: 0.2.0
       '@codemirror/commands':
         specifier: ^6.10.4
         version: 6.10.4
@@ -328,6 +355,35 @@ packages:
   '@chunkd/source@11.4.1':
     resolution: {integrity: sha512-R4/gIKbx059Am4UOYplEjKkE6g9jhDQF4M7jKNkMZR8Toeudr9vQl0z9ppb9fkTQIuvW8oKjO0Hc5/s4RCCCzg==}
     engines: {node: '>=16.0.0'}
+
+  '@cngeo/extract-core@0.2.0':
+    resolution: {integrity: sha512-rRCgrVce5kNkqaUd7KKqe2XSj88w7gQTBydlpAYf4tPW8haLWpp7jcTMXSkCl5ZOqbzL0vIoUQJ1ZEscuTM+HA==}
+
+  '@cngeo/format-extras@0.2.0':
+    resolution: {integrity: sha512-VsrLcvgaOliGtVd3ZD9Nn8BbPmDJwFtrZm96vqYsLMJAKu1e7K5Hh3r5JqCJ7icoUQNuVIFlDDjP/GGZZoXn1A==}
+
+  '@cngeo/format-flatgeobuf@0.2.0':
+    resolution: {integrity: sha512-dfrACJOSDS8C62fP23hF1huNPbCe/5cmerubsnGO6AekA0u4s57RtAxAhIaaJWL19bUAqvhH+H7fe1/eiFHaAQ==}
+
+  '@cngeo/format-gpkg@0.2.0':
+    resolution: {integrity: sha512-ufPh+7W9glJvFI0k3iKUR8BTdU1+5OnaOn7QC7oBnI1L1HdV10S0oMLp+YWdp8z5EUGtvWTwOMNCrhEFjvK3Mg==}
+
+  '@cngeo/format-shapefile@0.2.0':
+    resolution: {integrity: sha512-fd8TVR7VS9LCPGM/srtF00yeFfQ5OaQtQtM7/ElXyu+eI8LakJ9NfrxvWWnEUswF7kY/G9wySv6z2iFuJaIR/A==}
+
+  '@cngeo/geocoder-core@0.2.0':
+    resolution: {integrity: sha512-eRMdC26K0DCcs/Q5nFdjwUEUeBWlnrL6pkJwdmPVNORmeMT6e+9lUEV7gI8nnCvmmtk5AxB39LLn0+GzLoMDRQ==}
+
+  '@cngeo/maplibre@0.2.0':
+    resolution: {integrity: sha512-1AzKTdOhOfB7pf++3OiRW+dNvPqjARfXFOb3GeAyEI9M40RZtbb272yzuYQs7vz3kKMydjdOojNuDKAFrG5xKQ==}
+    peerDependencies:
+      maplibre-gl: ^4.0.0 || ^5.0.0
+
+  '@cngeo/spec@0.2.0':
+    resolution: {integrity: sha512-r+aD4bbQDE6H2dsxRUkqDhg4XTRNhBB+JJBeQBzMnHHyL23vmJX3BQLSoJoleQs0yUGnfa4vWYmk33xfdkACXQ==}
+
+  '@cngeo/upload-core@0.2.0':
+    resolution: {integrity: sha512-TBhH1XYn5CifuYHyzwoeed8ALeqZzEu/YSIYJH7izwf62xACIfw7+3Wlu8R65I3xBsCZw3D8R+EmWyxduVl1Aw==}
 
   '@codemirror/autocomplete@6.20.3':
     resolution: {integrity: sha512-tlosUqb+3BbxCxZdu4tKeRghPFC+QM7q4X5YhKV2eCmPG+1r2F3f4AaSz5sCrFqUtX4Jh20VFTKecl16MgiV9g==}
@@ -4627,6 +4683,41 @@ snapshots:
       '@chunkd/source': 11.4.1
 
   '@chunkd/source@11.4.1': {}
+
+  '@cngeo/extract-core@0.2.0':
+    dependencies:
+      '@cngeo/spec': 0.2.0
+
+  '@cngeo/format-extras@0.2.0':
+    dependencies:
+      '@cngeo/spec': 0.2.0
+
+  '@cngeo/format-flatgeobuf@0.2.0':
+    dependencies:
+      '@cngeo/spec': 0.2.0
+
+  '@cngeo/format-gpkg@0.2.0':
+    dependencies:
+      '@cngeo/spec': 0.2.0
+
+  '@cngeo/format-shapefile@0.2.0':
+    dependencies:
+      '@cngeo/spec': 0.2.0
+
+  '@cngeo/geocoder-core@0.2.0':
+    dependencies:
+      '@cngeo/spec': 0.2.0
+
+  '@cngeo/maplibre@0.2.0(maplibre-gl@5.24.0)':
+    dependencies:
+      '@cngeo/spec': 0.2.0
+      maplibre-gl: 5.24.0
+
+  '@cngeo/spec@0.2.0': {}
+
+  '@cngeo/upload-core@0.2.0':
+    dependencies:
+      '@cngeo/spec': 0.2.0
 
   '@codemirror/autocomplete@6.20.3':
     dependencies:

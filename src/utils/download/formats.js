@@ -1,6 +1,6 @@
 // Which output formats the card offers, and what each one costs.
 //
-// `@cng/download-core` ships GeoJSON and GeoParquet in core and registers
+// `@cngeo/extract-core` ships GeoJSON and GeoParquet in core and registers
 // them itself. Everything else is a separate package that registers a small
 // *descriptor* — id, label, extension, media type, a synchronous
 // `estimateBytes` and an `approxBytes` weight — whose `load()` is not
@@ -29,11 +29,11 @@
 // five formats and loses two, which is a better trade than bundling a
 // 340 KB wasm into every page that shows a map.
 
-import { registerLazyFormat, formats, getFormat, formatLoadState } from '@cng/download-core';
-import { gpkgFormatDescriptor } from '@cng/format-gpkg';
-import { flatGeobufFormatDescriptor } from '@cng/format-flatgeobuf';
-import { shapefileFormatDescriptor } from '@cng/format-shapefile';
-import { csvFormatDescriptor, esriJsonFormatDescriptor } from '@cng/format-extras';
+import { registerLazyFormat, formats, getFormat, formatLoadState } from '@cngeo/extract-core';
+import { gpkgFormatDescriptor } from '@cngeo/format-gpkg';
+import { flatGeobufFormatDescriptor } from '@cngeo/format-flatgeobuf';
+import { shapefileFormatDescriptor } from '@cngeo/format-shapefile';
+import { csvFormatDescriptor, esriJsonFormatDescriptor } from '@cngeo/format-extras';
 
 // The order they are offered in: the two that need nothing first, then the
 // interchange formats, then the two text ones. Any format registered by a

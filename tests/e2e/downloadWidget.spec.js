@@ -6,7 +6,7 @@
  * tests hold three things about that:
  *
  *   1. On vector GeoParquet it is there, inside the map, with the three ways
- *      of picking an area side by side: the @cng/maplibre geocoder's search
+ *      of picking an area side by side: the @cngeo/maplibre geocoder's search
  *      box, a draw button and an upload button.
  *   2. On a raster collection it is not there at all -- the design it comes
  *      from treats an undownloadable dataset as an *absence*, not as a panel
@@ -155,10 +155,10 @@ test.describe('Download data widget', () => {
     await expect(widget(page)).toBeVisible();
     // The affordance, in words, on the map.
     await expect(widget(page).locator('.ad-tools-head')).toContainText('Download data');
-    // The @cng geocoder control, mounted on the real map.
+    // The @cngeo geocoder control, mounted on the real map.
     await expect(widget(page).locator('.ad-search input[role="combobox"]')).toBeVisible();
     await expect(widget(page).getByRole('button', { name: 'Draw a box' })).toBeVisible();
-    // The box tool's sibling: @cng/maplibre's shared draw tool in polygon mode.
+    // The box tool's sibling: @cngeo/maplibre's shared draw tool in polygon mode.
     await expect(widget(page).getByRole('button', { name: 'Draw polygon' })).toBeVisible();
     await expect(widget(page).getByRole('button', { name: 'Upload' })).toBeVisible();
     // Nothing to download yet, so no card.
@@ -395,7 +395,7 @@ test.describe('Download card: saying what went wrong', () => {
 });
 
 test.describe('Drawing a polygon, and editing an area', () => {
-  // Both tools are @cng/maplibre's, consumed through the Vite alias:
+  // Both tools are @cngeo/maplibre's, consumed through the Vite alias:
   // `createDrawTool` in polygon mode and `createEditTool`. These tests are
   // about this app's half of the wiring -- that the buttons arm and disarm
   // the right tool, that the two draw modes are mutually exclusive, and

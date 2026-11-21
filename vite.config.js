@@ -34,70 +34,6 @@ const optionsForType = (type) =>
 
 const defaultConfigPath = fileURLToPath(new URL("./config.js", import.meta.url));
 
-// The @cng cloud-native map widget packages (geocoder/upload/download cores
-// and the MapLibre adapter) that the "Download data" widget is built on.
-//
-// They are not published to npm yet, so this branch consumes them from a
-// sibling checkout of the cng-map-widgets workspace rather than from
-// node_modules: a Vite alias, not an npm `file:` dependency. The alias is
-// one reviewable file and leaves pnpm-lock.yaml untouched, where `file:`
-// links would rewrite the lockfile with paths that only resolve on a
-// machine that has the sibling repo anyway.
-//
-// WHEN THESE PACKAGES ARE PUBLISHED, this block and SB_CNG_ROOT go away and
-// these names become ordinary version-pinned dependencies in package.json.
-// Nothing else in the app changes: every import is by package name already.
-//
-// Override the location with SB_CNG_ROOT (absolute, or relative to this
-// file's directory).
-const cngPackagesPath = (() => {
-  const fromEnv = process.env.SB_CNG_ROOT;
-  if (fromEnv) {
-    return resolve(fileURLToPath(new URL(".", import.meta.url)), fromEnv);
-  }
-  return fileURLToPath(new URL("../cng-map-widgets/packages", import.meta.url));
-})();
-
-const cngAvailable = (() => {
-  try {
-    accessSync(resolve(cngPackagesPath, "download-core/src/index.js"));
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!cngAvailable) {
-  // Fail loudly here rather than as an unresolved-import error 200 lines
-  // into a build log.
-  console.warn(
-    `[portolan-browser] The @cng widget packages were not found at ${cngPackagesPath}. ` +
-      "The \"Download data\" widget will not build. Check out cng-map-widgets beside this repo, " +
-      "or point SB_CNG_ROOT at it, or remove the widget from widgets.config.js."
-  );
-}
-
-const cngAliases = Object.fromEntries(
-  [
-    "spec",
-    "geocoder-core",
-    "upload-core",
-    "download-core",
-    "maplibre",
-    // The optional output formats. Each package is a small descriptor plus
-    // its writer; anything heavy inside one (sql.js's wasm for GeoPackage)
-    // is fetched by that descriptor's own `load()`, only once the user
-    // picks the format.
-    "format-gpkg",
-    "format-flatgeobuf",
-    "format-shapefile",
-    "format-extras",
-  ].map((name) => [
-    `@cng/${name}`,
-    resolve(cngPackagesPath, `${name}/src/index.js`),
-  ])
-);
-
 // Parse an array-typed option from a single environment variable value.
 // A full JSON array (e.g. '[{"label":"a","url":"b"}]') is used as-is, which
 // allows arrays of objects. For convenience, a plain comma-separated list
@@ -300,17 +236,17 @@ export default defineConfig(async ({ mode }) => {
       // a WKT definition the same way. @developmentseed/proj pins an older
       // copy, and two parsers can disagree once one of them gains a fix.
       // hyparquet is deduped for the same class of reason: the app pins
-      // hyparquet 1.26.0, and the @cng packages are aliased in from outside
-      // this project's node_modules, where a stray second copy would
-      // otherwise be resolvable. The parquet reader must be one instance --
-      // two would mean two WASM-less decoders, two module caches, and twice
-      // the bytes for no benefit. hyparquet-writer bare-imports hyparquet
-      // internally, so it has to agree as well.
+      // hyparquet 1.26.0, and ParquetViewer, the map's GeoParquet layer and
+      // the @cngeo packages all read parquet. The parquet reader must be one
+      // instance -- two would mean two WASM-less decoders, two module caches,
+      // and twice the bytes for no benefit. hyparquet-writer bare-imports
+      // hyparquet internally, so it has to agree as well. The @cngeo packages
+      // take this app's copy through their injection seam; see
+      // src/utils/download/hyparquet.js.
       dedupe: ["ol", "stac-js", "proj4", "wkt-parser", "hyparquet", "hyparquet-compressors", "hyparquet-writer"],
       alias: {
         "@": fileURLToPath(new URL("./src", import.meta.url)),
         "@stac-browser-external-config": externalConfigPath,
-        ...cngAliases,
       },
     },
     server: {
@@ -318,10 +254,6 @@ export default defineConfig(async ({ mode }) => {
         allow: [
           searchForWorkspaceRoot(process.cwd()),
           externalConfigPath,
-          // The aliased @cng packages live outside this project, so the dev
-          // server must be allowed to serve them. Drops out with the alias
-          // once the packages are published.
-          cngPackagesPath
         ],
       },
       port: 8080,

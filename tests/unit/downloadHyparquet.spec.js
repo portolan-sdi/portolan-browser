@@ -1,6 +1,6 @@
 // The hyparquet version reconciliation behind the "Download data" widget.
 //
-// The @cng packages pin hyparquet 1.33.0 in the CDN URLs they use when they
+// The @cngeo packages pin hyparquet 1.33.0 in the CDN URLs they use when they
 // run without a bundler; this app pins 1.26.0 and injects it instead (see
 // src/utils/download/hyparquet.js). That is only safe if the two read-path
 // flags download-core depends on behave the same way on 1.26.0, and if

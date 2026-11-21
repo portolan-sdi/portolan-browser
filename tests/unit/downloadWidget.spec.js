@@ -15,7 +15,7 @@ import { mayHaveDownloadableVector } from '../../src/utils/download/support.js'
 import { describeDataset, toPlainStacJson } from '../../src/utils/download/descriptor.js'
 import { createMapHost } from '../../src/components/maps/mapHost.js'
 import BboxDrawInteraction from '../../src/components/maps/BboxDrawInteraction.js'
-import { createDrawTool } from '@cng/maplibre'
+import { createDrawTool } from '@cngeo/maplibre'
 import DownloadRequestGenerator from '../../src/codegen/DownloadRequestGenerator.js'
 import DuckDbSqlGenerator from '../../src/codegen/DuckDbSqlGenerator.js'
 
@@ -467,7 +467,7 @@ describe('BboxDrawInteraction armed mode (the "Draw a box" button)', () => {
   })
 })
 
-// The "Draw polygon" button is @cng/maplibre's shared `createDrawTool` in
+// The "Draw polygon" button is @cngeo/maplibre's shared `createDrawTool` in
 // polygon mode, consumed through the Vite alias -- not a local class. The
 // gesture logic has its own unit tests upstream; what is worth asserting
 // *here* is that the package this app actually resolves behaves the way the

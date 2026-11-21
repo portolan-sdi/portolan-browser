@@ -11,7 +11,7 @@
 //
 //   1. FTW ESTIMATE. The failure this run exists for: the widget appeared
 //      and the box drew, but Estimate came back red with "This dataset's
-//      files could not be read." Root cause was in @cng/download-core --
+//      files could not be read." Root cause was in @cngeo/extract-core --
 //      a collection-mirror row's asset href is relative (`./utm01.parquet`)
 //      and was handed to `fetch` unresolved, so in a browser all 54 parts
 //      resolved against the *page* (http://localhost:8081/utm01.parquet).

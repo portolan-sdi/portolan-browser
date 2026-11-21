@@ -29,7 +29,7 @@ import CONFIG from './config.js';
 //
 // `condition` runs on every render of the hook and must stay cheap, so it
 // uses a small app-local predicate rather than the authoritative
-// `@cng/download-core` derivation -- see src/utils/download/support.js for
+// `@cngeo/extract-core` derivation -- see src/utils/download/support.js for
 // why (this file is in the main bundle; the widget is not).
 const areaDownload = {
   id: 'AreaDownload',

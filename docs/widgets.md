@@ -134,7 +134,7 @@ the file straight away — through `showSaveFilePicker` where the browser has it
 otherwise as a Blob the widget clicks for you. There is no link to find and click.
 
 GeoJSON and GeoParquet are offered directly; "More formats" adds GeoPackage,
-FlatGeobuf, Shapefile, CSV and Esri JSON. The last five are separate `@cng` packages
+FlatGeobuf, Shapefile, CSV and Esri JSON. The last five are separate `@cngeo` packages
 whose writers load the first time someone picks them. Each button states what
 its plugin still has to fetch (`GeoPackage · 133 kB +331 kB`) before anything is
 downloaded, and a format that cannot be fetched says so rather than failing silently.
@@ -196,7 +196,7 @@ down its right-hand side, and the card is capped at just under half the map's he
 style picker and its legend are still usable underneath.
 
 The browser reads only the row groups the area touches, straight from the collection's
-parquet files. The widget is built on the `@cng` cloud-native map widget packages,
+parquet files. The widget is built on the `@cngeo` cloud-native map widget packages,
 published from the [cng-map-widgets](https://github.com/cholmes/cng-map-widgets)
 workspace.
 
@@ -209,7 +209,7 @@ renders none of the tool, down to the pill. The widget must be placed on
 | ---------------- | ------ | ------------ | ----------- |
 | `indexUrl`       | String | the published geoBoundaries names index | The place-name index the search box reads, as a `cnmw-index/1.0` manifest URL. `null` hides the search box entirely, and the widget then builds no Geocoder and fetches no index. Draw, upload and download keep working. In `widgets.config.js`, this is wired to the [`areaSearchIndexUrl`](options.md#areasearchindexurl) config option rather than hardcoded. |
 | `allowedFormats` | Array  | `null`       | Restricts the format buttons offered to this list of ids: any of `'geojson'`, `'geoparquet'`, `'gpkg'`, `'flatgeobuf'`, `'shapefile'`, `'csv'`, `'esrijson'` (see `src/utils/download/formats.js`). `null` or `[]` offers every registered format. In `widgets.config.js`, this is wired to the [`areaDownloadFormats`](options.md#areadownloadformats) config option. |
-| `where`          | Array  | `[]`         | Attribute predicates applied to every download, in `@cng` `FilterSpec` form, such as `[{ col: 'confidence', op: '>=', value: 0.9 }]`. The card's own column filters are ANDed onto these, not instead of them. |
+| `where`          | Array  | `[]`         | Attribute predicates applied to every download, in `@cngeo` `FilterSpec` form, such as `[{ col: 'confidence', op: '>=', value: 0.9 }]`. The card's own column filters are ANDed onto these, not instead of them. |
 | `limit`          | Number | `100000`     | Hard cap on the rows a download writes. Distinct from the safety ceiling, which is a refusal the user can accept. |
 | `directSave`     | String | `'auto'`     | The destination the widget writes the finished file to. `'picker'` always asks the File System Access API for a destination, `'anchor'` always writes a Blob and clicks it, `'auto'` prefers the picker where it exists and is not driven by automation. |
 
