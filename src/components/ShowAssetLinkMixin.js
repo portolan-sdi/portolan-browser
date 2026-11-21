@@ -161,9 +161,12 @@ export default {
       const visual = cogAssets.find(a =>
         Array.isArray(a.roles) && a.roles.includes('visual')
       );
+      const overview = cogAssets.find(a =>
+        Array.isArray(a.roles) && a.roles.includes('overview')
+      );
       this.selectedAssets = declared.length
         ? declared.map(l => l.asset)
-        : [visual || cogAssets[0]];
+        : [visual || overview || cogAssets[0]];
       this.hasAutoSelected = true;
     }
   }

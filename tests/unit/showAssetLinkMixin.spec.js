@@ -39,6 +39,11 @@ describe('_autoSelectCogAsset', () => {
     expect(keys(run({}, plain))).toEqual(['a'])
   })
 
+  it('falls back to the overview-role asset when there is no visual asset', () => {
+    const plain = [asset('a'), asset('b', { roles: ['overview'] })]
+    expect(keys(run({}, plain))).toEqual(['b'])
+  })
+
   it('falls back when the declared keys resolve to nothing', () => {
     const stac = { properties: { renders: RENDERS, 'portolan:render_order': ['gone'] } }
     expect(keys(run(stac, assets))).toEqual(['planting_image'])
