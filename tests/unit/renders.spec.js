@@ -381,6 +381,18 @@ describe('renderFromClassification', () => {
     expect(pixel(res, 1)).toEqual([0, 158, 115, 255])
     expect(pixel(res, 2)).toEqual([213, 94, 0, 255])
   })
+
+  it('draws a class flagged nodata: true transparent', () => {
+    // A flagged class whose name is NOT in TRANSPARENT_CLASS_NAMES and whose
+    // value is NOT the band nodata (publishers err; the flag alone must win).
+    const asset = { 'classification:classes': [
+      { value: 7, name: 'missing-scan', title: 'Missing', color_hint: '112233', nodata: true },
+      { value: 10, name: 'cropland', title: 'Cropland', color_hint: 'FFFF64' },
+    ] }
+    const render = renderFromClassification(asset)
+    expect(render.colormap).toEqual({ '10': [255, 255, 100, 255] })
+    expect(render.nodata).toContain(7)
+  })
 })
 
 describe('classificationClasses', () => {
@@ -423,6 +435,17 @@ describe('discreteLegend', () => {
     const render = { colormap: { 1: [255, 0, 0, 255], 2: [0, 0, 255, 255] } }
     const legend = discreteLegend(render, classificationClasses(classifiedAsset(FTW_CLASSES)))
     expect(legend.map(r => r.label)).toEqual(['field', 'boundary'])
+  })
+
+  it('omits a nodata-flagged class from the legend', () => {
+    // discreteLegend over renderFromClassification's result: one row, labeled
+    // cropland; the flagged class never reaches the picker.
+    const asset = { 'classification:classes': [
+      { value: 7, name: 'missing-scan', title: 'Missing', color_hint: '112233', nodata: true },
+      { value: 10, name: 'cropland', title: 'Cropland', color_hint: 'FFFF64' },
+    ] }
+    const legend = discreteLegend(renderFromClassification(asset), classificationClasses(asset))
+    expect(legend).toEqual([{ color: 'rgb(255, 255, 100)', label: 'cropland' }])
   })
 
   it('leaves out a value the loader drops as nodata', () => {

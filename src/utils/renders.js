@@ -809,14 +809,20 @@ function hintToRgb(hint) {
   ];
 }
 
+// v0.3 of the classification extension puts the rule on the class itself:
+// `nodata: true` means transparent, whatever the name or value says. The
+// name set and the band-nodata match below are kept only as fallbacks for
+// classes written against pre-0.3 catalogs, which carry no flag at all.
 function isTransparentClass(cls, bandNodata) {
+  if (cls.nodata === true) {return true;}
   if (TRANSPARENT_CLASS_NAMES.has(String(cls.name || '').toLowerCase())) {return true;}
   return bandNodata != null && cls.value === bandNodata;
 }
 
 /**
  * Synthesize a discrete render from an asset's `classification:classes` colour
- * hints. Background, nodata, and the band's own nodata value draw transparent.
+ * hints. A class flagged `nodata: true`, a background/nodata-named class, and
+ * the band's own nodata value all draw transparent.
  *
  * Every class must resolve, to a colour or to transparent. One class that does
  * not returns null for the whole asset, and the caller falls back to a render.
