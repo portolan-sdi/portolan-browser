@@ -11,6 +11,7 @@ export default defineConfig({
     globals: true,
   },
   resolve: {
+    dedupe: ['hyparquet', 'hyparquet-compressors', 'hyparquet-writer'],
     alias: {
       '@': path.resolve(__dirname, './src'),
     },

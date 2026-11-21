@@ -12,6 +12,13 @@
       <TextControl v-if="empty" :text="$t('mapping.nodata')" />
       <TextControl v-else-if="!hasBasemap" :text="$t('mapping.nobasemap')" />
       <TextControl v-else-if="vectorNoticeText" :text="vectorNoticeText" />
+      <!-- Widgets that draw on the map rather than beside it. The hook is
+           inside the map container on purpose: a widget here can position
+           itself over the data and reach the real map through the injected
+           map host (see maps/mapHost.js and docs/widgets.md). -->
+      <div v-if="overlayWidgets" class="map-overlay-widgets">
+        <WidgetHook id="map-overlay" />
+      </div>
     </div>
     <div ref="target" class="popover-target" />
     <b-popover
@@ -34,6 +41,7 @@
 <script>
 import { defineAsyncComponent, markRaw } from 'vue';
 import MapMixin from './maps/MapMixin.js';
+import { MAP_HOST, createMapHost } from './maps/mapHost.js';
 import LayerControl from './maps/LayerControl.vue';
 import TextControl from './maps/TextControl.vue';
 import TerrainControl from './maps/TerrainControl.vue';
@@ -70,6 +78,12 @@ export default {
   mixins: [
     MapMixin
   ],
+  // One host object for the component's whole life, holding whichever map
+  // instance currently exists. provide() runs after data() and before the
+  // map is created, so the value has to be the stable wrapper, not the map.
+  provide() {
+    return { [MAP_HOST]: this.mapHost };
+  },
   props: {
     stac: {
       type: Object,
@@ -94,11 +108,23 @@ export default {
     hideFootprint: {
       type: Boolean,
       default: false
+    },
+    // Whether to render the `map-overlay` widget hook inside the map. Opt-in
+    // rather than always on: a map that shows someone else's data (the API
+    // search view draws result footprints, not `state.data`) must not get a
+    // widget whose condition was written about the page's own entity.
+    overlayWidgets: {
+      type: Boolean,
+      default: false
     }
   },
   emits: ['empty', 'changed'],
   data() {
     return {
+      // markRaw: `reactive()` unwraps any ref it finds on a property, which
+      // would hand a widget the map instead of the host's `mapRef`. The host
+      // carries its own reactivity; it must not be proxied again.
+      mapHost: markRaw(createMapHost()),
       selection: null,
       stacLayer: null,
       empty: false,
@@ -230,6 +256,10 @@ export default {
       this.stacLayer = null;
     }
     if (this.map) {
+      // Tell the overlay widgets the map is going before it goes: they hold
+      // sources and layers on it and have to drop their references while
+      // `map.remove()` has not yet invalidated everything.
+      this.mapHost.setMap(null);
       this.map.remove();
       this.map = null;
     }
@@ -250,6 +280,7 @@ export default {
           this.stacLayer = null;
         }
         if (this.map) {
+          this.mapHost.setMap(null);
           this.map.remove();
         }
         this.map = null;
@@ -258,6 +289,12 @@ export default {
 
         await this.createMap(this.$refs.map, this.stac, this.onfocusOnly);
         this._addExpandControl();
+        // The overlay widgets get the map as soon as it has a loaded style.
+        // The basemap `setStyle` that createMap kicked off is still in
+        // flight, so anything they add now is dropped and re-added by the
+        // `onStyleReload` notification in onBasemapChanged -- which is the
+        // same contract MapView's own StacMapLayer lives under.
+        this.mapHost.setMap(this.map);
         // A style switches ramps and layers by zoom, so the legend describes
         // whichever of them the map draws now. Bound per map: showStacLayer
         // removes the map before it builds another, which takes the handler
@@ -420,6 +457,11 @@ export default {
       } catch (err) {
         console.warn('Failed to apply style:', styleEntry.name, err);
       }
+      // Applying a GL style re-stacks the data layers, which MapLibre inserts
+      // below the basemap's labels -- and therefore above anything an overlay
+      // widget added earlier. Tell the widgets so an outline meant to frame
+      // the data does not end up underneath it.
+      this.mapHost.notifyStyleReload();
     },
 
     // 0 rather than nothing when the map is gone: extractLegend needs a number,
@@ -442,6 +484,10 @@ export default {
       if (this.stacLayer) {
         await this.stacLayer.readdAfterStyleChange();
       }
+      // After the data layers, never before: an overlay widget's outline is
+      // meant to be drawn on top of the data it outlines, and MapLibre
+      // orders by insertion.
+      this.mapHost.notifyStyleReload();
     },
 
     _setupClickInteraction() {
@@ -735,6 +781,28 @@ export default {
 #stac-browser {
   .map-container.expanded .map {
     height: calc(100vh - 30px) !important;
+  }
+
+  // The `map-overlay` hook's canvas. It covers the map and lets every event
+  // through; each widget inside claims pointer events back for its own
+  // chrome only, so panning and clicking the map keep working around it.
+  //
+  // `--sb-map-overlay-top` is how a layout tells overlay widgets where the
+  // usable top of the map is. The hero map is pulled up underneath the site
+  // header, so the views that do that raise it, exactly as they already
+  // lower the MapLibre controls and the text notice.
+  .map-overlay-widgets {
+    --sb-map-overlay-top: 10px;
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+
+    > .widget {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
   }
 
   .map-popover {

@@ -235,7 +235,15 @@ export default defineConfig(async ({ mode }) => {
       // guard in utils/zarrSource and the layers' own reprojection must parse
       // a WKT definition the same way. @developmentseed/proj pins an older
       // copy, and two parsers can disagree once one of them gains a fix.
-      dedupe: ["ol", "stac-js", "proj4", "wkt-parser"],
+      // hyparquet is deduped for the same class of reason: the app pins
+      // hyparquet 1.26.0, and ParquetViewer, the map's GeoParquet layer and
+      // the @cngeo packages all read parquet. The parquet reader must be one
+      // instance -- two would mean two WASM-less decoders, two module caches,
+      // and twice the bytes for no benefit. hyparquet-writer bare-imports
+      // hyparquet internally, so it has to agree as well. The @cngeo packages
+      // take this app's copy through their injection seam; see
+      // src/utils/download/hyparquet.js.
+      dedupe: ["ol", "stac-js", "proj4", "wkt-parser", "hyparquet", "hyparquet-compressors", "hyparquet-writer"],
       alias: {
         "@": fileURLToPath(new URL("./src", import.meta.url)),
         "@stac-browser-external-config": externalConfigPath,
@@ -245,7 +253,7 @@ export default defineConfig(async ({ mode }) => {
       fs: {
         allow: [
           searchForWorkspaceRoot(process.cwd()),
-          externalConfigPath
+          externalConfigPath,
         ],
       },
       port: 8080,

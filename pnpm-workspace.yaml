@@ -4,6 +4,17 @@ allowBuilds:
   msw: false
   vue-demi: false
 
+minimumReleaseAgeExclude:
+  - '@cngeo/extract-core@0.3.0'
+  - '@cngeo/format-extras@0.3.0'
+  - '@cngeo/format-flatgeobuf@0.3.0'
+  - '@cngeo/format-gpkg@0.3.0'
+  - '@cngeo/format-shapefile@0.3.0'
+  - '@cngeo/geocoder-core@0.3.0'
+  - '@cngeo/maplibre@0.3.0'
+  - '@cngeo/spec@0.3.0'
+  - '@cngeo/upload-core@0.3.0'
+
 # Upstream pins rollup: 4.63.0 breaks tree-shaking (radiantearth/stac-browser#1002)
 overrides:
   rollup: 4.62.5
@@ -14,3 +25,11 @@ overrides:
   '@deck.gl/geo-layers': 9.4.1
   '@deck.gl/mesh-layers': 9.4.1
   '@deck.gl/extensions': 9.4.1
+  # hyparquet-writer 0.18.0 declares its own hyparquet 1.32.0, so a default
+  # install puts a second parquet library in the tree beside the app's
+  # 1.26.0. The writer needs exactly two things from it, `parquetSchema` and
+  # `toJson`, both present in 1.26.0 -- and the "Download data" widget hands
+  # the reader's output straight to the writer, so the two must agree on
+  # metadata shapes. Pinned to the app's version; revisit if the app's
+  # hyparquet moves.
+  'hyparquet-writer>hyparquet': 1.26.0

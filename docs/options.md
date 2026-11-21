@@ -88,6 +88,9 @@ The override order for the configuration is:
   - [crs](#crs)
   - [getMapSourceOptions](#getmapsourceoptions)
   - [getStacLayerOptions](#getstaclayeroptions)
+  - [enableAreaDownload](#enableareadownload)
+  - [areaSearchIndexUrl](#areasearchindexurl)
+  - [areaDownloadFormats](#areadownloadformats)
 - [User Interface](#user-interface)
   - [enforcedColorMode](#enforcedcolormode)
   - [cardViewMode](#cardviewmode)
@@ -640,6 +643,32 @@ getStacLayerOptions: (type, options, reference) => {
   return options;
 }
 ```
+
+### `enableAreaDownload`
+
+Master switch for the [`AreaDownload`](widgets.md#areadownload) widget (the on-map
+"Download data" tool: place-name search, draw, upload and dataset download).
+Defaults to `true`. Set to `false` and the widget is not registered at all — nothing
+is added to the `map-overlay` hook, so no collection or item shows the cluster, the
+pill or the card.
+
+### `areaSearchIndexUrl`
+
+The [`AreaDownload`](widgets.md#areadownload) widget's `indexUrl`: which gazetteer the
+search box reads, as a `cnmw-index/1.0` manifest URL. Defaults to the published
+geoBoundaries names index on Source Cooperative (52,398 names, ADM0-2).
+
+Set to `null` to hide the search box entirely; drawing, uploading and downloading keep
+working.
+
+### `areaDownloadFormats`
+
+Restricts the output formats [`AreaDownload`](widgets.md#areadownload) offers to this
+array of format ids. Valid ids are `'geojson'`, `'geoparquet'`, `'gpkg'`, `'flatgeobuf'`,
+`'shapefile'`, `'csv'`, `'esrijson'` and `'parquet-raw'` — the dataset's original
+file(s), streamed byte for byte behind their own confirmation (see
+`src/utils/download/formats.js`). Defaults
+to `null`, which offers every format the app has registered.
 
 ## User Interface
 
