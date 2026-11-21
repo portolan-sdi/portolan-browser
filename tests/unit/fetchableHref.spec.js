@@ -56,6 +56,17 @@ describe('httpsAlternateHref', () => {
     }
     expect(httpsAlternateHref(asset)).toBe('https://example.com/collection/a.tif')
   })
+
+  it('returns null (without throwing) for a relative alternate href with no resolvable base', () => {
+    const asset = {
+      href: 's3://bucket/a.tif',
+      alternate: {
+        https: { href: './a.tif' },
+      },
+    }
+    expect(() => httpsAlternateHref(asset)).not.toThrow()
+    expect(httpsAlternateHref(asset)).toBeNull()
+  })
 })
 
 describe('fetchableAssetHref', () => {
@@ -87,6 +98,17 @@ describe('fetchableAssetHref', () => {
 
   it('returns null when the primary is non-http(s) and there is no alternate field', () => {
     expect(fetchableAssetHref({ href: 's3://bucket/a.tif' })).toBeNull()
+  })
+
+  it('returns null (without throwing) when the primary is non-http(s) and the alternate is relative with no resolvable base', () => {
+    const asset = {
+      href: 's3://bucket/a.tif',
+      alternate: {
+        https: { href: './a.tif' },
+      },
+    }
+    expect(() => fetchableAssetHref(asset)).not.toThrow()
+    expect(fetchableAssetHref(asset)).toBeNull()
   })
 
   it('handles a plain-object asset with no stac-js methods', () => {
