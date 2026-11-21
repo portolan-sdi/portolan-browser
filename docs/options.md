@@ -666,7 +666,7 @@ working.
 Restricts the output formats [`AreaDownload`](widgets.md#areadownload) offers to this
 array of format ids. Valid ids are `'geojson'`, `'geoparquet'`, `'gpkg'`, `'flatgeobuf'`,
 `'shapefile'`, `'csv'`, `'esrijson'` and `'parquet-raw'` — the dataset's original
-file(s), streamed byte for byte behind their own confirmation (see
+files, streamed byte for byte behind their own confirmation (see
 `src/utils/download/formats.js`). Defaults
 to `null`, which offers every format the app has registered.
 
