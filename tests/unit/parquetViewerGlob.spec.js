@@ -69,9 +69,9 @@ const tableLoads = (rows = 6311) => {
 }
 
 const deferred = () => {
-  let resolve
-  const promise = new Promise(done => { resolve = done })
-  return { promise, resolve }
+  let resolve, reject
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
 }
 
 const partitionOf = (extra = {}) => ({
@@ -437,11 +437,13 @@ describe('ParquetViewer partitioned collection without a concrete asset', () => 
   it('aborts the expansion of the selection the reader leaves behind', async () => {
     const signals = []
     const slow = deferred()
+    // The switched-to asset's own resolve is also held open, so the load
+    // still in flight when teardown fires is the current one (same loadId
+    // the component holds), not one a later load has already superseded.
+    const slowItems = deferred()
     resolveParquetGlob.mockImplementation((asset, options) => {
       signals.push(options?.signal)
-      return isPartitionPlaceholder(asset)
-        ? slow.promise
-        : Promise.resolve({ url: asset.getAbsoluteUrl(), partition: null })
+      return isPartitionPlaceholder(asset) ? slow.promise : slowItems.promise
     })
     tableLoads()
     const wrapper = viewer([mirrorAsset(partitionedCollection())])
@@ -456,7 +458,18 @@ describe('ParquetViewer partitioned collection without a concrete asset', () => 
     wrapper.unmount()
     // Teardown stops the listing of the load that was still running.
     expect(signals[1].aborted).toBe(true)
+
+    // That load's own promise settles after teardown, the way a real fetch
+    // rejects once its controller aborts. Its loadId is still the one the
+    // (now unmounted) component holds, so nothing but the abort check saves
+    // it from logging or writing error state onto a torn-down component.
+    slowItems.reject(new Error('The user aborted a request.'))
+    // The superseded first load settles too, so it leaves no dangling
+    // rejection; it was already dropped by the loadId guard before teardown.
     slow.resolve({ url: PARTITION_HREF, partition: partitionOf() })
+    await flushPromises()
+    expect(console.error).not.toHaveBeenCalled()
+    expect(wrapper.vm.error).toBeNull()
   })
 
   it('reports the expansion failure when the reader picked the entry themselves', async () => {

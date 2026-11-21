@@ -283,6 +283,13 @@ export default {
         this.tableData = data;
       } catch (err) {
         if (loadId !== this.loadId) {return;}
+        if (abort.signal.aborted) {
+          // The reader navigated away (beforeUnmount aborts this very
+          // controller) before the load settled. loadId is untouched by
+          // that abort, so without this check the rejection would read as a
+          // real failure on a component that is already torn down.
+          return;
+        }
         console.error('ParquetViewer: failed to load', err);
         if (err.code === GLOB_UNRESOLVED) {
           // The default pick fell on a glob that no item expands. Show
@@ -309,7 +316,10 @@ export default {
           this.error = this.$t('parquet.loadFailed', { message: err.message });
         }
       } finally {
-        if (loadId === this.loadId) {
+        // Same reasoning as the catch above: an unmount-triggered abort
+        // leaves loadId unchanged, so these writes would otherwise land on
+        // a torn-down component.
+        if (loadId === this.loadId && !abort.signal.aborted) {
           this.loading = false;
           this.loadingMessage = '';
         }
