@@ -38,6 +38,25 @@ function literal(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+/**
+ * The covering's top-level column name(s), mirroring extract-core's
+ * `bboxColumnNames`: a struct covering is one column, a columns covering
+ * up to four distinct ones. A future `native` covering lives in parquet
+ * footer statistics, not in any column, so it contributes none.
+ */
+function coveringColumnNames(bbox) {
+  if (!bbox || bbox.kind === 'none') {
+    return [];
+  }
+  if (bbox.kind === 'struct') {
+    return [bbox.column || 'bbox'];
+  }
+  if (bbox.kind === 'columns') {
+    return [...new Set([bbox.xmin, bbox.ymin, bbox.xmax, bbox.ymax])].filter(Boolean);
+  }
+  return [];
+}
+
 /** The covering columns, as dotted paths DuckDB can read. */
 function coveringPaths(bbox) {
   if (!bbox || bbox.kind === 'none') {
@@ -148,6 +167,16 @@ function sourceSql(source) {
   if (source.kind === 'parquet') {
     return { from: `read_parquet(${literal(source.url)})`, hive: false };
   }
+  if (source.kind === 'parquet-set') {
+    // An explicit list of files making one logical table. DuckDB reads a
+    // list the same way the widget's engine does.
+    const urls = (source.parts || source.urls || [])
+      .map(part => part?.url || part)
+      .filter(url => typeof url === 'string');
+    if (urls.length > 0) {
+      return { from: `read_parquet([${urls.map(literal).join(', ')}])`, hive: false };
+    }
+  }
   if (source.glob) {
     return {
       from: `read_parquet(${literal(source.glob)}, hive_partitioning = true)`,
@@ -183,22 +212,44 @@ function selectList(request, geometryExpression) {
   const geometryColumn = dataset.table?.geometryColumn || 'geometry';
   const projection = filter.columns || {};
   const declared = (dataset.table?.columns || []).map(c => c.name);
+  // The covering column(s) are pruning machinery, not data: the engine's
+  // `resolveOutputColumns` drops them from the output unless
+  // `columns.includeBbox` asks for them, and the snippet must select the
+  // same columns or the two files differ on every Portolan dataset.
+  const bboxColumns = projection.includeBbox ? [] : coveringColumnNames(dataset.table?.bbox);
+  const hidden = name => name === geometryColumn || bboxColumns.includes(name);
   let names;
   if (Array.isArray(projection.include) && projection.include.length > 0) {
-    names = projection.include.filter(name => name !== geometryColumn);
+    names = projection.include.filter(name => !hidden(name));
   } else if (Array.isArray(projection.exclude) && projection.exclude.length > 0) {
-    names = declared.filter(name => name !== geometryColumn && !projection.exclude.includes(name));
+    names = declared.filter(name => !hidden(name) && !projection.exclude.includes(name));
   } else if (declared.length > 0) {
-    names = declared.filter(name => name !== geometryColumn);
+    names = declared.filter(name => !hidden(name));
   } else {
     names = [];
   }
-  const parts = names.length > 0 ? names.map(ident) : ['*'];
+  // With no declared columns, a bare `*` would repeat the geometry column
+  // beside its decoded copy below -- DuckDB refuses duplicate output
+  // names -- and would leak the covering column into the output.
+  const star = `* EXCLUDE (${[geometryColumn, ...bboxColumns].map(ident).join(', ')})`;
+  const parts = names.length > 0 ? names.map(ident) : [star];
   if (!projection.dropGeometry) {
     parts.push(`${geometryExpression} AS ${ident(geometryColumn)}`);
   }
   return parts;
 }
+
+// The GDAL driver for each non-parquet output the widget offers. GDAL has
+// no Esri JSON writer, so that one falls back to GeoJSON and generate()
+// says so in a note.
+const GDAL_DRIVERS = {
+  geojson: "DRIVER 'GeoJSON'",
+  gpkg: "DRIVER 'GPKG'",
+  flatgeobuf: "DRIVER 'FlatGeobuf'",
+  shapefile: "DRIVER 'ESRI Shapefile'",
+  csv: "DRIVER 'CSV', LAYER_CREATION_OPTIONS 'GEOMETRY=AS_WKT'",
+  esrijson: "DRIVER 'GeoJSON'"
+};
 
 function copyOptions(output) {
   if (output?.format === 'geoparquet') {
@@ -210,7 +261,8 @@ function copyOptions(output) {
     }
     return parts.join(', ');
   }
-  return "FORMAT GDAL, DRIVER 'GeoJSON'";
+  const driver = GDAL_DRIVERS[output?.format] || GDAL_DRIVERS.geojson;
+  return `FORMAT GDAL, ${driver}`;
 }
 
 export default class DuckDbSqlGenerator {
@@ -243,6 +295,13 @@ export default class DuckDbSqlGenerator {
   generate(request) {
     if (!request?.dataset) {
       return '';
+    }
+    // The raw passthrough has no row-filtered SQL equivalent: it copies
+    // the original file(s) byte for byte, and the area and dates only
+    // choose WHICH files are fetched. A filtered COPY here would claim
+    // row selection that never happens.
+    if (request.output?.format === 'parquet-raw') {
+      return this.generateRaw(request);
     }
     const { dataset, filter, output } = request;
     const geometryColumn = dataset.table?.geometryColumn || 'geometry';
@@ -292,6 +351,24 @@ export default class DuckDbSqlGenerator {
         comment: '-- Exact test against the selected area.',
         sql: `ST_Intersects(ST_GeomFromWKB(${ident(geometryColumn)}), ${areaExpression})`
       });
+    } else if (mode === 'bbox' && !bbox && areaExpression) {
+      // No covering columns to test (an undeclared covering, or a future
+      // footer-statistics one): without a stand-in the query would select
+      // the whole dataset.
+      where.push({
+        comment: '-- No covering columns: the exact test stands in for the bbox prune.',
+        sql: `ST_Intersects(ST_GeomFromWKB(${ident(geometryColumn)}), ${areaExpression})`
+      });
+    }
+    if (output?.format === 'geoparquet') {
+      notes.push(
+        '-- The widget\'s GeoParquet writer also derives fresh bbox covering',
+        '-- columns (bbox_xmin .. bbox_ymax) for the output; this query does not.'
+      );
+    } else if (output?.format === 'esrijson') {
+      notes.push(
+        '-- GDAL cannot write Esri JSON, so this query writes GeoJSON instead.'
+      );
     }
     for (const term of partitionSql(filter?.partitions)) {
       where.push({ comment: null, sql: term });
@@ -341,6 +418,44 @@ export default class DuckDbSqlGenerator {
       lines.push(`  LIMIT ${Number(filter.limit)}`);
     }
     lines.push(`) TO ${literal(output?.filename || 'download.parquet')} (${copyOptions(output)});`);
+    return `${lines.join('\n')}\n`;
+  }
+
+  /**
+   * The raw-passthrough snippet: no COPY and no WHERE, because the real
+   * download applies neither. It names the source file(s) and shows how
+   * to open them, which is all the SQL there honestly is.
+   * @param {object} request a `cng-request/1.0` DownloadRequest
+   * @returns {string}
+   */
+  generateRaw(request) {
+    const { dataset } = request;
+    const source = dataset.source || {};
+    const urls = source.kind === 'parquet' && source.url
+      ? [source.url]
+      : (source.parts || source.urls || [])
+        .map(part => part?.url || part)
+        .filter(url => typeof url === 'string');
+    const lines = [];
+    lines.push(`-- ${dataset.title || dataset.id}`);
+    lines.push('-- Generated by the portolan-browser download widget.');
+    lines.push('--');
+    lines.push('-- This download copies the original source file(s) byte for byte.');
+    lines.push('-- The area and the date window only choose WHICH files are fetched;');
+    lines.push('-- no SQL filters the rows inside them.');
+    if (urls.length > 0) {
+      lines.push('--');
+      lines.push('-- To read the same file(s) in DuckDB:');
+      lines.push('');
+      lines.push(urls.length === 1
+        ? `SELECT * FROM read_parquet(${literal(urls[0])});`
+        : `SELECT * FROM read_parquet([${urls.map(literal).join(', ')}]);`);
+    } else if (source.glob) {
+      lines.push('--');
+      lines.push('-- To read the same files in DuckDB:');
+      lines.push('');
+      lines.push(`SELECT * FROM read_parquet(${literal(source.glob)}, hive_partitioning = true);`);
+    }
     return `${lines.join('\n')}\n`;
   }
 }

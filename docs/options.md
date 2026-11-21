@@ -652,7 +652,7 @@ Defaults to `true`. Set to `false` and the widget is not registered at all — n
 is added to the `map-overlay` hook, so no collection or item shows the cluster, the
 pill or the card.
 
-### areaSearchIndexUrl
+### `areaSearchIndexUrl`
 
 The [`AreaDownload`](widgets.md#areadownload) widget's `indexUrl`: which gazetteer the
 search box reads, as a `cnmw-index/1.0` manifest URL. Defaults to the published

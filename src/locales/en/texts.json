@@ -607,7 +607,7 @@
         "rawBytes": "Download size: {bytes}.",
         "rawBytesAtLeast": "Download size: at least {bytes}.",
         "rawRows": "Rows are not counted for original files.",
-        "sources": "Which file(s)?"
+        "sources": "The dataset's source file(s)"
       },
       "download": {
         "acceptCeiling": "Download anyway",
@@ -647,6 +647,7 @@
         "size": "File size",
         "sizeHint": "{format}, between {min} and {max}",
         "truncated": "Stopped at the {limit}-row limit, so this is part of the area's data.",
+        "unavailable": "This format's writer failed to load. Reload the page to try it again.",
         "weight": "+{bytes}",
         "weightHint": "loads a {bytes} plugin the first time it is used"
       },
@@ -735,6 +736,7 @@
         "antimeridianSplit": "This area crosses the antimeridian, so it is tested as {boxes} separate boxes.",
         "degradedToBbox": "The area's exact outline was unavailable, so rows are filtered against its bounding box instead — expect some extra rows at the edges.",
         "estimateWide": "This estimate is wide: the real row count could be up to {ratio} times it.",
+        "estimateWideUnbounded": "This estimate is wide: the data gave the model almost nothing to go on, so the real row count is unknown.",
         "largeDownload": "This is a large download: about {bytes}, roughly {seconds} s on a typical connection.",
         "noCovering": "This dataset declares no bbox covering column, so the area cannot narrow the read: every selected file is read in full.",
         "noStatistics": "This dataset declares no time column, so the date filter could not drop any row groups.",

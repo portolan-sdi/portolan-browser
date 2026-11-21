@@ -607,7 +607,7 @@
         "rawBytes": "Tamaño de la descarga: {bytes}.",
         "rawBytesAtLeast": "Tamaño de la descarga: al menos {bytes}.",
         "rawRows": "Las filas no se cuentan para archivos originales.",
-        "sources": "¿Qué archivo(s)?"
+        "sources": "Los archivos de origen del conjunto de datos"
       },
       "download": {
         "acceptCeiling": "Descargar igualmente",
@@ -647,6 +647,7 @@
         "size": "Tamaño del archivo",
         "sizeHint": "{format}, entre {min} y {max}",
         "truncated": "Se detuvo en el límite de {limit} filas, así que esto es solo parte de los datos del área.",
+        "unavailable": "El escritor de este formato no se pudo cargar. Recargue la página para intentarlo de nuevo.",
         "weight": "+{bytes}",
         "weightHint": "carga un complemento de {bytes} la primera vez que se usa"
       },
@@ -735,6 +736,7 @@
         "antimeridianSplit": "Esta área cruza el antimeridiano, así que se comprueba como {boxes} cajas separadas.",
         "degradedToBbox": "El contorno exacto del área no estaba disponible, así que las filas se filtran con su caja envolvente: habrá filas de más en los bordes.",
         "estimateWide": "Esta estimación es amplia: el número real de filas podría ser hasta {ratio} veces mayor.",
+        "estimateWideUnbounded": "Esta estimación es amplia: los datos dieron muy poco al modelo, así que el número real de filas es desconocido.",
         "largeDownload": "Esta descarga es grande: alrededor de {bytes}, aproximadamente {seconds} s con una conexión típica.",
         "noCovering": "Este conjunto no declara una columna de bbox de cobertura, así que el área no puede reducir la lectura: cada archivo seleccionado se lee completo.",
         "noStatistics": "Este conjunto no declara una columna de tiempo, así que el filtro de fechas no pudo descartar ningún grupo de filas.",

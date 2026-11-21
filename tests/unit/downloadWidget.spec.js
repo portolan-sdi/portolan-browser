@@ -273,6 +273,74 @@ describe('DuckDbSqlGenerator', () => {
     expect(sql).not.toContain('<==')
   })
 
+  it('keeps the covering column out of the SELECT list, as the engine does', () => {
+    // resolveOutputColumns drops the covering column unless
+    // columns.includeBbox asks for it; the snippet must match.
+    const sql = new DuckDbSqlGenerator().generate(request())
+    const select = sql.slice(sql.indexOf('SELECT'), sql.indexOf('FROM'))
+    expect(select).not.toContain('"bbox"')
+    expect(select).toContain('"shapeName"')
+  })
+
+  it('selects * EXCLUDE when no columns are declared, never a duplicate geometry', () => {
+    const bare = request()
+    delete bare.dataset.table.columns
+    const sql = new DuckDbSqlGenerator().generate(bare)
+    expect(sql).toContain('* EXCLUDE ("geometry", "bbox")')
+    // Exactly one output column named "geometry": the decoded one.
+    const select = sql.slice(sql.indexOf('SELECT'), sql.indexOf('FROM'))
+    expect(select.match(/AS "geometry"/g)).toHaveLength(1)
+  })
+
+  it('names the right GDAL driver per format, and owns up where GDAL has none', () => {
+    const forFormat = format => {
+      const req = request()
+      req.output = { spec: 'cng-output/1.0', format, filename: `adm0.${format}` }
+      return new DuckDbSqlGenerator().generate(req)
+    }
+    expect(forFormat('gpkg')).toContain("DRIVER 'GPKG'")
+    expect(forFormat('shapefile')).toContain("DRIVER 'ESRI Shapefile'")
+    expect(forFormat('flatgeobuf')).toContain("DRIVER 'FlatGeobuf'")
+    expect(forFormat('csv')).toContain("GEOMETRY=AS_WKT")
+    const esri = forFormat('esrijson')
+    expect(esri).toContain("DRIVER 'GeoJSON'")
+    expect(esri).toContain('cannot write Esri JSON')
+  })
+
+  it('reads a parquet-set source as a file list, not a placeholder', () => {
+    const req = request()
+    req.dataset = {
+      ...req.dataset,
+      source: {
+        kind: 'parquet-set',
+        parts: [{ url: 'https://d.example/a.parquet' }, { url: 'https://d.example/b.parquet' }]
+      }
+    }
+    const sql = new DuckDbSqlGenerator().generate(req)
+    expect(sql).toContain("read_parquet(['https://d.example/a.parquet', 'https://d.example/b.parquet'])")
+    expect(sql).not.toContain("read_parquet('?')")
+  })
+
+  it('stands the exact test in for the bbox prune when a bbox-mode dataset declares no covering', () => {
+    const req = request()
+    req.dataset = { ...req.dataset, table: { ...req.dataset.table, bbox: { kind: 'none' } } }
+    req.filter.spatial = { mode: 'bbox' }
+    const sql = new DuckDbSqlGenerator().generate(req)
+    expect(sql).toContain('ST_Intersects')
+    expect(sql).toContain('stands in for the bbox prune')
+  })
+
+  it('refuses to fake SQL row filtering for the raw passthrough', () => {
+    const req = request()
+    req.output = { spec: 'cng-output/1.0', format: 'parquet-raw', filename: 'adm0.parquet' }
+    const sql = new DuckDbSqlGenerator().generate(req)
+    expect(sql).toContain('byte for byte')
+    expect(sql).not.toContain('COPY')
+    expect(sql).not.toContain('WHERE')
+    // It still shows how to open the original file.
+    expect(sql).toContain("read_parquet('https://data.example.org/geoboundaries/adm0/cgaz_adm0.parquet')")
+  })
+
   it('uses the filter geometry, not the display geometry', () => {
     const marker = [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]
     const doc = {

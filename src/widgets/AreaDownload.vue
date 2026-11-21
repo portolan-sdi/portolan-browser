@@ -114,7 +114,7 @@
                   ? $t('widgets.areaDownload.area.drawPolygonHint')
                   : $t('widgets.areaDownload.area.drawHint') }}
             </p>
-            <p v-if="areaError" class="ad-note ad-error">{{ areaError }}</p>
+            <p v-if="areaError" class="ad-note ad-error" role="alert">{{ areaError }}</p>
           </div>
         </Transition>
       </div>
@@ -268,7 +268,7 @@
              decides on and the buttons they press have to be above the
              fold; how many row groups it took is interesting, not decisive,
              and lives in "why this estimate". -->
-        <p v-if="estimating" class="ad-status">{{ $t('widgets.areaDownload.estimate.running') }}</p>
+        <p v-if="estimating" class="ad-status" aria-live="polite">{{ $t('widgets.areaDownload.estimate.running') }}</p>
         <dl v-else-if="estimateResult" class="estimate">
           <dt>{{ $t('widgets.areaDownload.estimate.rows') }}</dt>
           <dd>
@@ -288,7 +288,7 @@
         <ul v-if="warnings.length > 0" class="ad-warnings">
           <li v-for="(warning, index) of warnings" :key="index" class="ad-warning">{{ warning }}</li>
         </ul>
-        <p v-if="estimateError" class="ad-error">{{ estimateError }}</p>
+        <p v-if="estimateError" class="ad-error" role="alert">{{ estimateError }}</p>
         <button
           v-if="!estimateResult && !estimating"
           type="button"
@@ -341,6 +341,7 @@
             type="button"
             class="ad-button ad-button-primary"
             :title="format.title"
+            :disabled="format.failed"
             @click="startDownload(format.id)"
           >
             {{ format.label }}<span v-if="format.size" class="ad-size">&nbsp;· {{ format.size }}</span>
@@ -363,6 +364,7 @@
             type="button"
             class="ad-button"
             :title="format.title"
+            :disabled="format.failed"
             @click="startDownload(format.id)"
           >
             {{ format.label }}<span v-if="format.size" class="ad-size">&nbsp;· {{ format.size }}</span><span
@@ -376,8 +378,8 @@
              or the raw original-files format, states what it is about to
              do and waits for a second click. That second click is its own
              user activation, so the save dialog can still open from it. -->
-        <p v-if="confirmPreparing" class="ad-status">{{ $t('widgets.areaDownload.confirm.preparing') }}</p>
-        <div v-if="pendingConfirm && !downloading" class="ad-confirm">
+        <p v-if="confirmPreparing" class="ad-status" aria-live="polite">{{ $t('widgets.areaDownload.confirm.preparing') }}</p>
+        <div v-if="pendingConfirm && !downloading" class="ad-confirm" role="alert">
           <p v-for="(line, index) of pendingConfirm.lines" :key="index">{{ line }}</p>
           <details v-if="pendingConfirm.sources.length > 0" class="ad-why">
             <summary>{{ $t('widgets.areaDownload.confirm.sources') }}</summary>
@@ -386,7 +388,7 @@
             </ul>
           </details>
           <div class="ad-confirm-actions">
-            <button type="button" class="ad-button ad-button-warning" @click="startDownload(pendingConfirm.format, true)">
+            <button ref="confirmProceed" type="button" class="ad-button ad-button-warning" @click="startDownload(pendingConfirm.format, true)">
               {{ $t('widgets.areaDownload.confirm.proceed') }}
             </button>
             <button type="button" class="ad-button" @click="pendingConfirm = null">
@@ -422,7 +424,7 @@
               {{ cancelling ? $t('widgets.areaDownload.download.cancelling') : $t('widgets.areaDownload.download.cancel') }}
             </button>
           </div>
-          <p class="ad-status">{{ progress }}</p>
+          <p class="ad-status" aria-live="polite">{{ progress }}</p>
         </div>
 
         <!-- The end of it: what landed where, in numbers, until the user
@@ -463,7 +465,7 @@
         </div>
 
         <div v-else-if="downloadError" ref="outcome" class="ad-outcome">
-          <p class="ad-error">{{ downloadError }}</p>
+          <p class="ad-error" role="alert">{{ downloadError }}</p>
           <button v-if="lastFormat" type="button" class="ad-button" @click="startDownload(lastFormat)">
             {{ $t('widgets.areaDownload.download.retry') }}
           </button>
@@ -608,6 +610,14 @@ const PROMINENT_WARNINGS = new Set([
 // both null (run it) and a confirm payload (ask first).
 const FAILED_CONFIRM = Symbol('failed-confirm');
 
+// estimate.js's own documented size-warning defaults. The package does not
+// export them from its public entry (its demo mirrors them the same way),
+// so they are mirrored here for the format-aware confirmation gate. Keep
+// in sync with @cngeo/extract-core's estimate.js.
+const DEFAULT_LARGE_DOWNLOAD_BYTES = 1024 ** 3;
+const DEFAULT_THROUGHPUT_BYTES_PER_SECOND = 10_000_000;
+const SLOW_DOWNLOAD_SECONDS = 120;
+
 // The formats on offer come from `@cngeo/extract-core`'s registry, each
 // with its own bytes-per-row model -- so the size beside a button is that
 // format's own estimate and not one number for all of them (GeoJSON text
@@ -714,9 +724,11 @@ export default defineComponent({
       type: Number,
       default: null
     },
-    // How the finished file reaches the disk. `'picker'` always asks the
-    // File System Access API for a destination, `'anchor'` always writes a
-    // Blob and clicks it, `'auto'` prefers the picker where it exists. Either
+    // How the finished file reaches the disk. `'picker'` asks the File
+    // System Access API for a destination, and degrades to the anchor
+    // where the browser has no such API. `'anchor'` always writes a
+    // Blob and clicks it, `'auto'` prefers the picker where it exists and
+    // is not driven by automation. Either
     // way the save starts without the user clicking a rendered link.
     directSave: {
       type: String,
@@ -998,7 +1010,10 @@ export default defineComponent({
         // click, which is the only moment it can change anyone's mind: a
         // 340 KB wasm is worth knowing about, and worth not fetching for
         // the user who wanted GeoParquet.
-        const weight = pluginWeight(entry);
+        // A plugin whose CDN fetch failed must not keep a normal-looking
+        // button that still advertises the weight it could not pay.
+        const failed = entry.loadState === 'failed';
+        const weight = failed ? null : pluginWeight(entry);
         // The raw descriptor's label is English prose, not a format name,
         // so it is the one label said in the UI's own language -- and its
         // hover title explains the passthrough instead of repeating the
@@ -1009,12 +1024,13 @@ export default defineComponent({
         return {
           id: entry.id,
           label,
+          failed,
           size: bounded ? this.boundedPrimary(bounded) : '',
           weight: weight ? this.$t('widgets.areaDownload.download.weight', { bytes: formatBytes(weight) }) : '',
           // The two that need nothing are the ones most people want, and
           // they look it.
           primary: entry.id === 'geojson' || entry.id === 'geoparquet',
-          title: [
+          title: failed ? this.$t('widgets.areaDownload.download.unavailable') : [
             bounded
               ? this.$t('widgets.areaDownload.download.sizeHint', {
                 format: label,
@@ -1130,7 +1146,20 @@ export default defineComponent({
     // window: on a 26-year archive, running it over everything first and
     // then narrowing is a minute of range requests nobody asked for.
     this.initTimeWindow();
-    await useAppHyparquet();
+    try {
+      await useAppHyparquet();
+    } catch (error) {
+      // Without hyparquet nothing downstream works. Say so on the card
+      // instead of leaving a rendered widget silently unbound to the map
+      // with only an unhandled rejection in the console.
+      this.areaError = this.formatError(error);
+      return;
+    }
+    if (this._unmounted) {
+      // Unmounted while awaiting: subscribing now would leak both
+      // subscriptions past beforeUnmount, which has already run.
+      return;
+    }
     this.unsubscribeMap = this.mapHost.onMap(map => this.bindMap(map));
     // Re-stacking the layer list either drops what this widget added (a
     // basemap `setStyle`) or buries it (the collection's own GL style, whose
@@ -1141,6 +1170,8 @@ export default defineComponent({
     this.flashAttention();
   },
   beforeUnmount() {
+    this._unmounted = true;
+    this._preflightAbort?.abort();
     this.handle?.cancel('widget unmounted');
     // Otherwise a widget unmounted while `blocked` on the ceiling leaves
     // `startDownload`'s wait loop awaiting a gate nobody will ever signal.
@@ -1167,9 +1198,10 @@ export default defineComponent({
         return;
       }
       this.attachMapLayers();
-      this.mountSearch();
-      // Dropping a file on the map is the same gesture as dropping it on an
-      // upload box, and the map is what the user is looking at.
+      // Dropping a file on the map is the same gesture as dropping it on
+      // an upload box, and the map is what the user is looking at.
+      // Attached before the search control, so a geocoder that throws
+      // cannot take drag-and-drop down with it.
       this.detachDrop = attachDropTarget(
         this.map.getContainer(),
         ({ area, warnings }) => this.onUploaded(area, warnings),
@@ -1178,6 +1210,13 @@ export default defineComponent({
       const container = this.map.getContainer();
       container.addEventListener('dragover', this.onDragOver);
       container.addEventListener('drop', this.onDropEnd);
+      try {
+        this.mountSearch();
+      } catch (error) {
+        // A bad index URL costs the search box alone, and says why, rather
+        // than vanishing into the map host's console.error.
+        this.areaError = this.formatError(error);
+      }
     },
     releaseMap() {
       if (this.detachDrop) {
@@ -1822,18 +1861,34 @@ export default defineComponent({
     async confirmationFor(format) {
       if (format === RAW_FORMAT_ID) {
         this.confirmPreparing = true;
+        // The preflight can take seconds (one HEAD per sizeless part), and
+        // the area can change under it. The token drops a stale answer the
+        // same way `runEstimate` does, and the controller lets a reset
+        // abort the requests themselves.
+        const token = this._estimateToken;
+        const abort = new AbortController();
+        this._preflightAbort = abort;
         try {
-          const preflight = await estimate(this.descriptor, this.area, this.buildFilter(), {
+          const filter = this.buildFilter();
+          const preflight = await estimate(this.descriptor, this.area, filter, {
             output: this.outputFor(format),
-            sink: { kind: this.sinkKind }
+            sink: { kind: this.sinkKind },
+            signal: abort.signal
           });
+          if (token !== this._estimateToken) {
+            return FAILED_CONFIRM;
+          }
           const lines = [this.$t('widgets.areaDownload.confirm.raw', {
             files: formatCount(preflight.files?.selected ?? 0)
           })];
           const bytes = preflight.outputBytes;
-          // `min` stays finite when any part size is known; the unknown
-          // remainder is the `raw-size-unknown` warning's job to say.
-          if (bytes && Number.isFinite(bytes.exact ? bytes.estimate : bytes.min)) {
+          // `min` stays finite when any part size is known; zero means no
+          // size is known at all, which is the `raw-size-unknown`
+          // warning's job to say -- "at least 0 B" says nothing.
+          const known = bytes && (bytes.exact
+            ? Number.isFinite(bytes.estimate)
+            : (Number.isFinite(bytes.min) && bytes.min > 0));
+          if (known) {
             lines.push(bytes.exact
               ? this.$t('widgets.areaDownload.confirm.rawBytes', { bytes: formatBytes(bytes.estimate) })
               : this.$t('widgets.areaDownload.confirm.rawBytesAtLeast', { bytes: formatBytes(bytes.min) }));
@@ -1846,31 +1901,65 @@ export default defineComponent({
           for (const warning of preflight.warnings || []) {
             lines.push(this.warningText(warning));
           }
+          // The preflight already knows a ceiling verdict for the sink the
+          // run will use. Said here, before any save dialog, which is the
+          // whole point of estimating first (upstream ruling R7).
+          if (preflight.ceiling?.exceeded) {
+            const breaches = (preflight.ceiling.breaches || [])
+              .map(breach => this.$t(`widgets.areaDownload.breaches.${breach}`))
+              .join(', ');
+            lines.push(this.$t('widgets.areaDownload.download.ceiling', { breaches }));
+            lines.push(this.$t('widgets.areaDownload.download.ceilingAhead'));
+          }
           return markRaw({
             format,
             lines,
             filesSelected: preflight.files?.selected,
+            filterKey: JSON.stringify(filter),
+            totalBytes: bytes?.exact && Number.isFinite(bytes.estimate) ? bytes.estimate : null,
             sources: this.rawSourceUrls()
           });
         } catch (error) {
-          this.downloadError = this.formatError(error);
+          if (token === this._estimateToken && !isCancellation(error)) {
+            this.downloadError = this.formatError(error);
+          }
           return FAILED_CONFIRM;
         } finally {
           this.confirmPreparing = false;
+          if (this._preflightAbort === abort) {
+            this._preflightAbort = null;
+          }
         }
       }
-      // Decoded formats confirm only when the estimate itself said "large"
-      // or "slow" -- the generic byte model, which download() re-checks
-      // against the format's own.
+      // Decoded formats confirm when the estimate said "large" or "slow",
+      // or when the chosen format's own byte model crosses the same
+      // thresholds: the estimate's generic model can sit under the line
+      // while the GeoJSON text of the same rows is far over it.
       const size = (this.estimateResult?.warnings || [])
         .filter(warning => warning.code === 'large-download' || warning.code === 'slow-download');
-      if (size.length === 0) {
+      const lines = size.map(warning => this.warningText(warning));
+      if (lines.length === 0) {
+        const entry = this.formatEntry(format);
+        const rows = this.estimateResult?.rows;
+        if (entry?.estimateBytes && rows) {
+          const schema = (this.estimateResult?.columns || []).map(name => ({ name, type: 'unknown' }));
+          const bytes = entry.estimateBytes(schema, rows);
+          const estimatedSeconds = Math.round((bytes?.estimate || 0) / DEFAULT_THROUGHPUT_BYTES_PER_SECOND);
+          if (bytes?.estimate > DEFAULT_LARGE_DOWNLOAD_BYTES) {
+            lines.push(this.warningText({ code: 'large-download', bytes: bytes.estimate, estimatedSeconds }));
+          } else if (estimatedSeconds > SLOW_DOWNLOAD_SECONDS) {
+            lines.push(this.warningText({ code: 'slow-download', estimatedSeconds }));
+          }
+        }
+      }
+      if (lines.length === 0) {
         return null;
       }
       return markRaw({
         format,
-        lines: size.map(warning => this.warningText(warning)),
+        lines,
         filesSelected: undefined,
+        filterKey: JSON.stringify(this.buildFilter()),
         sources: []
       });
     },
@@ -1894,26 +1983,50 @@ export default defineComponent({
 
     // --- download ------------------------------------------------------
     async startDownload(format, confirmed = false) {
-      if (this.downloading || this.confirmPreparing) {
+      if (this.downloading || this.confirmPreparing || this._starting) {
         return;
+      }
+      // A confirmation answers one exact request. When a filter changed
+      // under the open box -- a date input the Proceed click itself just
+      // blurred -- the stale payload must not run: fall back to the
+      // unconfirmed path, which rebuilds the gate against the live filter.
+      if (confirmed && this.pendingConfirm
+        && this.pendingConfirm.filterKey !== JSON.stringify(this.buildFilter())) {
+        confirmed = false;
       }
       // The gate between the click and the bytes. A download that needs a
       // second look gets its sentences rendered and stops here; the
       // confirm button calls back with `confirmed`, carrying its own user
       // activation for the save dialog below.
       const filesSelected = confirmed ? this.pendingConfirm?.filesSelected : undefined;
+      const rawTotalBytes = confirmed ? this.pendingConfirm?.totalBytes || null : null;
       if (!confirmed) {
         this.pendingConfirm = null;
+        // A terminal state still on screen (a cancelled run, a dismissed
+        // picker note) renders in front of the preflight's own error or
+        // notice in the outcome chain -- clear it first, or a failed raw
+        // preflight is pure silence.
+        this.clearOutcome();
         const confirm = await this.confirmationFor(format);
         if (confirm === FAILED_CONFIRM) {
           return;
         }
         if (confirm) {
           this.pendingConfirm = confirm;
+          // Announce the gate: without moving focus a keyboard or
+          // screen-reader user is never told the card now asks a question.
+          // Programmatic focus does not spend the transient activation the
+          // later confirm click needs.
+          this.$nextTick(() => this.$refs.confirmProceed?.focus());
           return;
         }
       }
       this.pendingConfirm = null;
+      // Re-entrancy: while the native save dialog is open, `downloading`
+      // is still false and the format row is still live. A second click
+      // must not open a second picker over the first.
+      this._starting = true;
+      this._rawTotalBytes = rawTotalBytes;
       const output = this.outputFor(format, filesSelected);
 
       // The save dialog has to open inside this click's own activation
@@ -1936,6 +2049,7 @@ export default defineComponent({
           });
         } catch (error) {
           if (error?.name === 'AbortError') {
+            this._starting = false;
             this.notice = this.$t('widgets.areaDownload.download.dismissed');
             return;
           }
@@ -1946,6 +2060,7 @@ export default defineComponent({
       }
 
       this.resetDownload();
+      const runId = this._runSeq;
       this.downloading = true;
       this.lastFormat = format;
       this.progressPercent = null;
@@ -2002,6 +2117,11 @@ export default defineComponent({
           blob: !handle
         });
       } catch (error) {
+        if (runId !== this._runSeq) {
+          // The run was abandoned by a reset (new area, new asset): its
+          // outcome belongs to nobody. The finally below skips state too.
+          return;
+        }
         this.progress = '';
         // `|| this.cancelling`, and not only the CANCELLED code, because a
         // cancel that lands *inside* a row-group read comes back wearing
@@ -2022,6 +2142,11 @@ export default defineComponent({
           this.downloadError = this.formatError(error);
         }
       } finally {
+        this._starting = false;
+        if (runId !== this._runSeq) {
+          // eslint-disable-next-line no-unsafe-finally
+          return;
+        }
         this.downloading = false;
         this.cancelling = false;
         this.downloadState = '';
@@ -2075,16 +2200,27 @@ export default defineComponent({
         });
       } else if (event.phase === 'copying') {
         // The raw path: original files streaming through, counted in
-        // bytes because rows are never decoded. `bytesTotal` is null when
-        // the source never declared a size -- exactly the
-        // `raw-size-unknown` case -- and the bar goes indeterminate.
-        this.progressPercent = event.bytesTotal
-          ? Math.min(100, Math.round((event.bytesWritten / event.bytesTotal) * 100))
+        // bytes because rows are never decoded. `bytesWritten` is
+        // per-file, so finished files accumulate locally -- a bar that
+        // restarts at 0% for each file of a 27-part zip reads as a loop,
+        // not progress. The whole-archive total is the preflight's, when
+        // it was exact; without one the bar goes indeterminate, which is
+        // also the `raw-size-unknown` case.
+        if (event.fileIndex !== this._copyFileIndex) {
+          this._copiedBytes = (this._copiedBytes || 0) + (this._copyFileLast || 0);
+          this._copyFileIndex = event.fileIndex;
+        }
+        this._copyFileLast = event.bytesWritten || 0;
+        const copied = (this._copiedBytes || 0) + (event.bytesWritten || 0);
+        const total = this._rawTotalBytes
+          || (event.fileCount === 1 ? event.bytesTotal : null);
+        this.progressPercent = total
+          ? Math.min(100, Math.round((copied / total) * 100))
           : null;
         this.progress = this.$t('widgets.areaDownload.download.copying', {
           index: formatCount(event.fileIndex || 1),
           count: formatCount(event.fileCount || 1),
-          bytes: formatBytes(event.bytesWritten || 0)
+          bytes: formatBytes(copied)
         });
       } else if (event.phase === 'loading-format') {
         // The one moment this widget fetches code: a format plugin the
@@ -2172,6 +2308,9 @@ export default defineComponent({
       // wakes `startDownload`'s wait loop so it rethrows the ceiling
       // rejection instead of waiting for a decision that already happened.
       this.ceilingGate?.('cancel');
+      // The alarm button must not survive the run it belonged to: with
+      // the handle gone, "Download anyway" would be a dead control.
+      this.ceiling = null;
     },
     clearOutcome() {
       this.result = null;
@@ -2179,8 +2318,26 @@ export default defineComponent({
       this.downloadError = '';
       this.notice = '';
       this.progress = '';
+      this.ceiling = null;
     },
     resetDownload() {
+      // A reset can land while a run is in flight or blocked on the
+      // ceiling (a new area, a new asset). The run is cancelled, the
+      // ceiling wait is released, and the sequence bump stops the
+      // abandoned run's catch/finally from writing its outcome over the
+      // next state. Without all three, an abandoned ceiling wait held
+      // `downloading` forever.
+      this._runSeq = (this._runSeq || 0) + 1;
+      this._preflightAbort?.abort();
+      if (this.handle) {
+        this.handle.cancel('request changed');
+      }
+      this.ceilingGate?.('cancel');
+      this.handle = null;
+      this.downloading = false;
+      this._copiedBytes = 0;
+      this._copyFileIndex = null;
+      this._copyFileLast = 0;
       this.ceiling = null;
       this.ceilingGate = null;
       this.progress = '';
@@ -2213,6 +2370,11 @@ export default defineComponent({
     // their own English `message` (there is no i18n inside the @cngeo
     // packages), which is better than printing a code.
     warningText(warning) {
+      // `estimate-wide` carries `ratio: Infinity` when the point estimate
+      // is zero; "up to Infinity times it" is not a sentence.
+      if (warning.code === 'estimate-wide' && !Number.isFinite(warning.ratio)) {
+        return this.$t('widgets.areaDownload.warnings.estimateWideUnbounded');
+      }
       const key = WARNING_KEYS[warning.code];
       if (key) {
         return this.$t(key, {

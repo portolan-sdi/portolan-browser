@@ -219,7 +219,7 @@
       "type": ["array", "null"],
       "items": {
         "type": "string",
-        "enum": ["geojson", "geoparquet", "gpkg", "flatgeobuf", "shapefile", "csv", "esrijson"]
+        "enum": ["geojson", "geoparquet", "gpkg", "flatgeobuf", "shapefile", "csv", "esrijson", "parquet-raw"]
       },
       "description": "Restricts AreaDownload's output formats to this list (geojson, geoparquet, gpkg, flatgeobuf, shapefile, csv, esrijson); null offers all available formats"
     }

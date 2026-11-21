@@ -354,12 +354,83 @@ describe('the 0.3.0 size warnings and the confirmation gate', () => {
     expect(wrapper.vm.buildFilter().limit).toBe(500)
   })
 
-  it('narrates the raw copying phase in files and bytes, indeterminate when sizes are unknown', () => {
+  it('narrates the raw copying phase in whole-archive bytes, indeterminate when sizes are unknown', () => {
     const wrapper = factory()
-    wrapper.vm.onProgress({ phase: 'copying', fileIndex: 2, fileCount: 3, bytesWritten: 1_048_576, bytesTotal: 4_194_304 })
+    wrapper.vm._rawTotalBytes = 4_194_304
+    wrapper.vm.onProgress({ phase: 'copying', fileIndex: 1, fileCount: 3, bytesWritten: 1_048_576, bytesTotal: 1_048_576 })
     expect(wrapper.vm.progressPercent).toBe(25)
     expect(wrapper.vm.progress).toContain('download.copying')
-    wrapper.vm.onProgress({ phase: 'copying', fileIndex: 1, fileCount: 1, bytesWritten: 10, bytesTotal: null })
-    expect(wrapper.vm.progressPercent).toBe(null)
+    // The second file starts: the bar keeps the first file's bytes
+    // instead of restarting at 0%.
+    wrapper.vm.onProgress({ phase: 'copying', fileIndex: 2, fileCount: 3, bytesWritten: 1_048_576, bytesTotal: 2_097_152 })
+    expect(wrapper.vm.progressPercent).toBe(50)
+    const unknown = factory()
+    unknown.vm.onProgress({ phase: 'copying', fileIndex: 1, fileCount: 2, bytesWritten: 10, bytesTotal: null })
+    expect(unknown.vm.progressPercent).toBe(null)
+  })
+
+  it('cancelling a run while blocked on the ceiling releases the wait and the banner', () => {
+    const wrapper = factory()
+    const gate = vi.fn()
+    wrapper.vm.handle = { cancel: vi.fn() }
+    wrapper.vm.ceilingGate = gate
+    wrapper.vm.ceiling = { exceeded: true, breaches: ['rows'] }
+    wrapper.vm.cancel()
+    expect(gate).toHaveBeenCalledWith('cancel')
+    expect(wrapper.vm.ceiling).toBe(null)
+  })
+
+  it('a reset mid-run cancels the handle, releases the ceiling wait and clears downloading', () => {
+    // Drawing a new area while a run is blocked on the ceiling used to
+    // abandon the wait: downloading stayed true forever.
+    const wrapper = factory()
+    const cancel = vi.fn()
+    const gate = vi.fn()
+    wrapper.vm.handle = { cancel }
+    wrapper.vm.ceilingGate = gate
+    wrapper.vm.downloading = true
+    const seq = wrapper.vm._runSeq || 0
+    wrapper.vm.resetDownload()
+    expect(cancel).toHaveBeenCalled()
+    expect(gate).toHaveBeenCalledWith('cancel')
+    expect(wrapper.vm.downloading).toBe(false)
+    expect(wrapper.vm.handle).toBe(null)
+    expect(wrapper.vm._runSeq).toBe(seq + 1)
+  })
+
+  it('a stale terminal state does not swallow the confirmation gate', async () => {
+    const wrapper = factory({
+      estimateResult: estimate({ warnings: [LARGE] }),
+      cancelled: { rows: 5 }
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.startDownload('geojson')
+    await wrapper.vm.$nextTick()
+    // The cancelled outcome is cleared so the confirm box is what renders.
+    expect(wrapper.vm.cancelled).toBe(null)
+    expect(wrapper.vm.pendingConfirm).toBeTruthy()
+    expect(wrapper.find('.ad-confirm').exists()).toBe(true)
+  })
+
+  it('a confirmation for a request that changed re-gates instead of running', async () => {
+    const wrapper = factory({ estimateResult: estimate({ warnings: [LARGE] }) })
+    await wrapper.vm.$nextTick()
+    // A payload stamped with a different filter: the proceed click must
+    // rebuild the gate against the live filter, not start the download.
+    wrapper.vm.pendingConfirm = { format: 'geojson', filterKey: 'stale', filesSelected: undefined, lines: [], sources: [] }
+    await wrapper.vm.startDownload('geojson', true)
+    expect(wrapper.vm.downloading).toBe(false)
+    expect(wrapper.vm.pendingConfirm).toBeTruthy()
+    expect(wrapper.vm.pendingConfirm.filterKey).not.toBe('stale')
+  })
+
+  it("gates on the chosen format's own byte model when the generic estimate stayed quiet", async () => {
+    // 60M rows of GeoJSON text crosses the 1 GiB line on the format's own
+    // model even when the estimate raised no size warning.
+    const rows = { min: 60_000_000, max: 60_000_000, estimate: 60_000_000, exact: true }
+    const wrapper = factory({ estimateResult: estimate({ rows, warnings: [] }) })
+    const confirm = await wrapper.vm.confirmationFor('geojson')
+    expect(confirm).toBeTruthy()
+    expect(confirm.lines.join(' ')).toContain('warnings.largeDownload')
   })
 })
