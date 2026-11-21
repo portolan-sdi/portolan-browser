@@ -135,7 +135,14 @@ async function fetchBody(url, { signal, fetchFn }, asJson) {
   if (!response?.ok) {
     throw unresolved(`Listing ${url} failed with status ${response?.status}`);
   }
-  return asJson ? response.json() : response.text();
+  // A gateway can answer 200 with an HTML error page or cut a body short. The
+  // reader then throws a SyntaxError, which carries no code and would reach the
+  // caller as an unexplained failure instead of an unresolved glob.
+  try {
+    return await (asJson ? response.json() : response.text());
+  } catch (error) {
+    throw unresolved(`Listing ${url} returned a body this client cannot read: ${error.message}`);
+  }
 }
 
 function xmlTexts(document, tagName) {
@@ -182,7 +189,12 @@ function listingPlan(glob, storageSchemes) {
   const prefix = encodePath(prefixOf(pattern));
 
   if (scheme === 's3') {
-    const custom = findScheme(storageSchemes, bucket, s => s.type === 'custom-s3' && s.platform);
+    const custom = findScheme(storageSchemes, bucket, s => s.type === 'custom-s3');
+    if (custom && !custom.platform) {
+      // The bucket lives on a platform this scheme does not name. Listing it on
+      // an AWS host would ask the wrong service for someone else's bucket.
+      throw unresolved(`The custom-s3 scheme of the bucket ${bucket} names no platform`);
+    }
     if (custom) {
       const base = `${trimSlash(custom.platform)}/${bucket}`;
       return {
@@ -251,9 +263,13 @@ function listingPlan(glob, storageSchemes) {
  * Source Cooperative and the account endpoint of an Azure container.
  *
  * Rejects with `error.code === 'globUnresolved'` when the glob is not an
- * absolute bucket URL, when its scheme has no listing path, when an Azure
- * container has no storage scheme, when a listing request fails, and when the
- * expansion passes MAX_PARTITION_KEYS files.
+ * absolute bucket URL, when its scheme has no listing path, when a custom S3
+ * bucket or an Azure container has no storage scheme naming its platform, when
+ * a listing request fails or answers a body this client cannot read, when the
+ * expansion passes MAX_PARTITION_KEYS files, and when no key matched the
+ * pattern. An empty answer is a failure, not an answer: the caller needs at
+ * least one file, and a well-formed error page or a blocked cross-origin
+ * listing reads exactly like a bucket that holds nothing.
  *
  * `fetchFn` is the listing reader, injected for tests. `signal` (an
  * AbortSignal) is forwarded to it.
@@ -275,6 +291,9 @@ export async function expandPartitionGlob(glob, storageSchemes, { signal, fetchF
       throw unresolved(`The partition glob ${glob} names more than ${MAX_PARTITION_KEYS} files`);
     }
     if (!page.next) {
+      if (matched.length === 0) {
+        throw unresolved(`Listing matched no files for the partition glob ${glob}`);
+      }
       return matched.sort().map(plan.fileUrl);
     }
     token = page.next;

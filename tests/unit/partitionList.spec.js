@@ -220,6 +220,63 @@ describe('expandPartitionGlob custom-s3', () => {
   });
 });
 
+describe('expandPartitionGlob unreadable answers', () => {
+  it('rejects a well-formed page that holds no listing', async () => {
+    const fetchFn = stubFetch(['<html><body><h1>Access denied</h1></body></html>']);
+    await expect(
+      expandPartitionGlob('s3://ftw/p/*.parquet', SOURCE_COOP, { fetchFn }),
+    ).rejects.toMatchObject({
+      code: 'globUnresolved',
+      message: expect.stringContaining('matched no files'),
+    });
+  });
+
+  it('rejects an empty listing rather than resolving to no files', async () => {
+    const fetchFn = stubFetch([s3ListXml([])]);
+    await expect(
+      expandPartitionGlob('s3://ftw/p/*.parquet', SOURCE_COOP, { fetchFn }),
+    ).rejects.toMatchObject({
+      code: 'globUnresolved',
+      message: expect.stringContaining('matched no files'),
+    });
+  });
+
+  it('rejects a listing whose keys the pattern all miss', async () => {
+    const fetchFn = stubFetch([s3ListXml(['p/a.csv', 'p/deeper/b.parquet'])]);
+    await expect(
+      expandPartitionGlob('s3://ftw/p/*.parquet', SOURCE_COOP, { fetchFn }),
+    ).rejects.toMatchObject({ code: 'globUnresolved' });
+  });
+
+  it('rejects text that is not XML at all', async () => {
+    const fetchFn = stubFetch(['>>> not xml <<<']);
+    await expect(
+      expandPartitionGlob('s3://ftw/p/*.parquet', SOURCE_COOP, { fetchFn }),
+    ).rejects.toMatchObject({ code: 'globUnresolved' });
+  });
+
+  it('rejects a json body the reader cannot parse', async () => {
+    const fetchFn = () => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON at position 0')),
+    });
+    await expect(
+      expandPartitionGlob('gs://bucket/p/*.parquet', null, { fetchFn }),
+    ).rejects.toMatchObject({
+      code: 'globUnresolved',
+      message: expect.stringContaining('cannot read'),
+    });
+  });
+
+  it('rejects a google answer that carries no items', async () => {
+    const fetchFn = stubFetch([{ kind: 'storage#objects' }]);
+    await expect(
+      expandPartitionGlob('gs://bucket/p/*.parquet', null, { fetchFn }),
+    ).rejects.toMatchObject({ code: 'globUnresolved' });
+  });
+});
+
 describe('expandPartitionGlob plain s3', () => {
   it('uses the AWS virtual host when no scheme names the bucket', async () => {
     const fetchFn = stubFetch([s3ListXml(['p/a.parquet'])]);
@@ -231,6 +288,18 @@ describe('expandPartitionGlob plain s3', () => {
       'https://ftw.s3.us-east-1.amazonaws.com/?list-type=2&prefix=p/',
     ]);
     expect(urls).toEqual(['https://ftw.s3.us-east-1.amazonaws.com/p/a.parquet']);
+  });
+
+  it('rejects a custom-s3 scheme that names the bucket but no platform', async () => {
+    const fetchFn = stubFetch([]);
+    const schemes = { s: { type: 'custom-s3', region: 'us-west-2', bucket: 'ftw' } };
+    await expect(
+      expandPartitionGlob('s3://ftw/p/*.parquet', schemes, { fetchFn }),
+    ).rejects.toMatchObject({
+      code: 'globUnresolved',
+      message: expect.stringContaining('custom-s3'),
+    });
+    expect(fetchFn.urls).toEqual([]);
   });
 
   it('takes the region from a matching aws scheme', async () => {
