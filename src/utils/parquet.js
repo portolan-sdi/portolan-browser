@@ -74,18 +74,77 @@ function parseGeoMetadata(metadata) {
   }
 }
 
+// A PROJJSON object → the `{ crs, crsDefinition }` pair the rest of the
+// loader works with. Shared by the GeoParquet `geo` path, where PROJJSON is
+// the only form, and by the native logical types, where it is one of four.
+//
+// A PROJJSON CRS without a recognizable authority/code is legal (some writers
+// omit `id`) but cannot be assumed to be lon/lat, so it is reported by name
+// (or as unidentified) and fails MAP_RENDERABLE_CRS instead of silently
+// defaulting to EPSG:4326. proj4 resolves EPSG:4326 and EPSG:3857 from the
+// code alone, so those two carry no definition.
+function crsFromProjjson(projjson) {
+  const auth = projjson.id?.authority;
+  const code = projjson.id?.code;
+  const crs = auth && code ? `${auth}:${code}` : (projjson.name || 'unidentified');
+  return {
+    crs,
+    crsDefinition: crs === 'EPSG:4326' || crs === 'EPSG:3857' ? null : projjson,
+  };
+}
+
+// The `crs` string of a native GEOMETRY/GEOGRAPHY logical type. Parquet's
+// Geospatial.md suggests four forms, and Portolan v0.3 asks a file without a
+// `geo` key for one of the two PROJJSON ones:
+//
+//   - inline PROJJSON, a complete definition embedded in the string;
+//   - `projjson:<key_name>`, naming a file key-value metadata entry that
+//     holds that definition;
+//   - `<authority>:<code>`, e.g. OGC:CRS84, EPSG:4326, EPSG:3857, IGNF:ATI,
+//     which passes through for MAP_RENDERABLE_CRS and proj4 to resolve;
+//   - `srid:<identifier>`, which is refused: an SRID is database-specific, so
+//     the number identifies no CRS on its own.
+//
+// An unset or empty `crs` means OGC:CRS84 (lon/lat). It is reported as null,
+// so consumers apply their own default exactly as for a file with no `geo`
+// key. A PROJJSON form that will not parse, or a `projjson:` key the file
+// lacks, is reported as 'unidentified': that fails MAP_RENDERABLE_CRS and
+// surfaces as an unsupported-CRS error rather than a silent lon/lat guess.
+function crsFromLogicalType(declared, metadata) {
+  if (typeof declared !== 'string' || declared.trim() === '') {
+    return { crs: null, crsDefinition: null };
+  }
+  const text = declared.trim();
+  const unidentified = { crs: 'unidentified', crsDefinition: null };
+
+  let projjson = text;
+  if (text.toLowerCase().startsWith('projjson:')) {
+    const key = text.slice('projjson:'.length);
+    const entry = metadata?.key_value_metadata?.find(kv => kv.key === key);
+    if (!entry?.value) {
+      return unidentified;
+    }
+    projjson = entry.value;
+  } else if (!text.startsWith('{')) {
+    if (/^srid:/i.test(text)) {
+      return unidentified;
+    }
+    return { crs: text, crsDefinition: null };
+  }
+
+  try {
+    const parsed = JSON.parse(projjson);
+    return parsed && typeof parsed === 'object' ? crsFromProjjson(parsed) : unidentified;
+  } catch {
+    return unidentified;
+  }
+}
+
 // Parquet's own GEOMETRY and GEOGRAPHY logical types mark a WKB column in the
 // schema, so a file that carries one needs no GeoParquet `geo` key. Portolan
 // v0.3 accepts such a file as vector data. hyparquet decodes a column with
 // either logical type to GeoJSON itself, the same as a `geo`-marked column,
 // so no change to the read path is needed.
-//
-// `crs` is an optional string on the logical type. The format says an unset
-// CRS means OGC:CRS84 (lon/lat), which is reported as null so consumers apply
-// their own default, the same as a file with no `geo` key at all. Any other
-// string is passed through unchanged for MAP_RENDERABLE_CRS and proj4 to
-// judge; the format defines no way to carry a CRS *definition* here, so
-// `crsDefinition` stays null.
 function detectNativeGeometryColumn(metadata, columnNames) {
   const elements = metadata?.schema;
   if (!Array.isArray(elements)) {
@@ -96,14 +155,14 @@ function detectNativeGeometryColumn(metadata, columnNames) {
     if (type !== 'GEOMETRY' && type !== 'GEOGRAPHY') {
       continue;
     }
-    // Only a top-level column can be read as the geometry, matching
-    // hyparquet's own name-based column selection.
-    if (!columnNames.includes(element.name)) {
+    // Both logical types annotate a WKB column, and only a top-level one can
+    // be read as the geometry, matching hyparquet's own name-based column
+    // selection.
+    if (element.type !== 'BYTE_ARRAY' || !columnNames.includes(element.name)) {
       continue;
     }
-    const declared = element.logical_type.crs;
-    const crs = typeof declared === 'string' && declared.trim() !== '' ? declared.trim() : null;
-    return { geometryColumn: element.name, bboxMapping: null, crs, crsDefinition: null };
+    const { crs, crsDefinition } = crsFromLogicalType(element.logical_type.crs, metadata);
+    return { geometryColumn: element.name, bboxMapping: null, crs, crsDefinition };
   }
   return null;
 }
@@ -129,21 +188,9 @@ function detectGeometryInfo(metadata, columnNames) {
     }
 
     // Absent `crs` → null: GeoParquet's default is then OGC:CRS84 (lon/lat).
-    // A declared PROJJSON CRS without a recognizable authority/code is legal
-    // (some writers omit `id`) but cannot be assumed to be lon/lat, so it is
-    // reported by name (or as unidentified) and fails MAP_RENDERABLE_CRS
-    // instead of silently defaulting to EPSG:4326.
-    let crs = null;
-    let crsDefinition = null;
-    if (columnMeta?.crs) {
-      const projjson = columnMeta.crs;
-      const auth = projjson.id?.authority;
-      const code = projjson.id?.code;
-      crs = auth && code ? `${auth}:${code}` : (projjson.name || 'unidentified');
-      if (crs !== 'EPSG:4326' && crs !== 'EPSG:3857') {
-        crsDefinition = projjson;
-      }
-    }
+    const { crs, crsDefinition } = columnMeta?.crs
+      ? crsFromProjjson(columnMeta.crs)
+      : { crs: null, crsDefinition: null };
 
     return {
       geometryColumn: primaryColumn,
