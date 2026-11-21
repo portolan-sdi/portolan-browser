@@ -126,8 +126,8 @@ function bboxSql(paths, bboxes, includeTouch) {
   // One group per box: an antimeridian-crossing area carries two
   // (design doc §1.5), and the test is an OR over them.
   const groups = bboxes.map(([xmin, ymin, xmax, ymax]) => (
-    `(${ident(paths.xmin)} ${le}= ${xmax} AND ${ident(paths.xmax)} ${ge}= ${xmin}`
-    + ` AND ${ident(paths.ymin)} ${le}= ${ymax} AND ${ident(paths.ymax)} ${ge}= ${ymin})`
+    `(${ident(paths.xmin)} ${le} ${xmax} AND ${ident(paths.xmax)} ${ge} ${xmin}`
+    + ` AND ${ident(paths.ymin)} ${le} ${ymax} AND ${ident(paths.ymax)} ${ge} ${ymin})`
   ));
   return groups.length === 1 ? groups[0] : `(${groups.join('\n      OR ')})`;
 }

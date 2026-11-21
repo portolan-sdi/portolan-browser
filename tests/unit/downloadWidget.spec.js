@@ -250,7 +250,11 @@ describe('DuckDbSqlGenerator', () => {
     expect(sql).toContain('INSTALL spatial;')
     expect(sql).toContain("read_parquet('https://data.example.org/geoboundaries/adm0/cgaz_adm0.parquet')")
     // Covering prune, then the exact test, then the attribute predicate.
-    expect(sql).toContain('"bbox"."xmin" <= 9.64')
+    // Strict inequalities: the reader's own bbox test is strictly open
+    // when `includeBboxTouch` is unset, and the SQL must select the same
+    // rows (a doubled "<==" shipped here once -- invalid SQL).
+    expect(sql).toContain('"bbox"."xmin" < 9.64')
+    expect(sql).not.toContain('<==')
     expect(sql).toContain('ST_Intersects(ST_GeomFromWKB("geometry"), ST_GeomFromGeoJSON(')
     expect(sql).toContain('"area_km2" >= 10')
     expect(sql).toContain('LIMIT 100000')
@@ -259,6 +263,14 @@ describe('DuckDbSqlGenerator', () => {
     // declared columns become an explicit SELECT list.
     expect(sql).toContain('"shapeName"')
     expect(sql).not.toContain('SELECT *')
+  })
+
+  it('emits closed bbox comparisons only when the filter includes touch', () => {
+    const touching = request()
+    touching.filter.spatial = { ...touching.filter.spatial, includeBboxTouch: true }
+    const sql = new DuckDbSqlGenerator().generate(touching)
+    expect(sql).toContain('"bbox"."xmin" <= 9.64')
+    expect(sql).not.toContain('<==')
   })
 
   it('uses the filter geometry, not the display geometry', () => {
