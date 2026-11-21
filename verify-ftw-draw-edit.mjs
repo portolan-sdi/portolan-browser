@@ -32,6 +32,16 @@ import { chromium } from '@playwright/test'
 
 const APP = process.env.APP_BASE || 'http://localhost:8081'
 const DATA = process.env.DATA_BASE || 'https://data.source.coop'
+
+// Compare origins, not string prefixes. `u.startsWith(DATA)` also matches
+// `https://data.source.coop.example.com`, which is a different host.
+const sameOrigin = (u, base) => {
+  try {
+    return new URL(u).origin === new URL(base).origin
+  } catch {
+    return false
+  }
+}
 const COLLECTION = `${DATA}/ftw/global-data-2e/vector/2019/collection.json`
 
 const externalPath = url => `${APP}/#/external/${url.replace('://', ':/')}`
@@ -220,10 +230,10 @@ await card().locator('.ad-why summary').click()
 
 log('PARQUET REQUESTS THE PAGE MADE', {
   total: parquetRequests.length,
-  allOnDataHost: parquetRequests.every(u => u.startsWith(DATA)),
+  allOnDataHost: parquetRequests.every(u => sameOrigin(u, DATA)),
   resolvedIntoZoneDirs: parquetRequests.filter(u => /zone=\d+\//.test(u)).length,
   // The bug's signature: anything fetched off the app's own origin.
-  wronglyResolvedAgainstThePage: parquetRequests.filter(u => u.startsWith(APP)),
+  wronglyResolvedAgainstThePage: parquetRequests.filter(u => sameOrigin(u, APP)),
   sample: [...new Set(parquetRequests)].slice(0, 3)
 })
 const red = await card().locator('.ad-error, .estimate-error').count()
