@@ -19,7 +19,15 @@ vi.mock('../../src/utils/parquet', async () => ({
   loadParquetRows: vi.fn(),
   getBboxForRow: vi.fn(),
   GLOB_UNRESOLVED: 'globUnresolved',
-  isLoadableParquetAsset: asset => !/\*|%2A/i.test(asset.getAbsoluteUrl?.() || asset.href || ''),
+  // The href term keeps the stub from answering true for the synthetic
+  // partition entry, which names no file at all.
+  isLoadableParquetAsset: asset => {
+    const href = asset.getAbsoluteUrl?.() || asset.href || '';
+    return href.endsWith('.parquet') && !/\*|%2A/i.test(href);
+  },
+  isParquetAsset: asset => /\.parquet/i.test(asset.getAbsoluteUrl?.() || asset.href || ''),
+  isPartitionPlaceholder: (await vi.importActual('../../src/utils/parquetGlob.js'))
+    .isPartitionPlaceholder,
   readMirrorRowTotal: vi.fn(),
   resolveParquetGlob: vi.fn(),
   MAX_ROWS: 10000,
@@ -87,7 +95,7 @@ describe('ParquetViewer glob resolution', () => {
     tableLoads()
     const wrapper = viewer([globAsset])
     await flushPromises()
-    expect(resolveParquetGlob).toHaveBeenCalledWith(globAsset)
+    expect(resolveParquetGlob).toHaveBeenCalledWith(globAsset, { signal: expect.any(AbortSignal) })
     expect(loadParquetMetadata).toHaveBeenCalledWith(PARTITION_HREF)
     expect(wrapper.find('.parquet-error').exists()).toBe(false)
     wrapper.unmount()
@@ -390,23 +398,65 @@ describe('ParquetViewer partitioned collection without a concrete asset', () => 
     wrapper.unmount()
   })
 
-  it('falls back to a wildcard href, which the items of the collection expand', async () => {
-    // A v0.2 collection declares both `partition:glob` and a wildcard data
-    // asset. A listing the browser cannot reach must not cost the reader the
-    // item path, which the resolver still walks for that asset.
-    const error = new Error('Listing matched no files for the partition glob')
+  it('falls back when the listing fails with an error that carries no code', async () => {
+    // A blocked cross-origin listing rejects with a bare TypeError. The
+    // resolver gives it the glob code, so the reader still reaches an asset
+    // the browser can read instead of a dead end.
+    const error = new Error('Failed to fetch')
     error.code = 'globUnresolved'
     resolveParquetGlob.mockImplementation(asset => isPartitionPlaceholder(asset)
       ? Promise.reject(error)
-      : Promise.resolve({ url: PARTITION_HREF, partition: partitionOf() }))
+      : Promise.resolve({ url: asset.getAbsoluteUrl(), partition: null }))
     tableLoads()
-    const wildcard = { ...globAsset, getContext: () => partitionedCollection() }
+    const wrapper = viewer([mirrorAsset(partitionedCollection())])
+    await flushPromises()
+    expect(wrapper.vm.selectedAssetKey).toBe('items')
+    expect(wrapper.find('.parquet-error').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('offers no entry when a wildcard data asset already names the partitions', async () => {
+    // A v0.2 collection declares both `partition:glob` and a wildcard data
+    // asset. The item path of that asset is the proven one for those
+    // catalogs, so it stays the default and no listing is offered beside it.
+    resolveParquetGlob.mockResolvedValue({ url: PARTITION_HREF, partition: partitionOf() })
+    tableLoads()
+    const wildcard = {
+      ...globAsset,
+      hasRole: role => role === 'data',
+      getContext: () => partitionedCollection(),
+    }
     const wrapper = viewer([wildcard])
     await flushPromises()
-    expect(wrapper.vm.selectedAssetKey).toBe('data')
-    expect(wrapper.find('.parquet-error').exists()).toBe(false)
+    expect(wrapper.vm.parquetAssets).toHaveLength(1)
+    expect(isPartitionPlaceholder(resolveParquetGlob.mock.calls[0][0])).toBe(false)
     expect(loadParquetMetadata).toHaveBeenCalledWith(PARTITION_HREF)
     wrapper.unmount()
+  })
+
+  it('aborts the expansion of the selection the reader leaves behind', async () => {
+    const signals = []
+    const slow = deferred()
+    resolveParquetGlob.mockImplementation((asset, options) => {
+      signals.push(options?.signal)
+      return isPartitionPlaceholder(asset)
+        ? slow.promise
+        : Promise.resolve({ url: asset.getAbsoluteUrl(), partition: null })
+    })
+    tableLoads()
+    const wrapper = viewer([mirrorAsset(partitionedCollection())])
+    await flushPromises()
+    expect(signals[0]?.aborted).toBe(false)
+
+    await wrapper.setData({ selectedAssetKey: 'items' })
+    await flushPromises()
+    expect(signals[0].aborted).toBe(true)
+    expect(signals[1].aborted).toBe(false)
+
+    wrapper.unmount()
+    // Teardown stops the listing of the load that was still running.
+    expect(signals[1].aborted).toBe(true)
+    slow.resolve({ url: PARTITION_HREF, partition: partitionOf() })
   })
 
   it('reports the expansion failure when the reader picked the entry themselves', async () => {

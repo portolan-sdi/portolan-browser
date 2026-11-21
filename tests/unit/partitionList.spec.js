@@ -205,6 +205,29 @@ describe('expandPartitionGlob custom-s3', () => {
     ).rejects.toMatchObject({ code: 'globUnresolved' });
   });
 
+  it('rejects a list request the browser could not send', async () => {
+    // A blocked cross-origin listing, an unresolvable host and an offline
+    // browser all reject with a bare TypeError. The code says what the caller
+    // needs to know: the files this glob names are out of reach.
+    const fetchFn = () => Promise.reject(new TypeError('Failed to fetch'));
+    await expect(
+      expandPartitionGlob('s3://ftw/p/*.parquet', SOURCE_COOP, { fetchFn }),
+    ).rejects.toMatchObject({ code: 'globUnresolved' });
+  });
+
+  it('keeps an abort as an abort', async () => {
+    const controller = new AbortController();
+    const fetchFn = () => {
+      controller.abort();
+      return Promise.reject(new DOMException('aborted', 'AbortError'));
+    };
+    await expect(
+      expandPartitionGlob('s3://ftw/p/*.parquet', SOURCE_COOP, {
+        fetchFn, signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   it('forwards the abort signal', async () => {
     const seen = [];
     const signal = new AbortController().signal;

@@ -312,6 +312,26 @@ describe('resolveParquetGlob for a partitioned collection', () => {
       .rejects.toMatchObject({ code: GLOB_UNRESOLVED })
   })
 
+  it('reports globUnresolved for a listing failure that carries no code', async () => {
+    // A blocked cross-origin listing rejects with a bare TypeError. Without
+    // the code the caller cannot tell it from a failure of its own, and loses
+    // the fallback it offers for files it cannot reach.
+    const listGlob = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    await expect(resolveParquetGlob(createPartitionPlaceholder(partitioned()), { listGlob }))
+      .rejects.toMatchObject({ code: GLOB_UNRESOLVED })
+  })
+
+  it('keeps an abort as an abort', async () => {
+    const controller = new AbortController()
+    const listGlob = vi.fn().mockImplementation(() => {
+      controller.abort()
+      return Promise.reject(new DOMException('aborted', 'AbortError'))
+    })
+    await expect(resolveParquetGlob(createPartitionPlaceholder(partitioned()), {
+      listGlob, signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
   it('reports globUnresolved for an expansion that answered nothing', async () => {
     await expect(resolveParquetGlob(
       createPartitionPlaceholder(partitioned()), { listGlob: lister([]) }

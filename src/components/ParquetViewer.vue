@@ -63,15 +63,15 @@ import {
   MAX_ROWS,
   GLOB_UNRESOLVED,
   isLoadableParquetAsset,
+  isParquetAsset,
+  isPartitionPlaceholder,
   readMirrorRowTotal,
   resolveParquetGlob,
 } from '../utils/parquet';
 import { readPartitionMetadata } from '../utils/partitionList';
 
-// The asset that makes a partitioned collection's data readable as one file,
-// and so settles whether the collection needs the synthetic entry below. The
-// role is read both ways, because a plain STAC asset object carries `roles`
-// while a stac-js Asset answers hasRole.
+// The role is read both ways, because a plain STAC asset object carries
+// `roles` while a stac-js Asset answers hasRole.
 function hasDataRole(asset) {
   if (typeof asset.hasRole === 'function') {
     return asset.hasRole('data');
@@ -79,8 +79,13 @@ function hasDataRole(asset) {
   return Array.isArray(asset.roles) && asset.roles.includes('data');
 }
 
-function isConcreteDataAsset(asset) {
-  return isLoadableParquetAsset(asset) && hasDataRole(asset);
+// An asset that already names the collection's data, and so settles whether
+// the collection needs the synthetic entry below. A wildcard href counts: a
+// v0.2 partitioned collection declares `partition:glob` beside such an asset,
+// and the resolver expands it through the collection's items, which is the
+// proven path for those catalogs.
+function isParquetDataAsset(asset) {
+  return isParquetAsset(asset) && hasDataRole(asset);
 }
 
 export default {
@@ -115,6 +120,10 @@ export default {
       // Identifies the current load. A late mirror total from a previous
       // asset must not land on the asset the user selected since.
       loadId: 0,
+      // Cancels the requests of the load that loadId identifies. Expanding a
+      // `partition:glob` walks every page of a bucket listing, which a
+      // selection the reader has left behind must not keep spending.
+      loadAbort: null,
       tableData: null,
       geoInfo: { geometryColumn: null, bboxMapping: null, crs: null, crsDefinition: null },
     };
@@ -127,13 +136,16 @@ export default {
       return this.assets.map(asset => asset.getContext?.()).find(Boolean) || null;
     },
     // Portolan v0.3 forbids a wildcard href, so a partitioned collection may
-    // publish no parquet data asset: `partition:glob` is the only statement of
-    // where the data lives. One synthetic entry gives the reader something to
-    // select, and the resolver expands the glob when they do. A concrete data
-    // asset keeps winning, and a collection that has one lists nothing extra.
+    // publish no parquet data asset at all: `partition:glob` is the only
+    // statement of where the data lives. One synthetic entry gives the reader
+    // something to select, and the resolver expands the glob when they do.
+    // Any parquet data asset keeps winning, so this entry appears only for a
+    // collection whose data is behind the glob and nowhere else. The entry is
+    // then the default selection, and the open preview lists the bucket on
+    // mount: a preview with nothing to read is itself the reason to look.
     partitionPlaceholder() {
       const metadata = readPartitionMetadata(this.partitionContext);
-      if (!metadata || this.assets.some(isConcreteDataAsset)) {
+      if (!metadata || this.assets.some(isParquetDataAsset)) {
         return null;
       }
       const count = Number(metadata.fileCount) || 0;
@@ -211,11 +223,21 @@ export default {
       }
     }
   },
+  beforeUnmount() {
+    // The reader has navigated away: a bucket listing still walking its pages
+    // has nothing left to answer.
+    this.loadAbort?.abort();
+  },
   methods: {
     async loadData() {
       if (!this.selectedAsset) {return;}
 
       const loadId = ++this.loadId;
+      // The load this one replaces stops where it stands: its answers are
+      // dropped by the loadId checks below either way.
+      this.loadAbort?.abort();
+      const abort = new AbortController();
+      this.loadAbort = abort;
       this.loading = true;
       this.error = null;
       this.tableData = null;
@@ -226,7 +248,9 @@ export default {
         this.loadingMessage = this.$t('parquet.loadingMetadata');
         // A partitioned collection points one asset at every partition with a
         // wildcard href. Resolve it to one partition the browser can read.
-        const { url, partition } = await resolveParquetGlob(this.selectedAsset);
+        const { url, partition } = await resolveParquetGlob(this.selectedAsset, {
+          signal: abort.signal,
+        });
         // Every await below re-checks loadId: the user may have selected
         // another asset meanwhile, and this load's results belong to the old
         // one. The same check guards the catch and finally blocks.
@@ -266,13 +290,14 @@ export default {
           // user's own pick, not to a pick they never made. Over the real
           // assets, so the synthetic partition entry is never the fallback
           // for its own failed expansion. When that entry was the pick, any
-          // parquet asset will do, including a v0.2 wildcard href the
-          // resolver expands through the collection's items; when a wildcard
-          // href was the pick, only an asset that names one file can help.
+          // parquet asset will do, because every one of them reaches the data
+          // by a path the listing did not take; when a wildcard href was the
+          // pick, only an asset that names one file can help.
           const assets = findParquetAssets(this.assets);
-          const fallback = !this.selectedAssetKey && (this.partitionPlaceholder
-            ? assets[0]
-            : assets.find(a => isLoadableParquetAsset(a)));
+          const fallback = !this.selectedAssetKey
+            && (isPartitionPlaceholder(this.selectedAsset)
+              ? assets[0]
+              : assets.find(a => isLoadableParquetAsset(a)));
           if (fallback) {
             this.selectedAssetKey = fallback.getKey();
             return;

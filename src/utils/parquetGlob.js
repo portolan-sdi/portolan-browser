@@ -146,7 +146,19 @@ async function resolvePartitionGlob(asset, { signal, listGlob }) {
   }
 
   const context = asset.getContext?.();
-  const files = await listGlob(metadata.glob, context?.getMetadata?.('storage:schemes'), { signal });
+  let files;
+  try {
+    files = await listGlob(metadata.glob, context?.getMetadata?.('storage:schemes'), { signal });
+  } catch (error) {
+    // Every way a listing can fail reads the same to the caller: the files the
+    // glob names are out of reach. A rejection with no code, such as the bare
+    // TypeError a blocked cross-origin request throws, would otherwise reach
+    // the caller as a load failure and cost it its fallback.
+    if (error?.code === GLOB_UNRESOLVED || signal?.aborted || error?.name === 'AbortError') {
+      throw error;
+    }
+    throw unresolved(`The partition glob ${metadata.glob} could not be expanded: ${error.message}`);
+  }
   // expandPartitionGlob sorts by key and rejects an empty expansion, so the
   // first entry is the first partition. The guard holds for any other lister.
   if (!files || files.length === 0) {

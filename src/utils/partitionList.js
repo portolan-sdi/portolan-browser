@@ -125,7 +125,20 @@ function findScheme(storageSchemes, bucket, predicate) {
 }
 
 async function fetchBody(url, { signal, fetchFn }, asJson) {
-  const response = await fetchFn(url, signal ? { signal } : undefined);
+  let response;
+  try {
+    response = await fetchFn(url, signal ? { signal } : undefined);
+  } catch (error) {
+    // A blocked cross-origin listing, a name that does not resolve and an
+    // offline browser all reject with a bare TypeError that carries no code.
+    // The caller reads the code to tell "these files are out of reach" from a
+    // failure of its own, so the request failure gets the code here. An abort
+    // is the caller's own decision and keeps its own error.
+    if (signal?.aborted || error?.name === 'AbortError') {
+      throw error;
+    }
+    throw unresolved(`Listing ${url} failed: ${error.message}`);
+  }
   if (!response?.ok) {
     throw unresolved(`Listing ${url} failed with status ${response?.status}`);
   }
