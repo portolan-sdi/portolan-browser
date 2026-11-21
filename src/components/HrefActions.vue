@@ -104,7 +104,9 @@ export default {
     ...mapGetters(['getRequestUrl', 'isExternalUrl']),
     ...mapGetters('auth', ['isLoggedIn']),
     loading() {
-      return Boolean(this.downloads[this.href]);
+      // The store keys a download by the URL it fetches, which is the resolved
+      // one — the same as `href` for an asset the browser can fetch directly.
+      return Boolean(this.downloads[this.fetchableHref]);
     },
     requiresAuth() {
       return !this.isLoggedIn && this.auth.length > 0;
@@ -243,6 +245,20 @@ export default {
       const url = fetchableAssetHref(this.data);
       return url === null ? null : this.getRequestUrl(url);
     },
+    // What the download is asked for. Normally the asset itself; for an asset
+    // whose own href the browser cannot fetch it is a clone carrying the
+    // resolved href, so the alternative download path (see altDownload) reads
+    // the https alternate rather than the `s3://` store. The store applies
+    // getRequestUrl itself, so the clone carries the raw resolved href.
+    downloadLink() {
+      const url = fetchableAssetHref(this.data);
+      if (url === null || url === this.data.href || url === this.data.getAbsoluteUrl?.()) {
+        return this.data;
+      }
+      const link = new Asset(this.data);
+      link.href = url;
+      return link;
+    },
     from() {
       return this.protocolName(this.protocol);
     },
@@ -307,7 +323,7 @@ export default {
         return;
       }
 
-      await this.$store.dispatch('altDownload', this.data);
+      await this.$store.dispatch('altDownload', { link: this.downloadLink });
     },
     protocolName(protocol) {
       if (typeof protocol !== 'string') {

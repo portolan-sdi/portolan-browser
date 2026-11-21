@@ -76,6 +76,34 @@ describe('HrefActions', () => {
     expect(ctx.protocol).toBe('s3')
   })
 
+  // The alternative download path (a deployment with request headers, or a
+  // non-GET asset) fetches through the store, so the link it is handed has to
+  // carry the resolved href too. The store applies getRequestUrl itself, so
+  // the link carries the raw resolved href.
+  it('hands the store the alternate when it downloads through it', async () => {
+    const ctx = vm(parquetAsset({
+      href: S3_HREF,
+      alternate: { https: { href: ALTERNATE } },
+    }))
+    const dispatched = []
+    ctx.$store = { dispatch: (action, payload) => dispatched.push([action, payload]) }
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+    await HrefActions.methods.altDownload.call(ctx)
+    expect(dispatched).toHaveLength(1)
+    expect(dispatched[0][0]).toBe('altDownload')
+    expect(dispatched[0][1].link.href).toBe(ALTERNATE)
+  })
+
+  it('hands the store the asset itself when its own href is fetchable', async () => {
+    const asset = parquetAsset()
+    const ctx = vm(asset)
+    const dispatched = []
+    ctx.$store = { dispatch: (action, payload) => dispatched.push([action, payload]) }
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+    await HrefActions.methods.altDownload.call(ctx)
+    expect(dispatched[0][1].link).toBe(asset)
+  })
+
   it('names the alternate as the asset shown on the map', () => {
     const ctx = vm(parquetAsset({
       href: S3_HREF,
