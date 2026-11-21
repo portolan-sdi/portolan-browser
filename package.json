@@ -125,7 +125,7 @@
     "eslint": "^9.39.2",
     "eslint-plugin-vue": "^10.7.0",
     "globals": "^17.2.0",
-    "happy-dom": "^20.10.2",
+    "happy-dom": "^21.0.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.7",
     "msw": "^2.12.10",
