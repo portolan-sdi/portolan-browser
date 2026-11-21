@@ -30,8 +30,10 @@ every reader that does not know the field still renders the item.
 ## What opens by default
 
 Where the catalog says nothing, the browser opens one raster. On the item page
-that is the first asset with the `visual` role, or the first COG the item lists
-when no asset has that role. When the map receives a selection with no COG in
+that is the first asset with the `visual` role. Where no asset has that role,
+the browser takes the first asset with the `overview` role. Where no asset has
+either role, it takes the first COG the item lists. When the map receives a
+selection with no COG in
 it, as after the user shows a GeoParquet asset on an item that also has
 rasters, the map layer chooses for itself. It prefers, in order, the
 `visual` role, the `overview` role, an EPSG:3857 projection, and 8-bit samples.

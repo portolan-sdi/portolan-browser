@@ -758,6 +758,8 @@ The following options are supported:
 
 This is useful when you want to automatically display a specific asset variant (such as the HTTPS version accessible directly through the browser) instead of the main asset.
 
+Whichever variant the page shows, the browser reads an asset from a URL it can fetch. The shown asset's href can use a scheme the browser cannot fetch, such as `s3://`. The browser then uses the HTTPS alternate of that asset. The map draws that URL. The download button loads it. The page still displays the href the catalog states. The copy button still copies that href. An asset with no HTTP(S) href and no HTTPS alternate stays off the map.
+
 ### showThumbnailsAsAssets
 
 Defines whether thumbnails are shown in the lists of assets (`true`) or not (`false`, default).
