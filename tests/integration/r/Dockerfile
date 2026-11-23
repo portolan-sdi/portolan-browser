@@ -1,4 +1,4 @@
-FROM rocker/r-ver:latest
+FROM rocker/r-ver:latest@sha256:4383092318935c298533466f753354a7dfdc75a6e12edfb93a0f13c8a97135f9
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libudunits2-0 \
     libproj25 \
