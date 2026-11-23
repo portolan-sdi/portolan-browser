@@ -8,6 +8,7 @@ import {
 } from '../../utils/renders.js';
 import { orderedRenderLayers } from '../../utils/renderOrder.js';
 import { isHttpZarrHref, isZarrAsset } from '../../utils/zarrSource.js';
+import { fetchableAssetHref } from '../../utils/fetchableHref.js';
 import { registerGeostationary } from '../../utils/projGeostationary.js';
 import {
   makeZarrLayerProps, zarrDescriptors, ZARR_NOTICE_ERROR, ZARR_NOTICE_ZOOM_IN,
@@ -685,7 +686,12 @@ export default class StacMapLayer {
     // Now that the fields are known, the keys this run may want are known too.
     // Anything still downloading under a different key is bytes nobody will
     // read — abort those, and only those.
-    const wanted = new Set(sorted.map(a => this._parquetCacheKey(assetHref(a))));
+    // Keyed by the URL each asset would be downloaded from, which is the
+    // resolved one — an asset with nothing fetchable downloads nothing.
+    const wanted = new Set(sorted
+      .map(a => fetchableAssetHref(a))
+      .filter(url => url !== null)
+      .map(url => this._parquetCacheKey(url)));
     this._abortInflightParquet(wanted);
 
     let rendered = 0;
@@ -694,12 +700,15 @@ export default class StacMapLayer {
 
     for (let i = 0; i < sorted.length && rendered === 0; i++) {
       const asset = sorted[i];
-      const url = assetHref(asset);
+      // What the browser can actually download: the asset's own href when it
+      // is http(s), otherwise its https alternate. A Portolan v0.3 catalog may
+      // list an `s3://` store as the href and the readable URL beside it.
+      const url = fetchableAssetHref(asset);
       const sourceId = `stac-parquet-${i}`;
 
       try {
-        if (!isHttpHref(url)) {
-          console.warn('Refusing non-http(s) GeoParquet asset URL', url);
+        if (!url || !isHttpHref(url)) {
+          console.warn('Refusing non-http(s) GeoParquet asset URL', assetHref(asset));
           notice({ reason: VECTOR_NOTICE_ERROR });
           continue;
         }
@@ -1051,12 +1060,17 @@ export default class StacMapLayer {
 
   // Zarr assets of the current item that the browser can read. An `s3://`
   // store is listed by many catalogs beside its https twin; the browser cannot
-  // read it, so it is left out rather than listed as a layer that fails.
+  // read it, so it is left out rather than listed as a layer that fails —
+  // unless the asset names a readable URL in its `alternate`, which is then
+  // the one the store opens at (see makeZarrLayerProps).
   _collectZarrAssets() {
     const all = typeof this.stac?.getAssets === 'function'
       ? this.stac.getAssets()
       : (this.assets || []);
-    return all.filter(a => isZarrAsset(a) && isHttpZarrHref(a.getAbsoluteUrl?.() || a.href || ''));
+    return all.filter(a => {
+      const url = fetchableAssetHref(a);
+      return isZarrAsset(a) && url !== null && isHttpZarrHref(url);
+    });
   }
 
   async _addCogAssets(assets, epoch) {

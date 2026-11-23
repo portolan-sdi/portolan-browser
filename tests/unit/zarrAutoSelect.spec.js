@@ -37,6 +37,18 @@ describe('_autoSelectCogAsset with Zarr assets', () => {
     expect(ctx.hasAutoSelected).toBe(false)
   })
 
+  it('selects an s3 store that offers an https alternate', () => {
+    // Portolan v0.3 (PORTO-CORE-023): the store the browser reads is the
+    // alternate, so the asset does draw and selecting it is safe.
+    const asset = {
+      ...zarrAsset('zarr-s3', 's3://example-bucket/fire.zarr'),
+      alternate: { https: { href: 'https://example.com/fire.zarr' } },
+    }
+    const ctx = run([asset])
+    expect(ctx.selectedAssets).toEqual([asset])
+    expect(ctx.hasAutoSelected).toBe(true)
+  })
+
   it('selects the https twin and not the s3 one', () => {
     const https = zarrAsset('zarr', 'https://example.com/fire.zarr')
     const ctx = run([zarrAsset('zarr-s3', 's3://example-bucket/fire.zarr'), https])

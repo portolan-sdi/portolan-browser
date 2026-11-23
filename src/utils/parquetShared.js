@@ -36,6 +36,14 @@ export const VECTOR_NOTICE_ERROR = 'error';
 // problem is the declared CRS or the coordinates themselves.
 export const VECTOR_NOTICE_REPROJECTION = 'reprojection';
 
+// Error code on a rejection that says the files a pattern names cannot be
+// reached from the browser: an href whose wildcard no item expands, or a
+// `partition:glob` whose listing fails, matches nothing or passes its cap.
+// Defined here so utils/parquetGlob.js (which re-exports it as its public
+// GLOB_UNRESOLVED) and utils/partitionList.js share one literal. The caller
+// turns the code into its own message, because neither module localizes.
+export const GLOB_UNRESOLVED = 'globUnresolved';
+
 // Both spellings of the wildcard that marks a glob href, such as the
 // `./country=*/*.parquet` asset portolan-cli writes beside `partition:glob` on
 // a partitioned collection. stac-js resolves an href through a URI library

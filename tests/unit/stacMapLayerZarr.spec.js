@@ -418,6 +418,30 @@ describe('StacMapLayer Zarr layers', () => {
       expect(layer._cogList.some(d => d.variable?.name === 'v0')).toBe(true)
     })
 
+    it('lists the variables of an s3 store that offers an https alternate', async () => {
+      // Portolan v0.3 (PORTO-CORE-023): the s3:// href is the asset's own, and
+      // the https alternate is what the browser reads. The store is listed on
+      // the strength of the alternate rather than left out.
+      layer._makeZarrLayerProps = openAs({})
+      const asset = {
+        ...zarrAsset(twoVariables, 's3://example-bucket/fire.zarr'),
+        alternate: { https: { href: 'https://example.com/fire.zarr' } },
+      }
+      layer.setStac(fakeStac([asset]))
+      await layer.setAssets([asset])
+      expect(layer._collectZarrAssets()).toEqual([asset])
+      expect(layer._cogList).toHaveLength(2)
+    })
+
+    it('leaves out an s3 store with no http(s) alternate', async () => {
+      layer._makeZarrLayerProps = openAs({})
+      const asset = zarrAsset(twoVariables, 's3://example-bucket/fire.zarr')
+      layer.setStac(fakeStac([asset]))
+      await layer.setAssets([asset])
+      expect(layer._collectZarrAssets()).toEqual([])
+      expect(layer._cogList).toHaveLength(0)
+    })
+
     it('lists every variable of a store that fits', async () => {
       layer._makeZarrLayerProps = openAs({})
       const asset = zarrAsset(twoVariables)

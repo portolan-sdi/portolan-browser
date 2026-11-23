@@ -51,6 +51,21 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
   browser fetches a chunk: the chunk amplification, the request and pixel cost of the
   view, an unsupported codec, a CRS that proj4 cannot build a transform for, and a
   missing spatial reference. [docs/zarr.md](docs/zarr.md) states the rules for a publisher
+- Support for catalogs published against Portolan spec v0.3.0:
+  - A classification class that sets `nodata: true` draws transparent and stays out of
+    the legend, whatever its name. The name set and the band `nodata` value stay as
+    fallbacks for catalogs that write no flag
+  - An asset whose href uses a scheme the browser cannot fetch, such as `s3://`, renders
+    and downloads through its https `alternate`. The page still displays and copies the
+    href the catalog states. An asset with neither stays off the map
+  - A partitioned collection that declares `partition:glob` with no wildcard asset href
+    previews its first partition. The browser lists the bucket behind the glob: an
+    S3-compatible service from the `custom-s3` storage scheme, Amazon S3, Google Cloud
+    Storage, or Azure Blob Storage with a storage scheme that names the endpoint
+  - Parquet whose geometry column uses the native GEOMETRY or GEOGRAPHY logical type,
+    with no GeoParquet `geo` key, renders as vector data. The CRS comes from the logical
+    type: inline PROJJSON, a `projjson:<key>` reference, or an authority code
+  - A COG with the `overview` role opens by default when no asset has the `visual` role
 
 ### Changed
 

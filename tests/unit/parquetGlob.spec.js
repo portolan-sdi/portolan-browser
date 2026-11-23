@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { GLOB_UNRESOLVED, hasGlobPattern, resolveParquetGlob } from '../../src/utils/parquetGlob.js'
+import {
+  createPartitionPlaceholder,
+  GLOB_UNRESOLVED,
+  hasGlobPattern,
+  isPartitionPlaceholder,
+  resolveParquetGlob,
+} from '../../src/utils/parquetGlob.js'
 
 const COLLECTION_URL = 'https://data.test/ftw/2017/collection.json'
 const GLOB_HREF = 'https://data.test/ftw/2017/zone=*/utm*.parquet'
@@ -217,5 +223,160 @@ describe('resolveParquetGlob', () => {
       fetchJson: fetcher, signal: controller.signal,
     })
     expect(fetcher.mock.calls[0][1]).toBe(controller.signal)
+  })
+})
+
+// Portolan v0.3 forbids a wildcard href, so a partitioned collection declares
+// `partition:glob` and may publish no concrete parquet data asset at all.
+// ParquetViewer then offers one synthetic entry, and the resolver expands the
+// glob by listing the bucket instead of reading an item.
+const FILES = [
+  'https://ftw.s3.us-west-2.amazonaws.com/at/year%3D2021/part-0.parquet',
+  'https://ftw.s3.us-west-2.amazonaws.com/at/year%3D2022/part-0.parquet',
+  'https://ftw.s3.us-west-2.amazonaws.com/at/year%3D2023/part-0.parquet',
+]
+
+const SCHEMES = { aws: { type: 'aws-s3', bucket: 'ftw', region: 'us-west-2' } }
+
+const partitioned = ({
+  glob = 's3://ftw/at/year=*/*.parquet',
+  fileCount = 3,
+  rowCount = null,
+  assets = [],
+} = {}) => ({
+  getMetadata: field => ({
+    'partition:glob': glob,
+    'partition:file_count': fileCount,
+    'storage:schemes': SCHEMES,
+    'table:row_count': rowCount,
+  })[field],
+  getAssets: () => assets,
+  getStacLinksWithRel: () => [],
+})
+
+const lister = (files = FILES) => vi.fn().mockResolvedValue(files)
+
+describe('isPartitionPlaceholder', () => {
+  it('marks the synthetic entry and nothing else', () => {
+    expect(isPartitionPlaceholder(createPartitionPlaceholder(partitioned()))).toBe(true)
+    expect(isPartitionPlaceholder({ getAbsoluteUrl: () => GLOB_HREF })).toBe(false)
+    expect(isPartitionPlaceholder(null)).toBe(false)
+  })
+
+  it('carries the title the viewer gives it and the collection as its context', () => {
+    const context = partitioned()
+    const placeholder = createPartitionPlaceholder(context, { title: 'Partitioned data (3 files)' })
+    expect(placeholder.title).toBe('Partitioned data (3 files)')
+    expect(placeholder.getContext()).toBe(context)
+    expect(placeholder.getKey()).toBe('partition:glob')
+  })
+})
+
+describe('resolveParquetGlob for a partitioned collection', () => {
+  it('previews the first file of the expansion and counts every match', async () => {
+    const listGlob = lister()
+    const result = await resolveParquetGlob(
+      createPartitionPlaceholder(partitioned()), { listGlob, fetchJson: vi.fn() }
+    )
+    expect(result.url).toBe(FILES[0])
+    expect(result.partition).toEqual({
+      title: 'part-0.parquet', count: 3, totalRows: null, mirrorUrl: null,
+    })
+  })
+
+  it('expands the collection glob with the collection storage schemes', async () => {
+    const controller = new AbortController()
+    const listGlob = lister()
+    await resolveParquetGlob(createPartitionPlaceholder(partitioned()), {
+      listGlob, signal: controller.signal,
+    })
+    expect(listGlob).toHaveBeenCalledTimes(1)
+    expect(listGlob.mock.calls[0][0]).toBe('s3://ftw/at/year=*/*.parquet')
+    expect(listGlob.mock.calls[0][1]).toBe(SCHEMES)
+    expect(listGlob.mock.calls[0][2]).toEqual({ signal: controller.signal })
+  })
+
+  it('reads no item links for a partitioned collection', async () => {
+    const fetchJson = vi.fn()
+    await resolveParquetGlob(createPartitionPlaceholder(partitioned()), {
+      listGlob: lister(), fetchJson,
+    })
+    expect(fetchJson).not.toHaveBeenCalled()
+  })
+
+  it('surfaces an unresolved expansion', async () => {
+    const error = new Error('Listing matched no files for the partition glob')
+    error.code = GLOB_UNRESOLVED
+    const listGlob = vi.fn().mockRejectedValue(error)
+    await expect(resolveParquetGlob(createPartitionPlaceholder(partitioned()), { listGlob }))
+      .rejects.toMatchObject({ code: GLOB_UNRESOLVED })
+  })
+
+  it('reports globUnresolved for a listing failure that carries no code', async () => {
+    // A blocked cross-origin listing rejects with a bare TypeError. Without
+    // the code the caller cannot tell it from a failure of its own, and loses
+    // the fallback it offers for files it cannot reach.
+    const listGlob = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    await expect(resolveParquetGlob(createPartitionPlaceholder(partitioned()), { listGlob }))
+      .rejects.toMatchObject({ code: GLOB_UNRESOLVED })
+  })
+
+  it('keeps an abort as an abort', async () => {
+    const controller = new AbortController()
+    const listGlob = vi.fn().mockImplementation(() => {
+      controller.abort()
+      return Promise.reject(new DOMException('aborted', 'AbortError'))
+    })
+    await expect(resolveParquetGlob(createPartitionPlaceholder(partitioned()), {
+      listGlob, signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('reports globUnresolved for an expansion that answered nothing', async () => {
+    await expect(resolveParquetGlob(
+      createPartitionPlaceholder(partitioned()), { listGlob: lister([]) }
+    )).rejects.toMatchObject({ code: GLOB_UNRESOLVED })
+  })
+
+  it('reports globUnresolved when the collection declares no glob', async () => {
+    const listGlob = lister()
+    await expect(resolveParquetGlob(
+      createPartitionPlaceholder(partitioned({ glob: null })), { listGlob }
+    )).rejects.toMatchObject({ code: GLOB_UNRESOLVED })
+    expect(listGlob).not.toHaveBeenCalled()
+  })
+
+  it('names the file by its decoded basename', async () => {
+    const listGlob = lister(['https://ftw.s3.us-west-2.amazonaws.com/at/two%20words.parquet'])
+    const result = await resolveParquetGlob(createPartitionPlaceholder(partitioned()), { listGlob })
+    expect(result.partition.title).toBe('two words.parquet')
+  })
+
+  it('reports the row count the collection declares over every partition', async () => {
+    const result = await resolveParquetGlob(
+      createPartitionPlaceholder(partitioned({ rowCount: 133102683, assets: [mirror()] })),
+      { listGlob: lister() }
+    )
+    expect(result.partition.totalRows).toBe(133102683)
+    expect(result.partition.mirrorUrl).toBeNull()
+  })
+
+  it('names the item mirror of the collection when no total is declared', async () => {
+    const result = await resolveParquetGlob(
+      createPartitionPlaceholder(partitioned({ assets: [mirror()] })), { listGlob: lister() }
+    )
+    expect(result.partition.mirrorUrl).toBe('https://data.test/ftw/2017/items.parquet')
+  })
+})
+
+describe('resolveParquetGlob for an s3-primary asset', () => {
+  it('previews a concrete asset through its https alternate', async () => {
+    const asset = {
+      href: 's3://ftw/at/all.parquet',
+      getAbsoluteUrl: () => 's3://ftw/at/all.parquet',
+      alternate: { https: { href: 'https://data.test/ftw/at/all.parquet' } },
+    }
+    const result = await resolveParquetGlob(asset, { fetchJson: vi.fn() })
+    expect(result).toEqual({ url: 'https://data.test/ftw/at/all.parquet', partition: null })
   })
 })

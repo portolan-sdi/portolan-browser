@@ -62,9 +62,12 @@ values of a categorical raster. The browser reads the classes from `bands[0]` of
 ```
 
 A `color_hint` is six hexadecimal digits without a leading `#`, as the extension defines it. The
-match is exact. Classes named `background`, `nodata`, `no_data`, or `no-data` draw transparent,
-whatever their case, and so does the class whose value matches the `nodata` of the band. A
-transparent class needs no hint.
+match is exact. A class that sets `nodata` to `true` draws transparent. Classes named `background`,
+`nodata`, `no_data`, or `no-data` also draw transparent, whatever their case. The class whose value
+matches the `nodata` of the band draws transparent too. A transparent class needs no hint.
+
+The browser reads the `nodata` flag of the class first. The class states the rule itself. The names
+and the band value stay as a fallback for a catalog that writes no flag.
 
 Every other class must carry a readable hint and a numeric `value`. One class without either sends
 the whole asset to the render rules below. Partial hints cannot colour a mask. The browser would draw
