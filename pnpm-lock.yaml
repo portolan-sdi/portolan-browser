@@ -211,25 +211,25 @@ importers:
         specifier: 3.0.1
         version: 3.0.1(@playwright/test@1.60.0)(msw@2.14.6(@types/node@25.9.2))
       remark-cli:
-        specifier: ^12.0.1
+        specifier: 12.0.1
         version: 12.0.1(supports-color@9.4.0)
       remark-gfm:
-        specifier: ^4.0.1
+        specifier: 4.0.1
         version: 4.0.1(supports-color@9.4.0)
       remark-lint-no-literal-urls:
-        specifier: ^4.0.1
+        specifier: 4.0.1
         version: 4.0.1
       remark-lint-no-undefined-references:
-        specifier: ^5.0.2
+        specifier: 5.0.2
         version: 5.0.2
       remark-preset-lint-consistent:
-        specifier: ^6.0.1
+        specifier: 6.0.1
         version: 6.0.1(supports-color@9.4.0)
       remark-preset-lint-recommended:
-        specifier: ^7.0.1
+        specifier: 7.0.1
         version: 7.0.1(supports-color@9.4.0)
       remark-validate-links:
-        specifier: ^13.1.0
+        specifier: 13.1.0
         version: 13.1.0(supports-color@9.4.0)
       rollup-plugin-visualizer:
         specifier: 6.0.11
