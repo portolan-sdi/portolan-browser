@@ -1,16 +1,28 @@
 # Release process
 
-1. `npm upgrade`
-2. `npm run i18n:fields`
-   1. Check for differences in `src/locales/en/fields.json`
-   2. Ask for missing translations via GitHub issues
-3. `npm run docs:hooks`
-4. Update the version number (in `package.json` and `README.md`)
-5. `npm run lint` and `npm run docs:lint` - Fix any open lint issues
-6. `npm run test` - Run all tests, fix any reported issues
-7. Commit the changes
-8. `npm run build:report`
-   1. Check whether the `dist/report.html` has significantly changed (if yes, check why)
-   2. Delete the `dist/report.html`
-9. `npm publish`
-10. Create GitHub release (v3.x.x)
+Portolan Browser releases from `main` with a version bump, a changelog cut, and a
+git tag. The package is private, so there is no npm publish. The live instance at
+<https://browser.portolan-sdi.org> redeploys on every push to `main`, so cutting a
+release deploys nothing on its own.
+
+1. Start a branch from `main`, such as `release/0.2.0`.
+2. In `CHANGELOG.md`, rename the `Unreleased` heading to the new version with
+   today's date. Update the link definitions at the bottom of the file: point
+   `[Unreleased]` at a compare link from the new tag to `HEAD`, and add a
+   release-tag link definition for the new version. Add a short introduction
+   under the heading that states the Portolan specification version this
+   release implements.
+3. Update the version in `package.json` and in the version sentence of the
+   README's "Relationship to STAC Browser" section.
+4. Check that the README's "What This Fork Adds" section and documentation table
+   cover the features the release adds.
+5. Run `pnpm run lint`, `pnpm run docs:lint`, and `pnpm test`. Fix what they report.
+6. Open a pull request and squash-merge it once the checks pass.
+7. Tag the merge commit on `main` with an annotated tag:
+   `git tag -a vX.Y.Z -m "Portolan Browser X.Y.Z" <merge-commit>` and push it with
+   `git push origin vX.Y.Z`.
+8. Create the GitHub release on that tag. Lead with what the release means for a
+   catalog publisher, then link the changelog section for the details.
+
+The fork versions independently of upstream STAC Browser. The changelog records
+the upstream version each sync merges.

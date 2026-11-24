@@ -19,6 +19,12 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ## [Unreleased][]
 
+## [0.2.0][] - 2026-11-24
+
+Second release of the Portolan fork, and the reference implementation for
+[Portolan 0.3](https://github.com/portolan-sdi/portolan-spec). The release also
+draws Zarr and Icechunk stores client-side and syncs with upstream STAC Browser 5.1.0.
+
 ### Added
 
 - A search box on the start page filters the registry list. Every word of the query must appear
@@ -499,7 +505,8 @@ project this fork is based on. These version numbers are upstream's, not Portola
 For releases prior to v4.0.0, please refer to the
 [release notes in the GitHub Releases](https://github.com/radiantearth/stac-browser/releases).
 
-[Unreleased]: https://github.com/portolan-sdi/portolan-browser/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/portolan-sdi/portolan-browser/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/portolan-sdi/portolan-browser/releases/tag/v0.2.0
 [0.1.0]: https://github.com/portolan-sdi/portolan-browser/releases/tag/v0.1.0
 [5.1.0]: https://github.com/radiantearth/stac-browser/compare/v5.1.0-rc.1...v5.1.0
 [5.1.0-rc.1]: https://github.com/radiantearth/stac-browser/compare/v5.0.0...v5.1.0-rc.1
