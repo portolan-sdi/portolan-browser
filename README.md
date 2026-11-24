@@ -51,10 +51,23 @@ classes as a legend. Where a collection uses the STAC [render extension](https:/
 the browser applies its colormap, rescale, and nodata values, and lists each named render as a style you
 can switch between. See [rasters.md](docs/rasters.md) for the full order of precedence.
 
+**Zarr and Icechunk rendered client-side.** The browser renders a Zarr or Icechunk asset with no tile
+server. It reads the chunks from object storage and colours them through the `renders` the catalog
+declares, one layer per variable. The map refuses a store that would render badly, and the notice
+states the reason. [zarr.md](docs/zarr.md) sets out those rules for publishers.
+
+**The current Portolan specification, read in full.** This release implements
+[Portolan 0.3](https://github.com/portolan-sdi/portolan-spec). An asset behind an `s3://` href renders
+and downloads through its https alternate. A partitioned collection that declares `partition:glob`
+previews its first partition by listing the bucket behind the glob. Parquet whose geometry column uses
+the native GEOMETRY or GEOGRAPHY logical type renders without a GeoParquet `geo` key. A classification
+class flagged `nodata: true` draws transparent and stays out of the legend.
+
 **A start page built from the registry.** The catalog list comes from the Portolan registry's nightly
 crawl rather than a list hardcoded in this repository. Entries show the publisher's logo and the
-collection and feature counts the crawl measured. Point [`registryUrl`](docs/options.md#registryurl)
-somewhere else to offer a different list.
+collection and feature counts the crawl measured. A search box filters the list by catalog title,
+registry id, or URL. Point [`registryUrl`](docs/options.md#registryurl) somewhere else to offer a
+different list.
 
 **MapLibre GL throughout.** Upstream maps with OpenLayers. This fork replaced it with MapLibre GL so that
 publisher styles, PMTiles, and deck.gl layers all run on one renderer. Basemaps are MapLibre style
@@ -140,6 +153,7 @@ The full list is in the **[options documentation](docs/options.md)**.
 | Translations and locales | [localization.md](docs/localization.md) |
 | Metadata rendering and custom fields | [metadata.md](docs/metadata.md) |
 | Raster rendering, colormaps, and legends | [rasters.md](docs/rasters.md) |
+| Zarr and Icechunk on the map | [zarr.md](docs/zarr.md) |
 | Widgets | [widgets.md](docs/widgets.md) |
 | Actions on links and assets | [actions.md](docs/actions.md) |
 | Code snippet generators | [code-generators.md](docs/code-generators.md) |
@@ -157,9 +171,10 @@ Upstream STAC Browser is the foundation, and this fork tracks it. Fixes and feat
 in through periodic sync pull requests, and fixes that are not Portolan-specific go back upstream where
 they apply.
 
-The two projects version independently. Portolan Browser starts at 0.1.0, matching the Portolan
-specification release it implements. Upstream's version is recorded in the changelog when a sync lands.
-The changelog keeps upstream's history below the fork's own entries.
+The two projects version independently. The current release is 0.2.0, and it implements the
+[Portolan 0.3 specification](https://github.com/portolan-sdi/portolan-spec). Upstream's version is
+recorded in the changelog when a sync lands. The changelog keeps upstream's history below the fork's
+own entries, and [release.md](docs/release.md) describes how a release is cut.
 
 ## Development
 
