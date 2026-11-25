@@ -13,9 +13,9 @@
     },
     {
       "rel": "child",
-      "href": "./sal-triples/collection.json",
+      "href": "https://s3.lakehousebox.com/carto-sdi--berlin-geoportal--blobs/berlin_geoportal/adressen/adressen-rbs/collection.json",
       "type": "application/json",
-      "title": "Iceberg test table (temporary)"
+      "title": "Adressen Regionales Bezugssystem (RBS)"
     }
   ]
 }
