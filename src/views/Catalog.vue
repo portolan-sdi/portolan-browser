@@ -44,6 +44,7 @@
         <Assets v-if="hasAssets" :assets="assets" :shown="selectedReferences" @show-asset="showAsset" />
         <Assets v-if="hasItemAssets && !hasItems" :assets="itemAssets" :definition="true" />
         <ParquetViewer v-if="hasAssets" :assets="assets" @zoom-to-bbox="zoomToBbox" @highlight-bbox="highlightBbox" />
+        <IcebergViewer v-if="hasAssets" :assets="assets" @zoom-to-bbox="zoomToBbox" @highlight-bbox="highlightBbox" />
         <Providers v-if="providers" :providers="providers" />
         <MetadataGroups class="mb-4" :type="data.type" :data="data" :ignoreFields="ignoredMetadataFields" />
         <LinkList v-if="linkPosition === 'right'" :title="$t('additionalResources')" :links="additionalLinks" />
@@ -117,6 +118,7 @@ export default defineComponent({
     Providers: defineAsyncComponent(() => import('../components/Providers.vue')),
     ReadMore,
     Thumbnails: defineAsyncComponent(() => import('../components/Thumbnails.vue')),
+    IcebergViewer: defineAsyncComponent(() => import('../components/IcebergViewer.vue')),
     ParquetViewer: defineAsyncComponent(() => import('../components/ParquetViewer.vue'))
   },
   mixins: [

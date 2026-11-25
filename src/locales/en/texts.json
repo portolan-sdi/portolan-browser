@@ -173,6 +173,24 @@
     "descriptionWithTitle": "@:goToParent.description: {title}",
     "label": "Up"
   },
+  "iceberg": {
+    "loadFailed": "Failed to load Iceberg data: {message}",
+    "snapshots": {
+      "collection": "collection",
+      "committed": "Committed",
+      "files": "Files",
+      "none": "This table has no snapshots.",
+      "operation": "Operation",
+      "pinnedMismatch": "The collection names snapshot {id}, which is not the table's current snapshot.",
+      "rows": "Rows",
+      "snapshot": "Snapshot",
+      "tableCurrent": "table current"
+    },
+    "tabs": {
+      "data": "Data",
+      "snapshots": "Snapshots"
+    }
+  },
   "in": "in {catalog}",
   "index": {
     "api": "API",
@@ -255,6 +273,11 @@
       "overflow": "{count} more layer(s) not shown",
       "title": "Layers",
       "unnamed": "Unnamed #{id}"
+    },
+    "iceberg": {
+      "loadError": "Could not load the Iceberg table for display.",
+      "noGeometry": "The Iceberg table has no geometry or geography column, so the browser cannot place it on the map.",
+      "truncated": "The map shows the first {max} geometries of this Iceberg table. The table holds more."
     },
     "location": {
       "description": "Go to your location"

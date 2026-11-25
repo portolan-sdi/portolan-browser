@@ -32,7 +32,15 @@ import {
   VECTOR_NOTICE_REPROJECTION,
   VECTOR_NOTICE_TOO_BIG,
   VECTOR_NOTICE_TOO_LARGE,
+  VECTOR_NOTICE_TRUNCATED,
 } from '../../utils/parquetShared.js';
+// icebergShared is icebird-free for the same reason: icebird stays behind the
+// lazy _loadIcebergDeps chunk.
+import {
+  icebergField,
+  icebergMetadataUrl,
+  isLoadableIcebergAsset,
+} from '../../utils/icebergShared.js';
 // The asset predicates live in utils/mapAssets.js so HrefActions can share
 // them (its "Show on map" button must track what this layer renders) without
 // importing this module and the map bundle behind it.
@@ -239,16 +247,21 @@ function preferredTileAssets(assets) {
   return assets.filter(isPmtilesAsset);
 }
 
-// The tiles-beat-direct-render policy, defined once for both setAssets and
-// autoLoadVisualAssets: when any tile asset exists (ranked TileJSON > XYZ >
-// PMTiles by preferredTileAssets), tiles are rendered and GeoParquet direct
-// rendering is skipped entirely; GeoParquet is only the no-tiles fallback.
+// The render-priority policy, defined once for both setAssets and
+// autoLoadVisualAssets: tiles beat Iceberg, and Iceberg beats GeoParquet. When
+// any tile asset exists (ranked TileJSON > XYZ > PMTiles by
+// preferredTileAssets), only tiles render. Otherwise a readable Iceberg table
+// renders and GeoParquet is skipped, because the table already represents the
+// Parquet files. GeoParquet is the fallback when neither exists.
 function preferredVisualAssets(assets) {
   const tileAssets = preferredTileAssets(assets);
+  const icebergAssets = tileAssets.length > 0 ? [] : assets.filter(isLoadableIcebergAsset);
   // isLoadableParquetAsset, not isParquetAsset: the direct renderer downloads
   // one file, so a glob asset stays off the map and in the table preview.
-  const parquetAssets = tileAssets.length > 0 ? [] : assets.filter(isLoadableParquetAsset);
-  return { tileAssets, parquetAssets };
+  const parquetAssets = tileAssets.length > 0 || icebergAssets.length > 0
+    ? []
+    : assets.filter(isLoadableParquetAsset);
+  return { tileAssets, icebergAssets, parquetAssets };
 }
 
 export default class StacMapLayer {
@@ -418,8 +431,8 @@ export default class StacMapLayer {
 
   async autoLoadVisualAssets(stac) {
     if (!stac || typeof stac.getAssets !== 'function') {return;}
-    const { tileAssets, parquetAssets } = preferredVisualAssets(stac.getAssets());
-    const visualAssets = tileAssets.length > 0 ? tileAssets : parquetAssets;
+    const { tileAssets, icebergAssets, parquetAssets } = preferredVisualAssets(stac.getAssets());
+    const visualAssets = [tileAssets, icebergAssets, parquetAssets].find(list => list.length > 0) ?? [];
     if (visualAssets.length > 0) {
       await this.setAssets(visualAssets);
     }
@@ -525,12 +538,17 @@ export default class StacMapLayer {
     // superseded run would resume here and keep mutating (e.g. rebuild the
     // COG list from its stale asset set) on top of the newer call's state.
     const epoch = this._overlayEpoch;
-    // preferredVisualAssets holds the tiles-beat-direct-render policy:
-    // parquetAssets is empty whenever any tile asset exists.
-    const { tileAssets, parquetAssets } = preferredVisualAssets(assets);
+    // preferredVisualAssets holds the render-priority policy: icebergAssets is
+    // empty whenever a tile asset exists, and parquetAssets is empty whenever a
+    // tile or Iceberg asset exists. At most one of the two lists is non-empty,
+    // so one call handles whichever applies. A single call also keeps the
+    // in-flight bookkeeping in one place: an empty list aborts every read.
+    const { tileAssets, icebergAssets, parquetAssets } = preferredVisualAssets(assets);
     await this._addTileAssets(tileAssets, epoch);
     if (epoch !== this._overlayEpoch) {return;}
-    const parquetLoaded = await this._addParquetAssets(parquetAssets, epoch);
+    const parquetLoaded = icebergAssets.length > 0
+      ? await this._addParquetAssets(icebergAssets, epoch, 'iceberg')
+      : await this._addParquetAssets(parquetAssets, epoch);
     if (epoch !== this._overlayEpoch) {return;}
     await this._addCogAssets(assets, epoch);
     if (epoch !== this._overlayEpoch) {return;}
@@ -566,6 +584,12 @@ export default class StacMapLayer {
   // eslint-disable-next-line require-await -- async keeps the seam's signature stable for test doubles
   async _loadParquetDeps() {
     return import('../../utils/parquet.js');
+  }
+
+  // The same seam for Iceberg, which keeps icebird out of the map bundle.
+  // eslint-disable-next-line require-await -- async keeps the seam's signature stable for test doubles
+  async _loadIcebergDeps() {
+    return import('../../utils/iceberg.js');
   }
 
   // A decoded result is only reusable by a run that asked for the same columns,
@@ -606,15 +630,24 @@ export default class StacMapLayer {
   // Overlapping reads share hyparquet's decompressors, and the loser decodes
   // its geometry column to undefined — a featureless result that then lands in
   // the cache and blanks the map for the rest of the session.
-  _startParquetRead(key, url) {
+  _startParquetRead(key, url, asset = null, kind = 'parquet') {
     const controller = new AbortController();
     // Read the fields now: they are part of `key`, and a later run may replace
     // them before the chunk resolves.
     const fields = this._styleFields;
-    const promise = this._loadParquetDeps().then(deps => deps.loadGeoJsonFromParquet(url, {
-      signal: controller.signal,
-      fields,
-    }));
+    // `kind` picks the loader. Both resolve to the same result shape, so the
+    // cache, the in-flight map and the abort handling serve either one.
+    const promise = kind === 'iceberg'
+      ? this._loadIcebergDeps().then(deps => deps.loadGeoJsonFromIceberg(url, {
+        signal: controller.signal,
+        fields,
+        geometryColumn: icebergField(asset, 'table:primary_geometry'),
+        snapshotId: icebergField(asset, 'iceberg:current_snapshot_id'),
+      }))
+      : this._loadParquetDeps().then(deps => deps.loadGeoJsonFromParquet(url, {
+        signal: controller.signal,
+        fields,
+      }));
     const pending = { promise, controller };
     this._parquetInflight.set(key, pending);
     promise.then(
@@ -663,7 +696,17 @@ export default class StacMapLayer {
   // Returns whether this run counts as loaded: true when nothing was attempted
   // or an asset rendered, false when every attempted asset failed or was
   // over-cap — so the caller knows not to cache the asset signature.
-  async _addParquetAssets(parquetAssets, epoch) {
+  //
+  // `kind` is 'parquet' (the default) or 'iceberg'. An Iceberg table goes
+  // through the same cache, in-flight, epoch and notice machinery. It differs
+  // in four ways: the URL comes from icebergMetadataUrl, the STAC-declared
+  // size gates do not apply (the loader truncates at its own geometry cap
+  // instead of refusing the table), a truncated result posts a notice, and the
+  // notice names its format so MapView picks Iceberg wording.
+  async _addParquetAssets(parquetAssets, epoch, kind = 'parquet') {
+    const iceberg = kind === 'iceberg';
+    const urlOf = iceberg ? icebergMetadataUrl : fetchableAssetHref;
+    const label = iceberg ? 'Iceberg' : 'GeoParquet';
     if (parquetAssets.length === 0) {
       // Nothing here will want them: this run renders tiles, or nothing.
       this._abortInflightParquet();
@@ -689,26 +732,27 @@ export default class StacMapLayer {
     // Keyed by the URL each asset would be downloaded from, which is the
     // resolved one — an asset with nothing fetchable downloads nothing.
     const wanted = new Set(sorted
-      .map(a => fetchableAssetHref(a))
+      .map(a => urlOf(a))
       .filter(url => url !== null)
       .map(url => this._parquetCacheKey(url)));
     this._abortInflightParquet(wanted);
 
     let rendered = 0;
     let firstNotice = null;
-    const notice = (n) => { if (!firstNotice) {firstNotice = { format: 'geoparquet', ...n };} };
+    let truncatedNotice = null;
+    const notice = (n) => { if (!firstNotice) {firstNotice = { format: iceberg ? 'iceberg' : 'geoparquet', ...n };} };
 
     for (let i = 0; i < sorted.length && rendered === 0; i++) {
       const asset = sorted[i];
       // What the browser can actually download: the asset's own href when it
       // is http(s), otherwise its https alternate. A Portolan v0.3 catalog may
       // list an `s3://` store as the href and the readable URL beside it.
-      const url = fetchableAssetHref(asset);
-      const sourceId = `stac-parquet-${i}`;
+      const url = urlOf(asset);
+      const sourceId = `stac-${iceberg ? 'iceberg' : 'parquet'}-${i}`;
 
       try {
         if (!url || !isHttpHref(url)) {
-          console.warn('Refusing non-http(s) GeoParquet asset URL', assetHref(asset));
+          console.warn(`Refusing non-http(s) ${label} asset URL`, assetHref(asset));
           notice({ reason: VECTOR_NOTICE_ERROR });
           continue;
         }
@@ -716,12 +760,14 @@ export default class StacMapLayer {
         // asset downloads neither the parquet file nor the hyparquet chunk.
         // They are cheap early-outs only; the authoritative bounds on actual
         // byte length and row count live in loadGeoJsonFromParquet.
-        const count = declaredFeatureCount(asset);
+        // An Iceberg table skips both gates: its row count and size say
+        // nothing about how many geometries one capped load returns.
+        const count = iceberg ? null : declaredFeatureCount(asset);
         if (count !== null && count > MAX_MAP_FEATURES) {
           notice({ reason: VECTOR_NOTICE_TOO_LARGE, totalRows: count, max: MAX_MAP_FEATURES });
           continue;
         }
-        const size = declaredFileSize(asset);
+        const size = iceberg ? null : declaredFileSize(asset);
         if (size !== null && size > MAX_MAP_PARQUET_BYTES) {
           notice({ reason: VECTOR_NOTICE_TOO_BIG, byteLength: size, maxBytes: MAX_MAP_PARQUET_BYTES });
           continue;
@@ -742,7 +788,7 @@ export default class StacMapLayer {
           // A run this one superseded may already be downloading these exact
           // bytes; join it rather than starting from zero. No await between
           // the lookup and the start — see _startParquetRead.
-          const pending = this._parquetInflight.get(cacheKey) ?? this._startParquetRead(cacheKey, url);
+          const pending = this._parquetInflight.get(cacheKey) ?? this._startParquetRead(cacheKey, url, asset, kind);
           // eslint-disable-next-line no-await-in-loop -- joining an in-flight read, one asset at a time
           result = await pending.promise;
         }
@@ -764,7 +810,7 @@ export default class StacMapLayer {
         // once per read, for the same reason the dropped-feature warning is.
         if (firstLoad && result.missingFields?.length) {
           console.warn(
-            `GeoParquet ${url} does not provide the style attribute(s): ${result.missingFields.join(', ')}`
+            `${label} ${url} does not provide the style attribute(s): ${result.missingFields.join(', ')}`
           );
         }
         if (result.droppedFeatures) {
@@ -788,26 +834,34 @@ export default class StacMapLayer {
         }
 
         this._overlayAssetMeta.push({
-          title: asset.title || asset.getKey?.() || asset.key || `GeoParquet ${i + 1}`,
+          title: asset.title || asset.getKey?.() || asset.key || `${label} ${i + 1}`,
           sourceId,
           key: url,
         });
         this._addOverlaySource(sourceId, { type: 'geojson', data: result.featureCollection });
         this._addDefaultVectorLayers(sourceId, [], { useSourceLayer: false });
         rendered++;
+        // The map shows part of the table. Say so, on every run: a basemap
+        // switch clears the notice and re-renders from the cache.
+        if (result.truncated) {
+          truncatedNotice = { format: 'iceberg', reason: VECTOR_NOTICE_TRUNCATED, max: result.max, totalRows: result.totalRows };
+        }
       } catch (err) {
         if (err?.name === 'AbortError') {
           // A newer setAssets (or teardown) aborted this run's download —
           // the run is superseded, so bail silently: no warn, no notice.
           return false;
         }
-        console.warn('Failed to render GeoParquet asset', url, err);
-        notice({ reason: VECTOR_NOTICE_ERROR });
+        console.warn(`Failed to render ${label} asset`, url, err);
+        // A loader error can name its own reason, such as a table with no geometry column.
+        notice({ reason: err?.noticeReason ?? VECTOR_NOTICE_ERROR });
       }
     }
 
     if (rendered === 0 && firstNotice && epoch === this._overlayEpoch) {
       this._postNotice(firstNotice);
+    } else if (rendered > 0 && truncatedNotice && epoch === this._overlayEpoch) {
+      this._postNotice(truncatedNotice);
     }
     return rendered > 0;
   }

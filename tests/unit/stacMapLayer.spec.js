@@ -2145,6 +2145,156 @@ describe('StacMapLayer', () => {
     })
   })
 
+  // Exercises the Iceberg path, which runs through _addParquetAssets with
+  // kind 'iceberg', by injecting a loader test double via the
+  // `_loadIcebergDeps` seam. No network and no icebird involvement.
+  describe('Iceberg table', () => {
+    const METADATA_URL = 'https://example.com/wh/tbl/metadata/v1.metadata.json'
+    const FEATURE_COLLECTION = {
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [1, 2] }, properties: {} }],
+    }
+    const icebergAsset = (extra = {}) => ({
+      href: METADATA_URL,
+      type: 'application/vnd.apache.iceberg+json',
+      roles: ['data', 'metadata'],
+      title: 'Test table',
+      ...extra,
+    })
+    const parquetAsset = () => ({
+      href: 'https://example.com/data.parquet',
+      type: 'application/vnd.apache.parquet',
+      roles: ['data'],
+    })
+
+    function injectIcebergDeps(l, impl) {
+      const calls = []
+      const opts = []
+      const depsLoads = { count: 0 }
+      l._loadIcebergDeps = async () => {
+        depsLoads.count++
+        return {
+          loadGeoJsonFromIceberg: async (url, options = {}) => {
+            calls.push(url)
+            opts.push(options)
+            return impl(url)
+          },
+        }
+      }
+      calls.opts = opts
+      calls.depsLoads = depsLoads
+      return calls
+    }
+    function injectParquetDeps(l) {
+      const calls = []
+      l._loadParquetDeps = async () => ({
+        loadGeoJsonFromParquet: async (url) => {
+          calls.push(url)
+          return { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
+        },
+      })
+      return calls
+    }
+    const ok = (extra = {}) => ({
+      exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1, truncated: false, ...extra,
+    })
+
+    let notices
+    const lastNotice = () => notices[notices.length - 1]
+
+    beforeEach(() => {
+      pmtilesTestHooks.header = null
+      pmtilesTestHooks.metadata = async () => ({ vector_layers: [{ id: 'fields' }] })
+      notices = []
+      layer = new StacMapLayer(map, { onVectorNotice: n => notices.push(n) })
+    })
+
+    it('renders an Iceberg asset as a geojson source with default layers', async () => {
+      const calls = injectIcebergDeps(layer, () => ok())
+      await layer.setAssets([icebergAsset()])
+
+      expect([...calls]).toEqual([METADATA_URL])
+      expect(map.sources.get('stac-iceberg-0')).toEqual({ type: 'geojson', data: FEATURE_COLLECTION })
+      expect(layer._overlayLayerIds).toHaveLength(3)
+      expect(layer.getAssetOverlays()[0]).toMatchObject({ title: 'Test table', visible: true })
+      expect(lastNotice()).toBe(null)
+    })
+
+    it('passes the declared primary geometry and snapshot to the loader', async () => {
+      const calls = injectIcebergDeps(layer, () => ok())
+      await layer.setAssets([icebergAsset({
+        'table:primary_geometry': 'geom',
+        'iceberg:current_snapshot_id': '42',
+      })])
+
+      expect(calls.opts[0]).toMatchObject({ geometryColumn: 'geom', snapshotId: '42' })
+    })
+
+    it('does not apply the declared row count or file size gates', async () => {
+      const calls = injectIcebergDeps(layer, () => ok())
+      await layer.setAssets([icebergAsset({ 'table:row_count': 50000000, 'file:size': 900 * 1024 * 1024 })])
+
+      expect(calls).toHaveLength(1)
+      expect(map.sources.has('stac-iceberg-0')).toBe(true)
+    })
+
+    it('prefers Iceberg over GeoParquet and never loads the parquet file', async () => {
+      const iceberg = injectIcebergDeps(layer, () => ok())
+      const parquet = injectParquetDeps(layer)
+      await layer.setAssets([parquetAsset(), icebergAsset()])
+
+      expect(iceberg).toHaveLength(1)
+      expect(parquet).toHaveLength(0)
+      expect(map.sources.has('stac-parquet-0')).toBe(false)
+    })
+
+    it('prefers tiles over Iceberg and never loads the table', async () => {
+      const iceberg = injectIcebergDeps(layer, () => ok())
+      await layer.setAssets([
+        icebergAsset(),
+        { href: 'https://example.com/fields.pmtiles', type: 'application/vnd.pmtiles', title: 'Fields' },
+      ])
+
+      expect(iceberg.depsLoads.count).toBe(0)
+      expect(map.sources.has('stac-iceberg-0')).toBe(false)
+      expect(layer.getAssetOverlays().map(o => o.title)).toEqual(['Fields'])
+    })
+
+    it('ignores an Iceberg asset in a catalog the browser cannot read', async () => {
+      const iceberg = injectIcebergDeps(layer, () => ok())
+      const parquet = injectParquetDeps(layer)
+      await layer.setAssets([icebergAsset({ 'iceberg:catalog_type': 'rest' }), parquetAsset()])
+
+      expect(iceberg.depsLoads.count).toBe(0)
+      expect(parquet).toHaveLength(1)
+    })
+
+    it('draws a truncated table and posts a notice that names the cap', async () => {
+      injectIcebergDeps(layer, () => ok({ truncated: true, max: 1000000, totalRows: 5000000 }))
+      await layer.setAssets([icebergAsset()])
+
+      expect(map.sources.has('stac-iceberg-0')).toBe(true)
+      expect(lastNotice()).toEqual({ format: 'iceberg', reason: 'truncated', max: 1000000, totalRows: 5000000 })
+    })
+
+    it('posts the loader\'s own reason when the table cannot be drawn', async () => {
+      injectIcebergDeps(layer, () => {
+        throw Object.assign(new Error('no geometry'), { noticeReason: 'noGeometry' })
+      })
+      await layer.setAssets([icebergAsset()])
+
+      expect(map.sources.has('stac-iceberg-0')).toBe(false)
+      expect(lastNotice()).toEqual({ format: 'iceberg', reason: 'noGeometry' })
+    })
+
+    it('posts a generic error notice for any other failure', async () => {
+      injectIcebergDeps(layer, () => { throw new Error('network down') })
+      await layer.setAssets([icebergAsset()])
+
+      expect(lastNotice()).toEqual({ format: 'iceberg', reason: 'error' })
+    })
+  })
+
   // Exercises the epoch guard in the tile path (_addTileAssets and helpers) by
   // gating the mocked pm.getHeader() on a promise — the same interleaving the
   // parquet race test pins, but across the PMTiles awaits (todo 008).

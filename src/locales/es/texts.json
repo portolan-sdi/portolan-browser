@@ -173,6 +173,24 @@
     "descriptionWithTitle": "@:goToParent.description: {title}",
     "label": "Arriba"
   },
+  "iceberg": {
+    "loadFailed": "No se pudieron cargar los datos Iceberg: {message}",
+    "snapshots": {
+      "collection": "colección",
+      "committed": "Registrada",
+      "files": "Archivos",
+      "none": "Esta tabla no tiene instantáneas.",
+      "operation": "Operación",
+      "pinnedMismatch": "La colección indica la instantánea {id}, que no es la instantánea actual de la tabla.",
+      "rows": "Filas",
+      "snapshot": "Instantánea",
+      "tableCurrent": "actual de la tabla"
+    },
+    "tabs": {
+      "data": "Datos",
+      "snapshots": "Instantáneas"
+    }
+  },
   "in": "en {catalog}",
   "index": {
     "portolanRegistry": "Registro de Portolan",
@@ -255,6 +273,11 @@
       "overflow": "{count} capas más no mostradas",
       "title": "Capas",
       "unnamed": "Sin nombre #{id}"
+    },
+    "iceberg": {
+      "loadError": "No se pudo cargar la tabla Iceberg para mostrarla.",
+      "noGeometry": "La tabla Iceberg no tiene ninguna columna de geometría ni de geografía, por lo que el navegador no puede colocarla en el mapa.",
+      "truncated": "El mapa muestra las primeras {max} geometrías de esta tabla Iceberg. La tabla contiene más."
     },
     "location": {
       "description": "Ve a tu ubicación"

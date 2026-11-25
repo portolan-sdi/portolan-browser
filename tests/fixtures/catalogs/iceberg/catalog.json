@@ -1,0 +1,21 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.1.0",
+  "id": "iceberg-test-catalog",
+  "title": "Iceberg rendering test catalog",
+  "description": "Temporary local test catalog for Iceberg support. Serve this catalog with node tests/fixtures/serve-catalogs.mjs, which puts it on port 8082.",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json",
+      "title": "Iceberg rendering test catalog"
+    },
+    {
+      "rel": "child",
+      "href": "./sal-triples/collection.json",
+      "type": "application/json",
+      "title": "Iceberg test table (temporary)"
+    }
+  ]
+}

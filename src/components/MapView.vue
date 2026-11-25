@@ -40,7 +40,10 @@ import TerrainControl from './maps/TerrainControl.vue';
 import StylePicker from './maps/StylePicker.vue';
 import StacMapLayer from './maps/StacMapLayer.js';
 import { resolveStyles, loadStyleJson, extractLegend, extractStyleFields } from '../utils/portolanStyles.js';
-import { VECTOR_NOTICE_REPROJECTION, VECTOR_NOTICE_TOO_BIG, VECTOR_NOTICE_TOO_LARGE } from '../utils/parquetShared.js';
+import {
+  VECTOR_NOTICE_NO_GEOMETRY, VECTOR_NOTICE_REPROJECTION, VECTOR_NOTICE_TOO_BIG, VECTOR_NOTICE_TOO_LARGE,
+  VECTOR_NOTICE_TRUNCATED,
+} from '../utils/parquetShared.js';
 import {
   ZARR_NOTICE_CHUNK_SHAPE, ZARR_NOTICE_CODEC, ZARR_NOTICE_CRS, ZARR_NOTICE_NO_GEO,
   ZARR_NOTICE_ORDER, ZARR_NOTICE_ZOOM_IN,
@@ -123,6 +126,7 @@ export default {
     vectorNoticeText() {
       if (!this.vectorNotice) {return null;}
       if (this.vectorNotice.format === 'zarr') {return this.zarrNoticeText;}
+      if (this.vectorNotice.format === 'iceberg') {return this.icebergNoticeText;}
       if (this.vectorNotice.reason === VECTOR_NOTICE_TOO_LARGE) {
         return this.$t('mapping.vectorFallback.tooLarge', {
           count: this.vectorNotice.totalRows.toLocaleString(),
@@ -142,6 +146,21 @@ export default {
         });
       }
       return this.$t('mapping.vectorFallback.loadError');
+    },
+    // Why an Iceberg table is not fully on the map. A truncated table still
+    // draws, so that notice states how much is shown rather than that it failed.
+    icebergNoticeText() {
+      const notice = this.vectorNotice;
+      if (notice.reason === VECTOR_NOTICE_TRUNCATED) {
+        return this.$t('mapping.iceberg.truncated', { max: notice.max.toLocaleString() });
+      }
+      if (notice.reason === VECTOR_NOTICE_NO_GEOMETRY) {
+        return this.$t('mapping.iceberg.noGeometry');
+      }
+      if (notice.reason === VECTOR_NOTICE_REPROJECTION) {
+        return this.$t('mapping.vectorFallback.reprojectionFailed', { crs: notice.crs || '' });
+      }
+      return this.$t('mapping.iceberg.loadError');
     },
     // Why a Zarr store is not on the map. Each reason names something the
     // store's author controls, so the message says what is wrong with the

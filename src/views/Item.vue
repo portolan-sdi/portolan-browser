@@ -18,6 +18,7 @@
         <WidgetHook id="view-item-primary-start" />
         <Assets v-if="hasAssets" :assets="assets" :shown="selectedReferences" @show-asset="showAsset" autoExpand />
         <ParquetViewer v-if="hasAssets" :assets="assets" @zoom-to-bbox="zoomToBbox" @highlight-bbox="highlightBbox" />
+        <IcebergViewer v-if="hasAssets" :assets="assets" @zoom-to-bbox="zoomToBbox" @highlight-bbox="highlightBbox" />
         <LinkList v-if="additionalLinks.length > 0" :title="$t('additionalResources')" :links="additionalLinks" />
         <WidgetHook id="view-item-primary-end" />
       </b-col>
@@ -70,6 +71,7 @@ export default defineComponent({
     Providers: defineAsyncComponent(() => import('../components/Providers.vue')),
     ReadMore,
     Thumbnails: defineAsyncComponent(() => import('../components/Thumbnails.vue')),
+    IcebergViewer: defineAsyncComponent(() => import('../components/IcebergViewer.vue')),
     ParquetViewer: defineAsyncComponent(() => import('../components/ParquetViewer.vue'))
   },
   mixins: [

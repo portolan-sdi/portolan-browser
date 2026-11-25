@@ -35,6 +35,11 @@ export const VECTOR_NOTICE_ERROR = 'error';
 // draw. Calling that a load failure points the user at the network when the
 // problem is the declared CRS or the coordinates themselves.
 export const VECTOR_NOTICE_REPROJECTION = 'reprojection';
+// Iceberg only. The table loaded, but it holds more geometries than one map
+// load draws, so the map shows the first MAX_ICEBERG_MAP_GEOMETRIES of them.
+export const VECTOR_NOTICE_TRUNCATED = 'truncated';
+// Iceberg only. The table has no geometry or geography column to draw.
+export const VECTOR_NOTICE_NO_GEOMETRY = 'noGeometry';
 
 // Error code on a rejection that says the files a pattern names cannot be
 // reached from the browser: an href whose wildcard no item expands, or a
