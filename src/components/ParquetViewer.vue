@@ -4,7 +4,7 @@
       <span class="parquet-header-left">
         <BIconChevronDown v-if="open" />
         <BIconChevronRight v-else />
-        <span class="parquet-title">{{ $t('parquet.dataPreview') }}</span>
+        <span class="parquet-title">{{ previewTitle }}</span>
         <b-badge variant="primary" class="parquet-file-badge">{{ selectedAssetTitle }}</b-badge>
       </span>
       <span class="parquet-header-right">
@@ -69,6 +69,7 @@ import {
   resolveParquetGlob,
 } from '../utils/parquet';
 import { readPartitionMetadata } from '../utils/partitionList';
+import { isLoadableIcebergAsset } from '../utils/icebergShared';
 
 // The role is read both ways, because a plain STAC asset object carries
 // `roles` while a stac-js Asset answers hasRole.
@@ -160,6 +161,13 @@ export default {
       // First, so the default selection previews the collection's data rather
       // than a side asset such as its item mirror.
       return this.partitionPlaceholder ? [this.partitionPlaceholder, ...assets] : assets;
+    },
+    // Names the format when an Iceberg preview sits beside this one, so the two
+    // can be told apart. Alone, the preview keeps the plain title.
+    previewTitle() {
+      return this.assets.some(isLoadableIcebergAsset)
+        ? this.$t('parquet.parquetDataPreview')
+        : this.$t('parquet.dataPreview');
     },
     selectedAsset() {
       if (!this.selectedAssetKey) {return this.parquetAssets[0] || null;}

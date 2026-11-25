@@ -174,6 +174,7 @@
     "label": "Up"
   },
   "iceberg": {
+    "dataPreview": "Iceberg data preview",
     "loadFailed": "Failed to load Iceberg data: {message}",
     "pager": {
       "next": "Next {count} rows",
@@ -369,6 +370,7 @@
     "loadingRows": "Loading row ({count})... | Loading rows ({count})...",
     "networkError": "Unable to preview: cross-origin access not allowed or network error.",
     "pageRows": "Row {from}–{to} of {total} | Rows {from}–{to} of {total}",
+    "parquetDataPreview": "Parquet data preview",
     "partitionedData": "Partitioned data | Partitioned data ({count} file) | Partitioned data ({count} files)",
     "partitionPreview": "Preview of the only partition: {name}. | Preview of the first of {count} partitions: {name}.",
     "partitionLoadedRowCount": "{loaded} of {total} row in this partition | {loaded} of {total} rows in this partition",

@@ -4,7 +4,7 @@
       <span class="iceberg-header-left">
         <BIconChevronDown v-if="open" />
         <BIconChevronRight v-else />
-        <span class="iceberg-title">{{ $t('parquet.dataPreview') }}</span>
+        <span class="iceberg-title">{{ previewTitle }}</span>
         <b-badge variant="primary" class="iceberg-badge">{{ selectedAssetTitle }}</b-badge>
       </span>
       <span class="iceberg-header-right">
@@ -213,6 +213,7 @@ import { loadIcebergRows, loadIcebergSnapshots } from '../utils/iceberg';
 import {
   icebergField, icebergMetadataUrl, isLoadableIcebergAsset, MAX_ICEBERG_PREVIEW_ROWS,
 } from '../utils/icebergShared';
+import { isParquetAsset } from '../utils/parquetShared';
 
 // The tabs are named by id. The model of a tab group is the id of the tab that
 // shows, and a number matches no tab.
@@ -281,6 +282,13 @@ export default {
     // nothing to preview, so they do not appear.
     icebergAssets() {
       return this.assets.filter(isLoadableIcebergAsset);
+    },
+    // Names the format when a GeoParquet preview sits beside this one, so the two
+    // can be told apart. Alone, the preview keeps the plain title.
+    previewTitle() {
+      return this.assets.some(isParquetAsset)
+        ? this.$t('iceberg.dataPreview')
+        : this.$t('parquet.dataPreview');
     },
     selectedAsset() {
       if (!this.selectedAssetKey) {return this.icebergAssets[0] || null;}
