@@ -175,6 +175,24 @@
   },
   "iceberg": {
     "loadFailed": "Failed to load Iceberg data: {message}",
+    "pager": {
+      "next": "Next {count} rows",
+      "previous": "Previous {count} rows"
+    },
+    "query": {
+      "clear": "Clear",
+      "columnName": "Name",
+      "columnType": "Type",
+      "columns": "Columns",
+      "filteredBy": "Filtered by",
+      "help": "Write the condition that follows WHERE and the table and the map will show the rows that match.",
+      "label": "Filter rows with SQL",
+      "limit": "The query adds LIMIT {limit}; use the page buttons under the table to see more rows.",
+      "placeholder": "column = 'value' AND other_column > 10",
+      "run": "Run query",
+      "snapshot": "Snapshot"
+    },
+    "rowRange": "Rows {from}–{to}",
     "snapshots": {
       "collection": "collection",
       "committed": "Committed",
@@ -182,13 +200,15 @@
       "none": "This table has no snapshots.",
       "operation": "Operation",
       "pinnedMismatch": "The collection names snapshot {id}, which is not the table's current snapshot.",
+      "query": "Query",
       "rows": "Rows",
       "snapshot": "Snapshot",
       "tableCurrent": "table current"
     },
     "tabs": {
       "data": "Data",
-      "snapshots": "Snapshots"
+      "snapshots": "Snapshots",
+      "query": "Query"
     }
   },
   "in": "in {catalog}",
@@ -277,7 +297,7 @@
     "iceberg": {
       "loadError": "Could not load the Iceberg table for display.",
       "noGeometry": "The Iceberg table has no geometry or geography column, so the browser cannot place it on the map.",
-      "truncated": "The map shows the first {max} geometries of this Iceberg table. The table holds more."
+      "noGeometryInRows": "None of these rows has a geometry, so the map has nothing to draw."
     },
     "location": {
       "description": "Go to your location"

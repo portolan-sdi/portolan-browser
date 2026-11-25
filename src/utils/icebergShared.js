@@ -13,17 +13,14 @@ import { fetchableAssetHref } from './fetchableHref.js';
 
 export const ICEBERG_MEDIA_TYPE = 'application/vnd.apache.iceberg+json';
 
-// Geometry cap for one map load. An Iceberg table can hold far more rows than
-// the browser can draw, so the loader stops after this many geometries and
-// reports a truncated result. It does not refuse the table.
-export const MAX_ICEBERG_MAP_GEOMETRIES = 1000000;
-
 // Row cap for the table preview in IcebergViewer.
 export const MAX_ICEBERG_PREVIEW_ROWS = 1000;
 
-// The only catalog type the browser can read. A `static` catalog is a plain
-// metadata.json on object storage, so icebird needs no catalog server.
-export const SUPPORTED_CATALOG_TYPE = 'static';
+// Row cap for one map load. The map draws the geometries of the same first rows
+// that the preview table shows, so the two views always agree. An Iceberg table
+// can hold far more rows than the browser can draw, so the loader stops here
+// and reports a truncated result. It does not refuse the table.
+export const MAX_ICEBERG_MAP_ROWS = MAX_ICEBERG_PREVIEW_ROWS;
 
 // Read an `iceberg:` field from the asset first, then from its parent
 // Collection or Item. The extension allows the field at both levels.
@@ -59,13 +56,16 @@ export function icebergMetadataUrl(asset) {
   return typeof location === 'string' && /^https?:\/\//i.test(location) ? location : null;
 }
 
-// An Iceberg asset the map layer can read: a static catalog (or one that does
-// not say) with one concrete metadata URL.
+// An Iceberg asset the browser can read: one with a concrete metadata.json URL
+// that a browser can fetch. The catalog type does not matter. The browser reads
+// the table from its files and never talks to a catalog, so a table in a REST,
+// Glue or Hive catalog is as readable as a static one. The extension adds the
+// asset to a managed table only when its metadata file is fetchable, and a
+// metadata file that needs credentials fails at read time with a message.
 export function isLoadableIcebergAsset(asset) {
   if (!isIcebergAsset(asset)) {return false;}
-  const catalogType = icebergField(asset, 'iceberg:catalog_type');
-  if (catalogType && catalogType !== SUPPORTED_CATALOG_TYPE) {return false;}
-  return !hasGlobPattern(hrefOf(asset));
+  if (hasGlobPattern(hrefOf(asset))) {return false;}
+  return icebergMetadataUrl(asset) !== null;
 }
 
 // icebird addresses a table by its base URL plus a metadata file name, and it

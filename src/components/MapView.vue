@@ -41,8 +41,7 @@ import StylePicker from './maps/StylePicker.vue';
 import StacMapLayer from './maps/StacMapLayer.js';
 import { resolveStyles, loadStyleJson, extractLegend, extractStyleFields } from '../utils/portolanStyles.js';
 import {
-  VECTOR_NOTICE_NO_GEOMETRY, VECTOR_NOTICE_REPROJECTION, VECTOR_NOTICE_TOO_BIG, VECTOR_NOTICE_TOO_LARGE,
-  VECTOR_NOTICE_TRUNCATED,
+  VECTOR_NOTICE_NO_GEOMETRY, VECTOR_NOTICE_NO_GEOMETRY_IN_ROWS, VECTOR_NOTICE_REPROJECTION, VECTOR_NOTICE_TOO_BIG, VECTOR_NOTICE_TOO_LARGE,
 } from '../utils/parquetShared.js';
 import {
   ZARR_NOTICE_CHUNK_SHAPE, ZARR_NOTICE_CODEC, ZARR_NOTICE_CRS, ZARR_NOTICE_NO_GEO,
@@ -147,15 +146,14 @@ export default {
       }
       return this.$t('mapping.vectorFallback.loadError');
     },
-    // Why an Iceberg table is not fully on the map. A truncated table still
-    // draws, so that notice states how much is shown rather than that it failed.
+    // Why an Iceberg table is not on the map.
     icebergNoticeText() {
       const notice = this.vectorNotice;
-      if (notice.reason === VECTOR_NOTICE_TRUNCATED) {
-        return this.$t('mapping.iceberg.truncated', { max: notice.max.toLocaleString() });
-      }
       if (notice.reason === VECTOR_NOTICE_NO_GEOMETRY) {
         return this.$t('mapping.iceberg.noGeometry');
+      }
+      if (notice.reason === VECTOR_NOTICE_NO_GEOMETRY_IN_ROWS) {
+        return this.$t('mapping.iceberg.noGeometryInRows');
       }
       if (notice.reason === VECTOR_NOTICE_REPROJECTION) {
         return this.$t('mapping.vectorFallback.reprojectionFailed', { crs: notice.crs || '' });
@@ -737,6 +735,11 @@ export default {
       }
 
       this.pulseExtent(bounds);
+    },
+
+    // The data preview paged or filtered an Iceberg table. The map draws the new rows.
+    setIcebergView(view) {
+      return this.stacLayer?.setIcebergView?.(view);
     },
 
     async highlightBbox(bbox, sourceCrs, sourceDefinition = null) {

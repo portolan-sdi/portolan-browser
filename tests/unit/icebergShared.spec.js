@@ -34,20 +34,34 @@ describe('isLoadableIcebergAsset', () => {
     expect(isLoadableIcebergAsset(asset({ 'iceberg:catalog_type': 'static' }))).toBe(true)
   })
 
-  it('refuses a catalog type the browser cannot read', () => {
-    for (const type of ['rest', 'glue', 'hive', 'sql', 'dynamodb']) {
-      expect(isLoadableIcebergAsset(asset({ 'iceberg:catalog_type': type }))).toBe(false)
+  it('accepts a table in any kind of catalog, because the browser reads the files and not the catalog', () => {
+    for (const type of ['static', 'rest', 'glue', 'hive', 'sql', 'dynamodb']) {
+      expect(isLoadableIcebergAsset(asset({ 'iceberg:catalog_type': type }))).toBe(true)
     }
   })
 
-  it('reads the catalog type from the parent through getMetadata', () => {
+  it('does not depend on the catalog type the parent declares', () => {
     const fromParent = asset({ getMetadata: name => (name === 'iceberg:catalog_type' ? 'rest' : undefined) })
-    expect(isLoadableIcebergAsset(fromParent)).toBe(false)
+    expect(isLoadableIcebergAsset(fromParent)).toBe(true)
+  })
+
+  it('refuses an asset whose metadata file a browser cannot fetch', () => {
+    const private_ = asset({ href: 's3://bucket/tbl/metadata/v1.metadata.json' })
+    expect(isLoadableIcebergAsset(private_)).toBe(false)
+    expect(isLoadableIcebergAsset(asset({
+      href: 's3://bucket/tbl/metadata/v1.metadata.json',
+      alternate: { https: { href: HREF } },
+    }))).toBe(true)
+  })
+
+  it('refuses a wildcard href', () => {
+    expect(isLoadableIcebergAsset(asset({ href: 'https://example.com/wh/*/metadata/v1.metadata.json' }))).toBe(false)
   })
 
   it('is part of what the map can render', () => {
     expect(isMapRenderableAsset(asset())).toBe(true)
-    expect(isMapRenderableAsset(asset({ 'iceberg:catalog_type': 'rest' }))).toBe(false)
+    expect(isMapRenderableAsset(asset({ 'iceberg:catalog_type': 'rest' }))).toBe(true)
+    expect(isMapRenderableAsset(asset({ href: 's3://bucket/tbl/metadata/v1.metadata.json' }))).toBe(false)
   })
 })
 

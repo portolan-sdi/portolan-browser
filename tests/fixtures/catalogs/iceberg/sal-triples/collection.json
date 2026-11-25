@@ -2,6 +2,7 @@
   "type": "Collection",
   "stac_version": "1.1.0",
   "stac_extensions": [
+    "https://stac-extensions.github.io/table/v1.2.0/schema.json",
     "https://schemas.portolan-sdi.org/incubating/iceberg/v1.1.0/schema.json"
   ],
   "id": "sal-triples",
@@ -17,6 +18,7 @@
     { "rel": "parent", "href": "../catalog.json", "type": "application/json" },
     { "rel": "self", "href": "./collection.json", "type": "application/json" }
   ],
+  "table:primary_geometry": "object_geometry",
   "iceberg:catalog_type": "static",
   "iceberg:table_id": "sal.triples",
   "iceberg:metadata_location": "https://storage.googleapis.com/sal-geo-repo-test-bucket/sal/triples/metadata/v1795618391843122000.metadata.json",

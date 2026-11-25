@@ -23,7 +23,20 @@
     </div>
     <b-collapse v-model="open">
       <b-tabs v-model="activeTab" small class="iceberg-tabs">
-        <b-tab :title="$t('iceberg.tabs.data')">
+        <b-tab :id="TAB_DATA" :title="$t('iceberg.tabs.data')">
+          <p v-if="where || snapshotId" class="iceberg-filter">
+            <span>
+              <span v-if="snapshotId" class="iceberg-filter-snapshot">
+                {{ $t('iceberg.query.snapshot') }} <code>{{ snapshotId }}</code>
+              </span>
+              <span v-if="where" class="iceberg-filter-where">
+                {{ $t('iceberg.query.filteredBy') }} <code>{{ where }}</code>
+              </span>
+            </span>
+            <button type="button" class="btn btn-sm btn-outline-secondary iceberg-filter-clear" @click="clearQuery">
+              {{ $t('iceberg.query.clear') }}
+            </button>
+          </p>
           <div v-if="loading" class="iceberg-loading">
             <div class="spinner-border spinner-border-sm text-primary" role="status">
               <span class="visually-hidden">{{ $t('loading') }}</span>
@@ -34,18 +47,36 @@
             <p class="mb-1">{{ error }}</p>
             <button class="btn btn-sm btn-outline-primary" @click="loadData">{{ $t('parquet.retry') }}</button>
           </div>
-          <ParquetTable
-            v-else-if="tableData"
-            :columns="tableData.columns"
-            :rows="tableData.rows"
-            :totalRows="tableData.totalRows"
-            :loadedRows="tableData.loadedRows"
-            :geometryColumn="tableData.geometryColumn"
-            @zoom-to-feature="onZoomToFeature"
-            @select-row="onSelectRow"
-          />
+          <template v-else-if="tableData">
+            <ParquetTable
+              :columns="tableData.columns"
+              :rows="tableData.rows"
+              :totalRows="tableData.loadedRows"
+              :loadedRows="tableData.loadedRows"
+              :geometryColumn="tableData.geometryColumn"
+              @zoom-to-feature="onZoomToFeature"
+              @select-row="onSelectRow"
+            />
+          </template>
+          <div v-if="offset > 0 || hasNext" class="iceberg-pager">
+            <button
+              type="button" class="btn btn-sm btn-outline-primary iceberg-previous"
+              :disabled="loading || offset === 0"
+              @click="previousPage"
+            >
+              {{ $t('iceberg.pager.previous', { count: pageSize.toLocaleString($i18n.locale) }) }}
+            </button>
+            <span class="iceberg-pager-info" role="status" aria-live="polite">{{ rowInfo }}</span>
+            <button
+              type="button" class="btn btn-sm btn-outline-primary iceberg-next"
+              :disabled="loading || !hasNext"
+              @click="nextPage"
+            >
+              {{ $t('iceberg.pager.next', { count: pageSize.toLocaleString($i18n.locale) }) }}
+            </button>
+          </div>
         </b-tab>
-        <b-tab :title="$t('iceberg.tabs.snapshots')">
+        <b-tab :id="TAB_SNAPSHOTS" :title="$t('iceberg.tabs.snapshots')">
           <div v-if="snapshotsLoading" class="iceberg-loading">
             <div class="spinner-border spinner-border-sm text-primary" role="status">
               <span class="visually-hidden">{{ $t('loading') }}</span>
@@ -68,6 +99,7 @@
                     <th>{{ $t('iceberg.snapshots.operation') }}</th>
                     <th class="text-end">{{ $t('iceberg.snapshots.rows') }}</th>
                     <th class="text-end">{{ $t('iceberg.snapshots.files') }}</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -81,12 +113,91 @@
                     <td>{{ snapshot.operation }}</td>
                     <td class="text-end">{{ formatCount(snapshot.rows) }}</td>
                     <td class="text-end">{{ formatCount(snapshot.files) }}</td>
+                    <td class="text-end">
+                      <button
+                        type="button" class="btn btn-sm btn-outline-primary iceberg-snapshot-query"
+                        @click="queryAtSnapshot(snapshot)"
+                      >
+                        {{ $t('iceberg.snapshots.query') }}
+                      </button>
+                    </td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p v-else class="text-muted m-2">{{ $t('iceberg.snapshots.none') }}</p>
           </template>
+        </b-tab>
+        <b-tab :id="TAB_QUERY" :title="$t('iceberg.tabs.query')">
+          <div class="iceberg-query">
+            <div class="iceberg-query-snapshot">
+              <label class="form-label" for="iceberg-query-snapshot">{{ $t('iceberg.query.snapshot') }}</label>
+              <select
+                id="iceberg-query-snapshot"
+                v-model="querySnapshot"
+                class="form-select form-select-sm iceberg-snapshot-select"
+                :disabled="!snapshots || snapshots.length === 0"
+              >
+                <option v-for="snapshot in snapshots || []" :key="snapshot.id" :value="snapshot.id">
+                  {{ snapshotLabel(snapshot) }}
+                </option>
+              </select>
+            </div>
+            <div class="iceberg-query-heading">
+              <label class="form-label" for="iceberg-query-input">{{ $t('iceberg.query.label') }}</label>
+              <span class="iceberg-query-docs">
+                <span class="iceberg-query-help">{{ $t('iceberg.query.help') }}</span>
+                <!-- Each sentence has its own line. Vue drops the whitespace between two
+                     elements, so the space stays explicit, for copying and screen readers. -->
+                {{ ' ' }}
+                <span class="iceberg-query-limit">
+                  {{ $t('iceberg.query.limit', { limit: pageSize }) }}
+                </span>
+              </span>
+            </div>
+            <textarea
+              id="iceberg-query-input"
+              v-model="queryText"
+              class="form-control form-control-sm iceberg-query-input"
+              rows="3"
+              spellcheck="false"
+              :placeholder="$t('iceberg.query.placeholder')"
+              @keydown.ctrl.enter.prevent="runQuery"
+              @keydown.meta.enter.prevent="runQuery"
+            />
+            <div v-if="columnInfo.length > 0" class="iceberg-query-columns">
+              <h4>{{ $t('iceberg.query.columns') }}</h4>
+              <div class="iceberg-columns-scroll">
+                <table class="table table-sm table-striped iceberg-columns">
+                  <thead>
+                    <tr>
+                      <th>{{ $t('iceberg.query.columnName') }}</th>
+                      <th>{{ $t('iceberg.query.columnType') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="column in columnInfo" :key="column.name">
+                      <td class="iceberg-column-name">{{ column.name }}</td>
+                      <td class="iceberg-column-type">{{ column.type }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="iceberg-query-actions">
+              <button type="button" class="btn btn-sm btn-primary iceberg-run" :disabled="loading" @click="runQuery">
+                {{ $t('iceberg.query.run') }}
+              </button>
+              <button
+                v-if="where || queryText || snapshotId || snapshotChanged"
+                type="button" class="btn btn-sm btn-outline-secondary iceberg-clear"
+                @click="clearQuery"
+              >
+                {{ $t('iceberg.query.clear') }}
+              </button>
+            </div>
+            <div v-if="queryError" class="iceberg-query-error alert alert-warning mt-2">{{ queryError }}</div>
+          </div>
         </b-tab>
       </b-tabs>
     </b-collapse>
@@ -99,7 +210,15 @@ import { BCollapse, BBadge, BTabs, BTab } from 'bootstrap-vue-next';
 import BIconChevronDown from '~icons/bi/chevron-down';
 import BIconChevronRight from '~icons/bi/chevron-right';
 import { loadIcebergRows, loadIcebergSnapshots } from '../utils/iceberg';
-import { icebergField, icebergMetadataUrl, isLoadableIcebergAsset } from '../utils/icebergShared';
+import {
+  icebergField, icebergMetadataUrl, isLoadableIcebergAsset, MAX_ICEBERG_PREVIEW_ROWS,
+} from '../utils/icebergShared';
+
+// The tabs are named by id. The model of a tab group is the id of the tab that
+// shows, and a number matches no tab.
+const TAB_DATA = 'iceberg-tab-data';
+const TAB_SNAPSHOTS = 'iceberg-tab-snapshots';
+const TAB_QUERY = 'iceberg-tab-query';
 
 // The preview of an Iceberg table: its first rows in the same table the
 // GeoParquet preview uses. The asset is the table's metadata.json, so this
@@ -121,7 +240,7 @@ export default {
       required: true
     }
   },
-  emits: ['zoom-to-bbox', 'highlight-bbox'],
+  emits: ['zoom-to-bbox', 'highlight-bbox', 'page-change'],
   data() {
     return {
       open: true,
@@ -135,7 +254,21 @@ export default {
       snapshotsAbort: null,
       loadAbort: null,
       tableData: null,
-      activeTab: 0,
+      // Rows before the page the table shows. Page one starts at 0.
+      offset: 0,
+      // The SQL condition the table and the map are filtered by. `queryText` is
+      // what the reader has typed, and `where` is what the last run applied.
+      where: '',
+      queryText: '',
+      // The snapshot the table and the map are read at. Empty means the default,
+      // which is the snapshot the collection names, or else the table's current
+      // one. `querySnapshot` is the drop-down's choice before a run applies it.
+      snapshotId: '',
+      querySnapshot: '',
+      // The columns of the table and their types, for the Query tab. They outlive
+      // a failed query, which leaves no rows to read them from.
+      columnInfo: [],
+      activeTab: TAB_DATA,
       // The snapshots come from the metadata file alone, so they load apart
       // from the rows and a slow or failed row read does not hold them back.
       snapshots: null,
@@ -171,26 +304,78 @@ export default {
       const current = this.snapshots.find(snapshot => snapshot.current);
       return Boolean(current) && current.id !== this.pinnedSnapshotId;
     },
+    // A failed query shows its message where the reader edits the query. The
+    // Data tab shows the same message beside its Retry button.
+    queryError() {
+      return this.where || this.snapshotId ? this.error : null;
+    },
+    // The snapshot a read uses when the reader picks none. This matches the
+    // loader, which pins the snapshot the collection names when the table still
+    // has it, and otherwise reads the table's current snapshot.
+    defaultSnapshotId() {
+      if (!this.snapshots?.length) {return null;}
+      const pinned = this.pinnedSnapshotId;
+      if (pinned && this.snapshots.some(snapshot => snapshot.id === pinned)) {return pinned;}
+      return (this.snapshots.find(snapshot => snapshot.current) ?? this.snapshots[0]).id;
+    },
+    // The drop-down shows a snapshot other than the one the table holds now.
+    snapshotChanged() {
+      return Boolean(this.querySnapshot) && this.querySnapshot !== (this.snapshotId || this.defaultSnapshotId);
+    },
+    // Rows per page. The map draws the geometries of the page on screen.
+    pageSize() {
+      return MAX_ICEBERG_PREVIEW_ROWS;
+    },
+    // Another page follows. A full page is the sign of that, unless the snapshot
+    // summary gives the table size and the rows seen have reached it.
+    hasNext() {
+      const data = this.tableData;
+      if (!data || data.loadedRows < this.pageSize) {return false;}
+      return !data.totalKnown || data.offset + data.loadedRows < data.totalRows;
+    },
+    // The rows on the page, against the table size when the summary gives it.
     rowInfo() {
       if (!this.tableData) {return null;}
-      const { loadedRows, totalRows } = this.tableData;
+      const { offset, loadedRows, totalRows, totalKnown } = this.tableData;
       const format = n => n.toLocaleString(this.$i18n.locale);
-      if (loadedRows < totalRows) {
-        return this.$t('parquet.loadedRowCount', { loaded: format(loadedRows), total: format(totalRows) }, totalRows);
+      if (loadedRows === 0 || (offset === 0 && !this.hasNext)) {
+        return this.$t('parquet.rowCount', { count: format(totalRows) }, totalRows);
       }
-      return this.$t('parquet.rowCount', { count: format(totalRows) }, totalRows);
+      const range = { from: format(offset + 1), to: format(offset + loadedRows) };
+      if (!totalKnown) {return this.$t('iceberg.rowRange', range);}
+      return this.$t('parquet.pageRows', { ...range, total: format(totalRows) }, totalRows);
     }
   },
   watch: {
+    // The drop-down starts on the default snapshot once the snapshots are known.
+    defaultSnapshotId(id) {
+      if (id && !this.snapshots.some(snapshot => snapshot.id === this.querySnapshot)) {
+        this.querySnapshot = id;
+      }
+    },
     selectedAsset: {
       immediate: true,
       handler() {
         if (this.selectedAsset) {
+          // Another table starts on its first page, with no filter. Its columns
+          // are not the columns of the one before.
+          this.offset = 0;
+          this.where = '';
+          this.queryText = '';
+          this.snapshotId = '';
+          this.querySnapshot = '';
+          this.columnInfo = [];
           this.loadData();
           this.loadSnapshots();
         }
       }
     }
+  },
+  created() {
+    // Read by the template, which names each tab by these ids.
+    this.TAB_DATA = TAB_DATA;
+    this.TAB_SNAPSHOTS = TAB_SNAPSHOTS;
+    this.TAB_QUERY = TAB_QUERY;
   },
   beforeUnmount() {
     this.loadAbort?.abort();
@@ -207,16 +392,24 @@ export default {
       this.loading = true;
       this.error = null;
       this.tableData = null;
+      // The filter and snapshot this load runs. A later run may change them before it ends.
+      const where = this.where;
+      const snapshotId = this.snapshotId;
 
       try {
         const url = icebergMetadataUrl(this.selectedAsset);
         const data = await loadIcebergRows(url, {
           signal: abort.signal,
           geometryColumn: icebergField(this.selectedAsset, 'table:primary_geometry'),
-          snapshotId: icebergField(this.selectedAsset, 'iceberg:current_snapshot_id'),
+          snapshotId: snapshotId || icebergField(this.selectedAsset, 'iceberg:current_snapshot_id'),
+          offset: this.offset,
+          where,
         });
         if (loadId !== this.loadId) {return;}
         this.tableData = data;
+        this.columnInfo = data.fields;
+        // The map draws the geometries of the rows the table now shows.
+        this.$emit('page-change', { offset: data.offset, where, snapshotId });
       } catch (err) {
         // A superseded or unmounted load is not a failure the reader should see.
         if (loadId !== this.loadId || abort.signal.aborted) {return;}
@@ -231,6 +424,54 @@ export default {
           this.loading = false;
         }
       }
+    },
+    // Apply the typed condition. The results go to the Data tab, where the table
+    // and the map show them. An empty condition is the same as no filter.
+    runQuery() {
+      if (this.loading) {return;}
+      this.where = this.queryText.trim();
+      // The default snapshot is stored as empty, so the loader picks it the way it always did.
+      this.snapshotId = this.querySnapshot && this.querySnapshot !== this.defaultSnapshotId ? this.querySnapshot : '';
+      this.offset = 0;
+      this.activeTab = TAB_DATA;
+      this.loadData();
+    },
+    clearQuery() {
+      this.queryText = '';
+      this.querySnapshot = this.defaultSnapshotId ?? '';
+      if (!this.where && !this.snapshotId) {return;}
+      this.where = '';
+      this.snapshotId = '';
+      this.offset = 0;
+      this.loadData();
+    },
+    // The Query button of a snapshot: open the Query tab with that snapshot
+    // chosen in the drop-down. The reader adds a condition if they want one and
+    // runs it, so nothing is read until then.
+    queryAtSnapshot(snapshot) {
+      this.querySnapshot = snapshot.id;
+      this.activeTab = TAB_QUERY;
+    },
+    // One option of the drop-down: when it was committed, its id, and which
+    // snapshot it is for the table and for the collection.
+    snapshotLabel(snapshot) {
+      const tags = [];
+      if (snapshot.current) {tags.push(this.$t('iceberg.snapshots.tableCurrent'));}
+      if (snapshot.id === this.pinnedSnapshotId) {tags.push(this.$t('iceberg.snapshots.collection'));}
+      const suffix = tags.length > 0 ? ` (${tags.join(', ')})` : '';
+      return `${this.formatCommitted(snapshot.timestamp)} · ${snapshot.id}${suffix}`;
+    },
+    // A page is one query with an OFFSET, so any page loads without the pages
+    // before it. The rows keep one order for one metadata file.
+    nextPage() {
+      if (!this.hasNext || this.loading) {return;}
+      this.offset += this.pageSize;
+      this.loadData();
+    },
+    previousPage() {
+      if (this.offset === 0 || this.loading) {return;}
+      this.offset = Math.max(0, this.offset - this.pageSize);
+      this.loadData();
     },
     async loadSnapshots() {
       if (!this.selectedAsset) {return;}
@@ -346,6 +587,125 @@ export default {
 .iceberg-snapshots-error,
 .iceberg-snapshots-note {
   font-size: 0.9rem;
+}
+
+.iceberg-filter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.iceberg-query {
+  padding: 0.75rem;
+
+  .iceberg-query-snapshot {
+    margin-bottom: 0.75rem;
+
+    .form-label {
+      margin-bottom: 0.25rem;
+    }
+
+    .iceberg-snapshot-select {
+      font-family: $font-family-monospace;
+    }
+  }
+
+  .iceberg-query-input {
+    font-family: $font-family-monospace;
+  }
+
+  // The label and all of its documentation share a block above the box, and the
+  // documentation wraps under the label on a narrow screen.
+  .iceberg-query-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.1rem 0.75rem;
+    margin-bottom: 0.25rem;
+
+    .form-label {
+      margin: 0;
+    }
+  }
+
+  // One sentence to a line.
+  .iceberg-query-docs {
+    font-size: 0.8rem;
+    color: $secondary;
+
+    .iceberg-query-help,
+    .iceberg-query-limit {
+      display: block;
+    }
+  }
+
+  .iceberg-query-columns {
+    margin-top: 0.75rem;
+
+    h4 {
+      margin: 0 0 0.25rem;
+      font-size: 0.85rem;
+      color: $secondary;
+    }
+  }
+
+  // A table with many columns scrolls here, so the box does not push the
+  // Run button out of view.
+  .iceberg-columns-scroll {
+    max-height: 14rem;
+    overflow: auto;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: $border-radius;
+  }
+
+  .iceberg-columns {
+    margin: 0;
+    font-size: 0.8rem;
+
+    th {
+      position: sticky;
+      top: 0;
+      background: $light;
+    }
+
+    // One cell holds one name, so a click selects that name and nothing else.
+    .iceberg-column-name {
+      font-family: $font-family-monospace;
+    }
+
+    .iceberg-column-type {
+      color: $secondary;
+      font-family: $font-family-monospace;
+    }
+  }
+
+  .iceberg-query-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+}
+
+.iceberg-filter-snapshot {
+  margin-right: 0.75rem;
+}
+
+.iceberg-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.5rem;
+}
+
+.iceberg-pager-info {
+  font-size: 0.8rem;
+  color: $secondary;
 }
 
 .iceberg-tabs {

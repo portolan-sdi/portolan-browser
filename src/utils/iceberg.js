@@ -17,10 +17,10 @@ import {
   MAP_RENDERABLE_CRS,
   reprojectGeometry,
 } from './crs.js';
-import { MAX_ICEBERG_MAP_GEOMETRIES, MAX_ICEBERG_PREVIEW_ROWS, splitMetadataUrl } from './icebergShared.js';
+import { MAX_ICEBERG_MAP_ROWS, MAX_ICEBERG_PREVIEW_ROWS, splitMetadataUrl } from './icebergShared.js';
 import { VECTOR_NOTICE_NO_GEOMETRY } from './parquetShared.js';
 
-export { MAX_ICEBERG_MAP_GEOMETRIES, MAX_ICEBERG_PREVIEW_ROWS };
+export { MAX_ICEBERG_MAP_ROWS, MAX_ICEBERG_PREVIEW_ROWS };
 export { createDomainGuard, createLonLatTransform, reprojectGeometry };
 
 // How long the reprojection loop may hold the main thread before yielding.
@@ -57,6 +57,22 @@ export function geometryColumns(schema) {
   return columns;
 }
 
+// The WHERE part of a query, from a condition the reader typed. The condition is
+// wrapped in parentheses, so a trailing OR cannot reach the LIMIT, and a stray
+// closing parenthesis is a syntax error instead of a way out of the query. An
+// empty condition adds nothing. icebird's SQL engine only reads, so a condition
+// can filter rows and nothing more.
+function whereClause(where) {
+  const condition = typeof where === 'string' ? where.trim() : '';
+  return condition ? ` WHERE (${condition})` : '';
+}
+
+// A column's type as text. A nested type (struct, list, map) is an object in
+// the metadata, so its kind stands in for it.
+function typeLabel(type) {
+  return typeof type === 'string' ? type : (type?.type ?? '');
+}
+
 // Quote an identifier for the SQL that icebird runs.
 function quote(name) {
   return `"${String(name).replaceAll('"', '""')}"`;
@@ -85,6 +101,74 @@ function pinnedSnapshot(metadata, declared) {
   return known ? BigInt(id) : undefined;
 }
 
+/**
+ * Wrap an icebird resolver so paths under the table's own `location` are read
+ * from the URL the table was loaded from.
+ *
+ * The metadata names every file by absolute path, under `location`. A writer
+ * that used object storage names them `s3://bucket/path`. icebird turns an
+ * `s3://` path into an Amazon host, which is wrong for any other S3-compatible
+ * host, such as MinIO, R2 or a lakehouse service. The metadata file was fetched
+ * from a URL the browser can use, and every file of the table sits beside it,
+ * so a path under `location` maps onto the same place under that URL. The
+ * `target` object is filled in once the metadata is read, because `location`
+ * is not known before.
+ *
+ * @param {{reader: (path: string, byteLength?: number) => any}} base
+ * @param {{from: string | null, to: string}} target
+ * @returns {{reader: (path: string, byteLength?: number) => any}}
+ */
+export function rebasedResolver(base, target) {
+  return {
+    ...base,
+    reader(path, byteLength) {
+      const mapped = target.from && path.startsWith(target.from)
+        ? target.to + path.slice(target.from.length)
+        : path;
+      return base.reader(mapped, byteLength);
+    },
+  };
+}
+
+// How many more times a short range read is tried before it fails.
+const SHORT_READ_RETRIES = 2;
+
+/**
+ * Wrap an icebird resolver so a range read must return every byte it asked for.
+ *
+ * A range request can come back with `206` and the right headers and still
+ * deliver fewer bytes than the range holds, when a network hop cuts a large
+ * body short. hyparquet does not check the length. It parses the short buffer
+ * and fails far from the cause, with a message such as "Invalid typed array
+ * length". This wrapper reads the range again, up to SHORT_READ_RETRIES more
+ * times, and then fails with a message that names the file and the range.
+ *
+ * @param {{reader: (path: string, byteLength?: number) => any}} base
+ * @returns {{reader: (path: string, byteLength?: number) => any}}
+ */
+export function verifiedResolver(base) {
+  return {
+    ...base,
+    async reader(path, byteLength) {
+      const source = await base.reader(path, byteLength);
+      return {
+        ...source,
+        async slice(start, end) {
+          const wanted = Math.min(end ?? source.byteLength, source.byteLength) - start;
+          let received = 0;
+          for (let attempt = 0; attempt <= SHORT_READ_RETRIES; attempt++) {
+            // eslint-disable-next-line no-await-in-loop -- each try follows the one that came up short
+            const buffer = await source.slice(start, end);
+            received = buffer.byteLength;
+            if (received === wanted) {return buffer;}
+          }
+          throw new Error(`Short read from ${path}: asked for ${wanted} bytes at ${start} and got ${received}`);
+        },
+      };
+    },
+  };
+}
+
 // Split the metadata URL, build the resolver and read the table metadata. Both
 // loaders start here, so they address the table and handle Avro the same way.
 async function openTable(url, signal) {
@@ -95,19 +179,34 @@ async function openTable(url, signal) {
   const { tableUrl, metadataFileName } = location;
   // icebird reads a deflate-compressed Avro manifest through a decoder that
   // fails on some writers' output. avroSafeResolver rewrites those files first.
-  const resolver = avroSafeResolver(urlResolver({ requestInit: signal ? { signal } : undefined }));
+  // `rebase.from` stays empty until the metadata names the table's location.
+  const rebase = { from: null, to: tableUrl };
+  const resolver = avroSafeResolver(verifiedResolver(rebasedResolver(
+    urlResolver({ requestInit: signal ? { signal } : undefined }),
+    rebase,
+  )));
 
   const metadata = await icebergMetadata({ tableUrl, metadataFileName, resolver });
   if (signal?.aborted) {throw abortError();}
+  // A location that is already an http(s) URL needs no mapping. Any other scheme
+  // (s3://, s3a://, gs://) is not a URL a browser can fetch.
+  if (typeof metadata.location === 'string' && !/^https?:\/\//i.test(metadata.location)) {
+    rebase.from = metadata.location.replace(/\/+$/, '');
+  }
   return { tableUrl, resolver, metadata, schema: currentSchema(metadata) };
 }
 
-// Rows in the table's current snapshot, from the snapshot summary. Null when
-// the writer left the summary out. A table with deletes may hold fewer rows
+// Rows in a snapshot, from the snapshot summary. The snapshot is `snapshotId`
+// when the caller reads one, and the table's current snapshot otherwise. Null
+// when the writer left the summary out. A table with deletes may hold fewer rows
 // than this says, so treat it as the table's size and not as an exact count.
-function totalRecords(metadata) {
-  const current = metadata.snapshots?.find(s => s['snapshot-id'] === metadata['current-snapshot-id']);
-  const total = Number(current?.summary?.['total-records']);
+function totalRecords(metadata, snapshotId) {
+  // icebird parses a snapshot id as a number when it fits in 53 bits and as a
+  // BigInt when it does not, and `===` finds no match between the two. Compare
+  // the ids as text.
+  const wanted = String(snapshotId ?? metadata['current-snapshot-id']);
+  const snapshot = metadata.snapshots?.find(s => String(s['snapshot-id']) === wanted);
+  const total = Number(snapshot?.summary?.['total-records']);
   return Number.isFinite(total) ? total : null;
 }
 
@@ -118,11 +217,13 @@ function totalRecords(metadata) {
  * under the table root, which is the layout every Iceberg writer produces and
  * the one icebird expects.
  *
- * Only the geometry column is read, plus any `fields` the table has. Rows with
- * a null geometry are skipped in the query, so a sparse table does not spend
- * the cap on empty rows. The read stops after `maxFeatures` geometries. When
- * the table has more, the result carries `truncated: true` and holds the first
- * `maxFeatures`. An aborted `signal` rejects with an `AbortError`.
+ * Only the geometry column is read, plus any `fields` the table has. The read
+ * covers `maxRows` rows in table order, after the first `offset` rows. These
+ * are the rows that `loadIcebergRows` returns for the same `offset`, so the map
+ * draws the page of the preview table on screen. A row with a null geometry
+ * counts toward `maxRows` and draws nothing, so a sparse table can yield fewer
+ * features than rows. `where` is a SQL condition that filters the rows first.
+ * An aborted `signal` rejects with an `AbortError`.
  *
  * Throws when the table has no geometry column (the error carries
  * `noticeReason`), when its CRS cannot be shown, or on a fetch or parse error.
@@ -136,7 +237,9 @@ export async function loadGeoJsonFromIceberg(url, {
   fields = [],
   geometryColumn: preferredColumn,
   snapshotId,
-  maxFeatures = MAX_ICEBERG_MAP_GEOMETRIES,
+  maxRows = MAX_ICEBERG_MAP_ROWS,
+  offset = 0,
+  where = '',
 } = {}) {
   const { tableUrl, resolver, metadata, schema } = await openTable(url, signal);
   const geometries = geometryColumns(schema);
@@ -162,31 +265,26 @@ export async function loadGeoJsonFromIceberg(url, {
   const attributeColumns = requested.filter(name => known.has(name));
   const absentColumns = requested.filter(name => !known.has(name));
 
-  const source = await icebergDataSource({
-    tableUrl,
-    metadata,
-    snapshotId: pinnedSnapshot(metadata, snapshotId),
-    resolver,
-  });
-  // The query asks for one row past the cap. That extra row is how the loader
-  // knows the table holds more than it shows.
+  const snapshot = pinnedSnapshot(metadata, snapshotId);
+  const source = await icebergDataSource({ tableUrl, metadata, snapshotId: snapshot, resolver });
+  // There is no filter on the geometry: the rows must be the same rows the
+  // preview table shows for this page.
   const query = `SELECT ${[geometry.name, ...attributeColumns].map(quote).join(', ')} `
-    + `FROM t WHERE ${quote(geometry.name)} IS NOT NULL LIMIT ${maxFeatures + 1}`;
+    + `FROM t${whereClause(where)} LIMIT ${maxRows} OFFSET ${offset}`;
   const result = await icebergQuery({ tables: { t: source }, query, resolver, signal });
 
   const features = [];
   const delivered = new Set();
   let droppedFeatures = 0;
-  let truncated = false;
+  let rowsRead = 0;
   let lastYield = Date.now();
 
   for await (const batch of streamRowBatches(result, { batchRows: 1024 })) {
     if (signal?.aborted) {throw abortError();}
     for (const row of batch) {
-      if (features.length >= maxFeatures) {
-        truncated = true;
-        break;
-      }
+      // The query holds the read to one page. Never go past it, whatever it yields.
+      if (rowsRead >= maxRows) {break;}
+      rowsRead++;
       // Reprojection is a per-position proj4 call. Hand the event loop back
       // periodically so the page stays responsive and an abort can interrupt.
       if (transform && Date.now() - lastYield >= REPROJECT_YIELD_MS) {
@@ -215,7 +313,7 @@ export async function loadGeoJsonFromIceberg(url, {
       }
       features.push({ type: 'Feature', geometry: shape, properties });
     }
-    if (truncated) {break;}
+    if (rowsRead >= maxRows) {break;}
   }
 
   const unusableColumns = features.length > 0
@@ -224,10 +322,8 @@ export async function loadGeoJsonFromIceberg(url, {
 
   return {
     exceeded: false,
-    truncated,
-    max: maxFeatures,
     featureCollection: { type: 'FeatureCollection', features },
-    totalRows: totalRecords(metadata),
+    totalRows: totalRecords(metadata, snapshot),
     missingFields: [...absentColumns, ...unusableColumns].sort(),
     reprojectedFrom: transform ? crs : null,
     droppedFeatures,
@@ -286,14 +382,28 @@ function toCell(value, isGeometry) {
  * CRS of those boxes. `totalRows` is the table's size from the snapshot
  * summary, or the loaded count when the summary has none.
  *
- * Reads rows in table order and stops after `maxRows`. An aborted `signal`
- * rejects with an `AbortError`.
+ * Reads `maxRows` rows in table order, starting after the first `offset` rows,
+ * so a caller can page through the whole table. The order is stable for one
+ * metadata file, because the query has no `ORDER BY` and the scan walks the data
+ * files in manifest order. Page one (`offset` 0) holds the same rows that
+ * `loadGeoJsonFromIceberg` reads for the map. `fields` lists every column of the
+ * table in schema order, the geometry column included, with its type, for the
+ * query tab. `totalKnown` says whether
+ * `totalRows` comes from the snapshot summary. Without a summary, `totalRows`
+ * is only the rows seen so far, `offset` plus the page. `where` is a SQL
+ * condition that filters the rows. The snapshot summary counts the whole table,
+ * so a filtered read never reports a known total. `snapshotId` reads the table
+ * as it was at that snapshot (time travel), and the total comes from that
+ * snapshot's summary. An id the table does not have is ignored, and the read
+ * uses the current snapshot. An aborted `signal` rejects with an `AbortError`.
  */
 export async function loadIcebergRows(url, {
   signal,
   geometryColumn: preferredColumn,
   snapshotId,
   maxRows = MAX_ICEBERG_PREVIEW_ROWS,
+  offset = 0,
+  where = '',
 } = {}) {
   const { tableUrl, resolver, metadata, schema } = await openTable(url, signal);
   const geometries = geometryColumns(schema);
@@ -302,13 +412,9 @@ export async function loadIcebergRows(url, {
   const names = (schema.fields ?? []).map(f => f.name);
   const columns = names.filter(name => name !== primary?.name);
 
-  const source = await icebergDataSource({
-    tableUrl,
-    metadata,
-    snapshotId: pinnedSnapshot(metadata, snapshotId),
-    resolver,
-  });
-  const query = `SELECT ${names.map(quote).join(', ')} FROM t LIMIT ${maxRows}`;
+  const snapshot = pinnedSnapshot(metadata, snapshotId);
+  const source = await icebergDataSource({ tableUrl, metadata, snapshotId: snapshot, resolver });
+  const query = `SELECT ${names.map(quote).join(', ')} FROM t${whereClause(where)} LIMIT ${maxRows} OFFSET ${offset}`;
   const result = await icebergQuery({ tables: { t: source }, query, resolver, signal });
 
   const rows = [];
@@ -323,11 +429,15 @@ export async function loadIcebergRows(url, {
     if (rows.length >= maxRows) {break;}
   }
 
+  const total = whereClause(where) ? null : totalRecords(metadata, snapshot);
   return {
     columns,
     rows,
+    fields: (schema.fields ?? []).map(field => ({ name: field.name, type: typeLabel(field.type) })),
+    offset,
     loadedRows: rows.length,
-    totalRows: totalRecords(metadata) ?? rows.length,
+    totalRows: total ?? offset + rows.length,
+    totalKnown: total !== null,
     geometryColumn: primary?.name ?? null,
     bboxes,
     // A type without a CRS means OGC:CRS84, which the map takes as lon/lat.

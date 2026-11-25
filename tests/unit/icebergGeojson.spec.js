@@ -12,6 +12,7 @@ vi.mock('icebird', () => icebird)
 
 import {
   geometryBbox, geometryColumns, loadGeoJsonFromIceberg, loadIcebergRows, loadIcebergSnapshots, summarizeSnapshots,
+  rebasedResolver, verifiedResolver,
 } from '../../src/utils/iceberg.js'
 
 const URL = 'https://example.com/wh/tbl/metadata/v1.metadata.json'
@@ -66,13 +67,15 @@ describe('geometryColumns', () => {
   })
 })
 
+// The map loader with a row cap, as the layer would call it.
+const loadGeoJsonFor = maxRows => loadGeoJsonFromIceberg(URL, { maxRows })
+
 describe('loadGeoJsonFromIceberg', () => {
   it('reads the geometry column and returns a FeatureCollection', async () => {
     rowsAre([{ object_geometry: point(1, 2) }, { object_geometry: point(3, 4) }])
     const result = await loadGeoJsonFromIceberg(URL)
 
     expect(result.exceeded).toBe(false)
-    expect(result.truncated).toBe(false)
     expect(result.featureCollection.features.map(f => f.geometry)).toEqual([point(1, 2), point(3, 4)])
     expect(result.totalRows).toBe(250)
     expect(result.reprojectedFrom).toBe(null)
@@ -88,13 +91,29 @@ describe('loadGeoJsonFromIceberg', () => {
     }))
   })
 
-  it('selects only the geometry column, skips null geometries and caps the read in SQL', async () => {
+  it('selects only the geometry column and caps the read at the row limit in SQL', async () => {
     rowsAre([])
-    await loadGeoJsonFromIceberg(URL, { maxFeatures: 10 })
+    await loadGeoJsonFromIceberg(URL, { maxRows: 10 })
 
     const { query, tables } = icebird.icebergQuery.mock.calls[0][0]
-    expect(query).toBe('SELECT "object_geometry" FROM t WHERE "object_geometry" IS NOT NULL LIMIT 11')
+    expect(query).toBe('SELECT "object_geometry" FROM t LIMIT 10 OFFSET 0')
     expect(tables).toEqual({ t: { source: true } })
+  })
+
+  it('reads the first 1000 rows by default, the same rows as the preview table', async () => {
+    rowsAre([])
+    await loadGeoJsonFromIceberg(URL)
+    await loadIcebergRows(URL)
+
+    expect(icebird.icebergQuery.mock.calls[0][0].query).toContain(' FROM t LIMIT 1000 OFFSET 0')
+    expect(icebird.icebergQuery.mock.calls[1][0].query).toContain(' FROM t LIMIT 1000 OFFSET 0')
+  })
+
+  it('does not filter on the geometry, so row order matches the preview table', async () => {
+    rowsAre([])
+    await loadGeoJsonFromIceberg(URL)
+
+    expect(icebird.icebergQuery.mock.calls[0][0].query).not.toMatch(/WHERE/i)
   })
 
   it('reads the requested attribute columns that the table has and reports the others', async () => {
@@ -106,24 +125,63 @@ describe('loadGeoJsonFromIceberg', () => {
     expect(result.missingFields).toEqual(['missing'])
   })
 
-  it('stops at the cap and marks the result truncated', async () => {
+  it('stops at the row cap', async () => {
     rowsAre(
       [{ object_geometry: point(0, 0) }, { object_geometry: point(1, 1) }],
       [{ object_geometry: point(2, 2) }, { object_geometry: point(3, 3) }],
     )
-    const result = await loadGeoJsonFromIceberg(URL, { maxFeatures: 3 })
+    const result = await loadGeoJsonFor(3)
 
-    expect(result.truncated).toBe(true)
-    expect(result.max).toBe(3)
     expect(result.featureCollection.features).toHaveLength(3)
   })
 
-  it('does not mark a table truncated when it holds exactly the cap', async () => {
-    rowsAre([{ object_geometry: point(0, 0) }, { object_geometry: point(1, 1) }, { object_geometry: point(2, 2) }])
-    const result = await loadGeoJsonFromIceberg(URL, { maxFeatures: 3 })
+  it('counts a row with no geometry toward the cap and draws nothing for it', async () => {
+    rowsAre([
+      { object_geometry: null },
+      { object_geometry: point(1, 1) },
+      { object_geometry: null },
+      { object_geometry: point(3, 3) },
+      { object_geometry: point(4, 4) },
+    ])
+    const result = await loadGeoJsonFor(4)
 
-    expect(result.truncated).toBe(false)
-    expect(result.featureCollection.features).toHaveLength(3)
+    // Only the first four rows count, so the fifth row's geometry stays out.
+    expect(result.featureCollection.features.map(f => f.geometry)).toEqual([point(1, 1), point(3, 3)])
+  })
+
+  it('reads the page that starts after the rows to skip', async () => {
+    rowsAre([])
+    await loadGeoJsonFromIceberg(URL, { maxRows: 1000, offset: 3000 })
+
+    expect(icebird.icebergQuery.mock.calls[0][0].query)
+      .toBe('SELECT "object_geometry" FROM t LIMIT 1000 OFFSET 3000')
+  })
+
+  it('asks for the same page as the preview table for the same offset', async () => {
+    rowsAre([])
+    await loadGeoJsonFromIceberg(URL, { offset: 2000 })
+    await loadIcebergRows(URL, { offset: 2000 })
+
+    const [map, table] = icebird.icebergQuery.mock.calls.map(call => call[0].query)
+    expect(map).toContain(' FROM t LIMIT 1000 OFFSET 2000')
+    expect(table).toContain(' FROM t LIMIT 1000 OFFSET 2000')
+  })
+
+  it('draws the geometries of exactly the rows the preview table shows', async () => {
+    const rows = [
+      { id: 1n, name: 'a', object_geometry: null },
+      { id: 2n, name: 'b', object_geometry: point(2, 2) },
+      { id: 3n, name: 'c', object_geometry: point(3, 3) },
+      { id: 4n, name: 'd', object_geometry: point(4, 4) },
+    ]
+    rowsAre(rows)
+    const table = await loadIcebergRows(URL, { maxRows: 3 })
+    rowsAre(rows)
+    const map = await loadGeoJsonFor(3)
+
+    const inTable = table.bboxes.filter(Boolean).map(([x, y]) => [x, y])
+    const onMap = map.featureCollection.features.map(f => f.geometry.coordinates)
+    expect(onMap).toEqual(inTable)
   })
 
   it('prefers the declared primary geometry column when there are several', async () => {
@@ -238,6 +296,23 @@ describe('loadIcebergRows', () => {
     expect(result.loadedRows).toBe(2)
   })
 
+  it('lists every column with its type, the geometry column included, in schema order', async () => {
+    icebird.icebergMetadata.mockResolvedValue(metadata([
+      { id: 1, name: 'id', type: 'long' },
+      { id: 2, name: 'tags', type: { type: 'list', 'element-id': 9, element: 'string' } },
+      { id: 3, name: 'shape', type: 'geometry(EPSG:3067)' },
+    ]))
+    rowsAre([])
+    const result = await loadIcebergRows(URL, { geometryColumn: 'shape' })
+
+    expect(result.fields).toEqual([
+      { name: 'id', type: 'long' },
+      { name: 'tags', type: 'list' },
+      { name: 'shape', type: 'geometry(EPSG:3067)' },
+    ])
+    expect(result.columns).toEqual(['id', 'tags'])
+  })
+
   it('computes one bounding box per row, null where the geometry is null', async () => {
     rowsAre([
       { id: 1n, name: 'a', object_geometry: point(1, 2) },
@@ -261,7 +336,7 @@ describe('loadIcebergRows', () => {
     await loadIcebergRows(URL)
 
     expect(icebird.icebergQuery.mock.calls[0][0].query)
-      .toBe('SELECT "id", "name", "object_geometry" FROM t LIMIT 1000')
+      .toBe('SELECT "id", "name", "object_geometry" FROM t LIMIT 1000 OFFSET 0')
   })
 
   it('stops at the row cap', async () => {
@@ -284,14 +359,68 @@ describe('loadIcebergRows', () => {
     expect(result.loadedRows).toBe(1)
   })
 
-  it('falls back to the loaded count when the summary has no total', async () => {
+  it('falls back to the rows seen when the summary has no total', async () => {
     icebird.icebergMetadata.mockResolvedValue(metadata(
       [{ id: 1, name: 'id', type: 'long' }],
       { snapshots: [{ 'snapshot-id': 7n, summary: {} }] },
     ))
     rowsAre([{ id: 1n }, { id: 2n }])
+    const result = await loadIcebergRows(URL)
 
-    expect((await loadIcebergRows(URL)).totalRows).toBe(2)
+    expect(result.totalRows).toBe(2)
+    expect(result.totalKnown).toBe(false)
+  })
+
+  it('says the total is known when the snapshot summary gives it', async () => {
+    rowsAre([{ id: 1n, name: 'a', object_geometry: null }])
+
+    expect((await loadIcebergRows(URL)).totalKnown).toBe(true)
+  })
+
+  describe('paging', () => {
+    it('starts the page after the rows to skip', async () => {
+      rowsAre([])
+      await loadIcebergRows(URL, { offset: 2000, maxRows: 1000 })
+
+      expect(icebird.icebergQuery.mock.calls[0][0].query)
+        .toBe('SELECT "id", "name", "object_geometry" FROM t LIMIT 1000 OFFSET 2000')
+    })
+
+    it('reports the offset it read from', async () => {
+      rowsAre([{ id: 1n, name: 'a', object_geometry: null }])
+
+      expect((await loadIcebergRows(URL, { offset: 2000 })).offset).toBe(2000)
+      expect((await loadIcebergRows(URL)).offset).toBe(0)
+    })
+
+    it('keeps the same snapshot and metadata file for every page', async () => {
+      rowsAre([])
+      await loadIcebergRows(URL, { offset: 0, snapshotId: '7' })
+      await loadIcebergRows(URL, { offset: 1000, snapshotId: '7' })
+
+      expect(icebird.icebergDataSource.mock.calls.map(c => c[0].snapshotId)).toEqual([7n, 7n])
+      expect(icebird.icebergMetadata.mock.calls.map(c => c[0].metadataFileName)).toEqual(['v1.metadata.json', 'v1.metadata.json'])
+    })
+
+    it('counts rows seen so far as the total when the summary has none', async () => {
+      icebird.icebergMetadata.mockResolvedValue(metadata(
+        [{ id: 1, name: 'id', type: 'long' }],
+        { snapshots: [{ 'snapshot-id': 7n, summary: {} }] },
+      ))
+      rowsAre([{ id: 1n }, { id: 2n }])
+      const result = await loadIcebergRows(URL, { offset: 1000 })
+
+      expect(result.totalRows).toBe(1002)
+    })
+
+    it('returns an empty page past the end of the table', async () => {
+      rowsAre([])
+      const result = await loadIcebergRows(URL, { offset: 999999 })
+
+      expect(result.rows).toEqual([])
+      expect(result.loadedRows).toBe(0)
+      expect(result.bboxes).toEqual([])
+    })
   })
 
   it('previews a table that has no geometry column', async () => {
@@ -426,5 +555,310 @@ describe('loadIcebergSnapshots', () => {
 
   it('rejects a metadata URL outside a metadata folder', async () => {
     await expect(loadIcebergSnapshots('https://example.com/tbl/v1.metadata.json')).rejects.toThrow(/\/metadata\//)
+  })
+})
+
+describe('filtering with a SQL condition', () => {
+  it('adds the condition to the table query, in parentheses', async () => {
+    rowsAre([])
+    await loadIcebergRows(URL, { where: "name = 'a' OR id > 5" })
+
+    expect(icebird.icebergQuery.mock.calls[0][0].query)
+      .toBe('SELECT "id", "name", "object_geometry" FROM t WHERE (name = \'a\' OR id > 5) LIMIT 1000 OFFSET 0')
+  })
+
+  it('adds the same condition to the map query, so both views hold the same rows', async () => {
+    rowsAre([])
+    await loadGeoJsonFromIceberg(URL, { where: "name = 'a'", offset: 1000 })
+
+    expect(icebird.icebergQuery.mock.calls[0][0].query)
+      .toBe('SELECT "object_geometry" FROM t WHERE (name = \'a\') LIMIT 1000 OFFSET 1000')
+  })
+
+  it('trims the condition and adds nothing for an empty one', async () => {
+    rowsAre([])
+    await loadIcebergRows(URL, { where: '   ' })
+    await loadIcebergRows(URL, { where: '  id > 1  ' })
+
+    expect(icebird.icebergQuery.mock.calls[0][0].query).not.toMatch(/WHERE/)
+    expect(icebird.icebergQuery.mock.calls[1][0].query).toContain('WHERE (id > 1) LIMIT')
+  })
+
+  it('does not report the whole table size for a filtered read', async () => {
+    rowsAre([{ id: 1n, name: 'a', object_geometry: null }])
+    const filtered = await loadIcebergRows(URL, { where: "name = 'a'" })
+    const whole = await loadIcebergRows(URL)
+
+    expect(filtered.totalKnown).toBe(false)
+    expect(filtered.totalRows).toBe(1)
+    expect(whole.totalKnown).toBe(true)
+    expect(whole.totalRows).toBe(250)
+  })
+
+  it('passes a syntax error from the query engine up to the caller', async () => {
+    icebird.icebergQuery.mockRejectedValue(new SyntaxError('Expected expression after "WHERE" but found "="'))
+
+    await expect(loadIcebergRows(URL, { where: '= =' })).rejects.toThrow(/Expected expression/)
+    await expect(loadGeoJsonFromIceberg(URL, { where: '= =' })).rejects.toThrow(/Expected expression/)
+  })
+})
+
+describe('reading a table at a snapshot', () => {
+  const twoSnapshots = () => metadata([
+    { id: 1, name: 'id', type: 'long' },
+    { id: 2, name: 'object_geometry', type: 'geometry' },
+  ], {
+    'current-snapshot-id': 7n,
+    snapshots: [
+      { 'snapshot-id': 5n, summary: { 'total-records': '100' } },
+      { 'snapshot-id': 7n, summary: { 'total-records': '250' } },
+    ],
+  })
+
+  it('reads the snapshot the caller names', async () => {
+    icebird.icebergMetadata.mockResolvedValue(twoSnapshots())
+    rowsAre([])
+    await loadIcebergRows(URL, { snapshotId: '5' })
+    await loadGeoJsonFromIceberg(URL, { snapshotId: '5' })
+
+    expect(icebird.icebergDataSource.mock.calls.map(c => c[0].snapshotId)).toEqual([5n, 5n])
+  })
+
+  it('takes the table size from that snapshot, not the current one', async () => {
+    icebird.icebergMetadata.mockResolvedValue(twoSnapshots())
+    rowsAre([{ id: 1n }])
+
+    expect((await loadIcebergRows(URL, { snapshotId: '5' })).totalRows).toBe(100)
+    expect((await loadIcebergRows(URL, { snapshotId: '7' })).totalRows).toBe(250)
+    expect((await loadIcebergRows(URL)).totalRows).toBe(250)
+    expect((await loadGeoJsonFromIceberg(URL, { snapshotId: '5' })).totalRows).toBe(100)
+  })
+
+  it('finds a snapshot whose id icebird parsed as a number, not a BigInt', async () => {
+    // A snapshot id under 2^53 arrives as a number. One over it arrives as a BigInt.
+    icebird.icebergMetadata.mockResolvedValue(metadata([
+      { id: 1, name: 'id', type: 'long' },
+      { id: 2, name: 'object_geometry', type: 'geometry' },
+    ], {
+      'current-snapshot-id': 1367746163159851,
+      snapshots: [
+        { 'snapshot-id': 8499625711907274, summary: { 'total-records': '2' } },
+        { 'snapshot-id': 1367746163159851, summary: { 'total-records': '6' } },
+      ],
+    }))
+    rowsAre([{ id: 1n }])
+
+    const old = await loadIcebergRows(URL, { snapshotId: '8499625711907274' })
+    const current = await loadIcebergRows(URL)
+
+    expect(old.totalRows).toBe(2)
+    expect(old.totalKnown).toBe(true)
+    expect(current.totalRows).toBe(6)
+    expect(current.totalKnown).toBe(true)
+    // icebird is handed the id as a BigInt, as before.
+    expect(icebird.icebergDataSource.mock.calls[0][0].snapshotId).toBe(8499625711907274n)
+  })
+
+  it('reads the current snapshot when the table does not have the one named', async () => {
+    icebird.icebergMetadata.mockResolvedValue(twoSnapshots())
+    rowsAre([{ id: 1n }])
+    const result = await loadIcebergRows(URL, { snapshotId: '999' })
+
+    expect(icebird.icebergDataSource.mock.calls[0][0].snapshotId).toBeUndefined()
+    expect(result.totalRows).toBe(250)
+  })
+
+  it('keeps a filter and a page together with the snapshot', async () => {
+    icebird.icebergMetadata.mockResolvedValue(twoSnapshots())
+    rowsAre([])
+    await loadIcebergRows(URL, { snapshotId: '5', where: 'id > 1', offset: 1000 })
+
+    expect(icebird.icebergQuery.mock.calls[0][0].query).toContain('FROM t WHERE (id > 1) LIMIT 1000 OFFSET 1000')
+    expect(icebird.icebergDataSource.mock.calls[0][0].snapshotId).toBe(5n)
+  })
+})
+
+describe('verifiedResolver', () => {
+  // A source that answers each slice call from a list of byte lengths.
+  const sourceOf = (byteLength, lengths) => {
+    // Like a server, it holds only the bytes that exist, so a range past the end is cut short.
+    const slice = vi.fn(async (start, end) => new ArrayBuffer(lengths.shift() ?? (Math.min(end ?? byteLength, byteLength) - start)))
+    return { byteLength, slice, extra: 'kept' }
+  }
+  const resolverOf = source => verifiedResolver({ reader: vi.fn(async () => source) })
+
+  it('returns a read that has every byte, with one request', async () => {
+    const source = sourceOf(1000, [])
+    const file = await resolverOf(source).reader('https://x/a.parquet', 1000)
+
+    expect((await file.slice(100, 400)).byteLength).toBe(300)
+    expect(source.slice).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes the path and the length hint to the resolver it wraps', async () => {
+    const reader = vi.fn(async () => sourceOf(10, []))
+    await verifiedResolver({ reader }).reader('https://x/a.parquet', 10)
+
+    expect(reader).toHaveBeenCalledWith('https://x/a.parquet', 10)
+  })
+
+  it('keeps the other properties of the file it wraps', async () => {
+    const file = await resolverOf(sourceOf(10, [])).reader('https://x/a.parquet')
+
+    expect(file.byteLength).toBe(10)
+    expect(file.extra).toBe('kept')
+  })
+
+  it('reads a range again when the body comes back short', async () => {
+    const source = sourceOf(10000, [2880])
+    const file = await resolverOf(source).reader('https://x/a.parquet')
+
+    expect((await file.slice(100, 4100)).byteLength).toBe(4000)
+    expect(source.slice).toHaveBeenCalledTimes(2)
+  })
+
+  it('fails with the file and the range after the retries are used up', async () => {
+    const source = sourceOf(10000, [10, 20, 30])
+    const file = await resolverOf(source).reader('https://x/a.parquet')
+
+    await expect(file.slice(100, 4100)).rejects.toThrow(
+      'Short read from https://x/a.parquet: asked for 4000 bytes at 100 and got 30'
+    )
+    // The first try and two retries.
+    expect(source.slice).toHaveBeenCalledTimes(3)
+  })
+
+  it('counts a read to the end of the file, and one that runs past it, by the bytes that exist', async () => {
+    const source = sourceOf(1000, [])
+    const file = await resolverOf(source).reader('https://x/a.parquet')
+
+    expect((await file.slice(900)).byteLength).toBe(100)
+    expect((await file.slice(900, 5000)).byteLength).toBe(100)
+    expect(source.slice).toHaveBeenCalledTimes(2)
+  })
+
+  it('is used for every file the loaders read', async () => {
+    rowsAre([])
+    await loadIcebergRows(URL)
+
+    // icebird got a resolver whose reader is the verified one.
+    const { resolver } = icebird.icebergDataSource.mock.calls[0][0]
+    const file = await (async () => {
+      icebird.urlResolver.mock.results[0].value.reader.mockResolvedValue(sourceOf(10, [3, 4, 10]))
+      return resolver.reader('https://x/data.parquet')
+    })()
+    expect((await file.slice(0, 10)).byteLength).toBe(10)
+  })
+})
+
+describe('rebasedResolver', () => {
+  const resolver = (target, reader = vi.fn(async path => ({ path }))) => ({
+    reader, wrapped: rebasedResolver({ reader }, target),
+  })
+
+  it('reads a path under the table location from the URL the table was loaded from', async () => {
+    const { reader, wrapped } = resolver({ from: 's3://bucket/ns/tbl', to: 'https://host.example/bucket/ns/tbl' })
+    await wrapped.reader('s3://bucket/ns/tbl/data/part-0.parquet', 123)
+
+    expect(reader).toHaveBeenCalledWith('https://host.example/bucket/ns/tbl/data/part-0.parquet', 123)
+  })
+
+  it('leaves a path outside the location alone', async () => {
+    const { reader, wrapped } = resolver({ from: 's3://bucket/ns/tbl', to: 'https://host.example/bucket/ns/tbl' })
+    await wrapped.reader('https://elsewhere.example/other.parquet')
+    await wrapped.reader('s3://bucket/ns/other/data.parquet')
+
+    expect(reader.mock.calls.map(c => c[0])).toEqual([
+      'https://elsewhere.example/other.parquet',
+      's3://bucket/ns/other/data.parquet',
+    ])
+  })
+
+  it('leaves every path alone while the location is unknown', async () => {
+    const { reader, wrapped } = resolver({ from: null, to: 'https://host.example/tbl' })
+    await wrapped.reader('s3://bucket/ns/tbl/metadata/v1.metadata.json')
+
+    expect(reader).toHaveBeenCalledWith('s3://bucket/ns/tbl/metadata/v1.metadata.json', undefined)
+  })
+
+  it('maps once the location is filled in, by the same wrapper', async () => {
+    const target = { from: null, to: 'https://host.example/tbl' }
+    const { reader, wrapped } = resolver(target)
+    await wrapped.reader('s3://b/tbl/a.avro')
+    target.from = 's3://b/tbl'
+    await wrapped.reader('s3://b/tbl/a.avro')
+
+    expect(reader.mock.calls.map(c => c[0])).toEqual(['s3://b/tbl/a.avro', 'https://host.example/tbl/a.avro'])
+  })
+
+  it('does not match a sibling folder that only starts with the same letters', async () => {
+    // Known limit: the match is on the prefix text, as the location is a folder.
+    const { reader, wrapped } = resolver({ from: 's3://b/tbl', to: 'https://host.example/tbl' })
+    await wrapped.reader('s3://b/tbl/data.parquet')
+
+    expect(reader.mock.calls[0][0]).toBe('https://host.example/tbl/data.parquet')
+  })
+})
+
+describe('a table whose files are named with s3:// paths', () => {
+  const s3Table = location => metadata([
+    { id: 1, name: 'id', type: 'long' },
+    { id: 2, name: 'object_geometry', type: 'geometry' },
+  ], { location })
+
+  // The resolver icebird is handed, and the reader underneath it.
+  const resolverAndReader = async () => {
+    const { resolver } = icebird.icebergDataSource.mock.calls[0][0]
+    const reader = icebird.urlResolver.mock.results.at(-1).value.reader
+    reader.mockResolvedValue({ byteLength: 10, slice: async () => new ArrayBuffer(10) })
+    return { resolver, reader }
+  }
+
+  it('reads them from the URL the metadata was loaded from', async () => {
+    icebird.icebergMetadata.mockResolvedValue(s3Table('s3://bucket/wh/tbl'))
+    rowsAre([])
+    await loadIcebergRows('https://host.example/bucket/wh/tbl/metadata/v1.metadata.json')
+    const { resolver, reader } = await resolverAndReader()
+
+    await resolver.reader('s3://bucket/wh/tbl/metadata/snap-1.avro')
+    await resolver.reader('s3://bucket/wh/tbl/data/part-0.parquet')
+
+    expect(reader.mock.calls.map(c => c[0])).toEqual([
+      'https://host.example/bucket/wh/tbl/metadata/snap-1.avro',
+      'https://host.example/bucket/wh/tbl/data/part-0.parquet',
+    ])
+  })
+
+  it('does the same for the map loader', async () => {
+    icebird.icebergMetadata.mockResolvedValue(s3Table('s3a://bucket/wh/tbl/'))
+    rowsAre([])
+    await loadGeoJsonFromIceberg('https://host.example/bucket/wh/tbl/metadata/v1.metadata.json')
+    const { resolver, reader } = await resolverAndReader()
+
+    await resolver.reader('s3a://bucket/wh/tbl/data/part-0.parquet')
+
+    expect(reader.mock.calls[0][0]).toBe('https://host.example/bucket/wh/tbl/data/part-0.parquet')
+  })
+
+  it('maps nothing when the location is already an http URL', async () => {
+    icebird.icebergMetadata.mockResolvedValue(s3Table('https://host.example/bucket/wh/tbl'))
+    rowsAre([])
+    await loadIcebergRows('https://host.example/bucket/wh/tbl/metadata/v1.metadata.json')
+    const { resolver, reader } = await resolverAndReader()
+
+    await resolver.reader('https://host.example/bucket/wh/tbl/data/part-0.parquet')
+
+    expect(reader.mock.calls[0][0]).toBe('https://host.example/bucket/wh/tbl/data/part-0.parquet')
+  })
+
+  it('reads the metadata file itself before the location is known', async () => {
+    icebird.icebergMetadata.mockResolvedValue(s3Table('s3://bucket/wh/tbl'))
+    rowsAre([])
+    await loadIcebergSnapshots('https://host.example/bucket/wh/tbl/metadata/v1.metadata.json')
+
+    expect(icebird.icebergMetadata).toHaveBeenCalledWith(expect.objectContaining({
+      tableUrl: 'https://host.example/bucket/wh/tbl',
+      metadataFileName: 'v1.metadata.json',
+    }))
   })
 })

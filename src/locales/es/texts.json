@@ -175,6 +175,24 @@
   },
   "iceberg": {
     "loadFailed": "No se pudieron cargar los datos Iceberg: {message}",
+    "pager": {
+      "next": "Siguientes {count} filas",
+      "previous": "Anteriores {count} filas"
+    },
+    "query": {
+      "clear": "Borrar",
+      "columnName": "Nombre",
+      "columnType": "Tipo",
+      "columns": "Columnas",
+      "filteredBy": "Filtrado por",
+      "help": "Escribe la condición que sigue a WHERE y la tabla y el mapa mostrarán las filas que coincidan.",
+      "label": "Filtrar filas con SQL",
+      "limit": "La consulta añade LIMIT {limit}; usa los botones de página bajo la tabla para ver más filas.",
+      "placeholder": "columna = 'valor' AND otra_columna > 10",
+      "run": "Ejecutar consulta",
+      "snapshot": "Instantánea"
+    },
+    "rowRange": "Filas {from}–{to}",
     "snapshots": {
       "collection": "colección",
       "committed": "Registrada",
@@ -182,13 +200,15 @@
       "none": "Esta tabla no tiene instantáneas.",
       "operation": "Operación",
       "pinnedMismatch": "La colección indica la instantánea {id}, que no es la instantánea actual de la tabla.",
+      "query": "Consultar",
       "rows": "Filas",
       "snapshot": "Instantánea",
       "tableCurrent": "actual de la tabla"
     },
     "tabs": {
       "data": "Datos",
-      "snapshots": "Instantáneas"
+      "snapshots": "Instantáneas",
+      "query": "Consulta"
     }
   },
   "in": "en {catalog}",
@@ -277,7 +297,7 @@
     "iceberg": {
       "loadError": "No se pudo cargar la tabla Iceberg para mostrarla.",
       "noGeometry": "La tabla Iceberg no tiene ninguna columna de geometría ni de geografía, por lo que el navegador no puede colocarla en el mapa.",
-      "truncated": "El mapa muestra las primeras {max} geometrías de esta tabla Iceberg. La tabla contiene más."
+      "noGeometryInRows": "Ninguna de estas filas tiene geometría, por lo que el mapa no tiene nada que dibujar."
     },
     "location": {
       "description": "Ve a tu ubicación"

@@ -18,7 +18,7 @@
         <WidgetHook id="view-item-primary-start" />
         <Assets v-if="hasAssets" :assets="assets" :shown="selectedReferences" @show-asset="showAsset" autoExpand />
         <ParquetViewer v-if="hasAssets" :assets="assets" @zoom-to-bbox="zoomToBbox" @highlight-bbox="highlightBbox" />
-        <IcebergViewer v-if="hasAssets" :assets="assets" @zoom-to-bbox="zoomToBbox" @highlight-bbox="highlightBbox" />
+        <IcebergViewer v-if="hasAssets" :assets="assets" @zoom-to-bbox="zoomToBbox" @highlight-bbox="highlightBbox" @page-change="setIcebergView" />
         <LinkList v-if="additionalLinks.length > 0" :title="$t('additionalResources')" :links="additionalLinks" />
         <WidgetHook id="view-item-primary-end" />
       </b-col>
@@ -102,6 +102,11 @@ export default defineComponent({
     zoomToBbox({ bbox, crs, crsDefinition }) {
       if (this.$refs.mapView?.zoomToBbox) {
         this.$refs.mapView.zoomToBbox(bbox, crs, crsDefinition);
+      }
+    },
+    setIcebergView(view) {
+      if (this.$refs.mapView?.setIcebergView) {
+        this.$refs.mapView.setIcebergView(view);
       }
     },
     highlightBbox({ bbox, crs, crsDefinition }) {

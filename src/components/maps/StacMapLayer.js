@@ -31,8 +31,8 @@ import {
   VECTOR_NOTICE_ERROR,
   VECTOR_NOTICE_REPROJECTION,
   VECTOR_NOTICE_TOO_BIG,
+  VECTOR_NOTICE_NO_GEOMETRY_IN_ROWS,
   VECTOR_NOTICE_TOO_LARGE,
-  VECTOR_NOTICE_TRUNCATED,
 } from '../../utils/parquetShared.js';
 // icebergShared is icebird-free for the same reason: icebird stays behind the
 // lazy _loadIcebergDeps chunk.
@@ -330,6 +330,19 @@ export default class StacMapLayer {
     // complete multi-MB fetch and restart it from byte zero. Entries are
     // aborted only when nothing wants them any more (_abortInflightParquet).
     this._parquetInflight = new Map();
+    // The rows of an Iceberg table the map draws: a page, as the rows to skip,
+    // of the rows that match a SQL condition, as the table stood at a snapshot.
+    // An empty snapshot id means the default one, which the loader works out from
+    // the asset. The data preview pages, filters and time travels the table and
+    // tells the layer (setIcebergView). `_icebergDrawnView` is the
+    // view the source holds now, so a change that arrives during the first draw
+    // is not lost. `_icebergPageSeq` marks the newest request, and an older one
+    // that finishes late is dropped.
+    this._icebergOffset = 0;
+    this._icebergWhere = '';
+    this._icebergSnapshotId = '';
+    this._icebergDrawnView = this._icebergViewKey();
+    this._icebergPageSeq = 0;
     this._overlayEpoch = 0;
     this._glStyleLayerIds = [];
     this._glStyleSourceIds = [];
@@ -594,8 +607,10 @@ export default class StacMapLayer {
 
   // A decoded result is only reusable by a run that asked for the same columns,
   // so the requested fields are part of the identity of the read.
-  _parquetCacheKey(url) {
-    return `${url}\n${this._styleFields.join(',')}`;
+  _parquetCacheKey(url, kind = 'parquet') {
+    const key = `${url}\n${this._styleFields.join(',')}`;
+    // A page of an Iceberg table, under one filter, is its own result.
+    return kind === 'iceberg' ? `${key}\n@${this._icebergViewKey()}` : key;
   }
 
   // Cache read that also refreshes recency, so PARQUET_CACHE_MAX evicts the
@@ -635,6 +650,9 @@ export default class StacMapLayer {
     // Read the fields now: they are part of `key`, and a later run may replace
     // them before the chunk resolves.
     const fields = this._styleFields;
+    const offset = this._icebergOffset;
+    const where = this._icebergWhere;
+    const snapshotOverride = this._icebergSnapshotId;
     // `kind` picks the loader. Both resolve to the same result shape, so the
     // cache, the in-flight map and the abort handling serve either one.
     const promise = kind === 'iceberg'
@@ -642,7 +660,10 @@ export default class StacMapLayer {
         signal: controller.signal,
         fields,
         geometryColumn: icebergField(asset, 'table:primary_geometry'),
-        snapshotId: icebergField(asset, 'iceberg:current_snapshot_id'),
+        // The snapshot the reader chose, else the one the collection names.
+        snapshotId: snapshotOverride || icebergField(asset, 'iceberg:current_snapshot_id'),
+        offset,
+        where,
       }))
       : this._loadParquetDeps().then(deps => deps.loadGeoJsonFromParquet(url, {
         signal: controller.signal,
@@ -699,10 +720,11 @@ export default class StacMapLayer {
   //
   // `kind` is 'parquet' (the default) or 'iceberg'. An Iceberg table goes
   // through the same cache, in-flight, epoch and notice machinery. It differs
-  // in four ways: the URL comes from icebergMetadataUrl, the STAC-declared
-  // size gates do not apply (the loader truncates at its own geometry cap
-  // instead of refusing the table), a truncated result posts a notice, and the
-  // notice names its format so MapView picks Iceberg wording.
+  // in three ways: the URL comes from icebergMetadataUrl, the STAC-declared
+  // size gates do not apply (the loader reads its own row cap instead of
+  // refusing the table), and a notice names its format so MapView picks
+  // Iceberg wording. A table cut at the row cap draws without a map notice.
+  // The data preview says that the table holds more rows.
   async _addParquetAssets(parquetAssets, epoch, kind = 'parquet') {
     const iceberg = kind === 'iceberg';
     const urlOf = iceberg ? icebergMetadataUrl : fetchableAssetHref;
@@ -734,12 +756,12 @@ export default class StacMapLayer {
     const wanted = new Set(sorted
       .map(a => urlOf(a))
       .filter(url => url !== null)
-      .map(url => this._parquetCacheKey(url)));
+      .map(url => this._parquetCacheKey(url, kind)));
     this._abortInflightParquet(wanted);
 
     let rendered = 0;
     let firstNotice = null;
-    let truncatedNotice = null;
+    let noGeometryNotice = null;
     const notice = (n) => { if (!firstNotice) {firstNotice = { format: iceberg ? 'iceberg' : 'geoparquet', ...n };} };
 
     for (let i = 0; i < sorted.length && rendered === 0; i++) {
@@ -778,7 +800,9 @@ export default class StacMapLayer {
         // with the same URLs and must not re-fetch the file. The requested
         // columns are part of the key — a result decoded without a style's
         // attributes can't satisfy a later run that needs them.
-        const cacheKey = this._parquetCacheKey(url);
+        const cacheKey = this._parquetCacheKey(url, kind);
+        // The view this read is for, kept to compare with the view wanted when it ends.
+        const readView = this._icebergViewKey();
         let result = this._readCachedParquet(cacheKey);
         // Only a fresh load should report dropped features: a basemap switch
         // re-runs setAssets against the cache, and re-warning there would
@@ -840,12 +864,15 @@ export default class StacMapLayer {
         });
         this._addOverlaySource(sourceId, { type: 'geojson', data: result.featureCollection });
         this._addDefaultVectorLayers(sourceId, [], { useSourceLayer: false });
-        rendered++;
-        // The map shows part of the table. Say so, on every run: a basemap
-        // switch clears the notice and re-renders from the cache.
-        if (result.truncated) {
-          truncatedNotice = { format: 'iceberg', reason: VECTOR_NOTICE_TRUNCATED, max: result.max, totalRows: result.totalRows };
+        if (iceberg) {
+          this._icebergDrawnView = readView;
+          // Rows came back and none has a geometry. Draw the empty source, which
+          // clears the old rows, and say why the map is empty.
+          if (result.featureCollection.features.length === 0) {
+            noGeometryNotice = { format: 'iceberg', reason: VECTOR_NOTICE_NO_GEOMETRY_IN_ROWS };
+          }
         }
+        rendered++;
       } catch (err) {
         if (err?.name === 'AbortError') {
           // A newer setAssets (or teardown) aborted this run's download —
@@ -860,10 +887,83 @@ export default class StacMapLayer {
 
     if (rendered === 0 && firstNotice && epoch === this._overlayEpoch) {
       this._postNotice(firstNotice);
-    } else if (rendered > 0 && truncatedNotice && epoch === this._overlayEpoch) {
-      this._postNotice(truncatedNotice);
+    } else if (rendered > 0 && noGeometryNotice && epoch === this._overlayEpoch) {
+      this._postNotice(noGeometryNotice);
+    }
+    // The reader paged or filtered the table while this draw was reading. The
+    // source holds the old rows now, so bring it to the view that is wanted.
+    if (iceberg && rendered > 0 && epoch === this._overlayEpoch && this._icebergDrawnView !== this._icebergViewKey()) {
+      this._refreshIcebergPage();
     }
     return rendered > 0;
+  }
+
+  // The one string that names a view: a page, of a snapshot, under a filter.
+  // The page is a number, the snapshot id holds digits, and the filter is text
+  // that may hold anything. It comes last, and the separators come before it,
+  // so two views cannot share a key.
+  _icebergViewKey() {
+    return `${this._icebergOffset}|${this._icebergSnapshotId}|${this._icebergWhere}`;
+  }
+
+  // Draw other rows of the Iceberg table: another page, the rows that match
+  // another SQL condition, or the table at another snapshot. The data preview
+  // calls this when the reader pages, filters or picks a snapshot. Only the source data changes. The layers, the style and the map
+  // position stay, so the rows swap without a teardown. When the map draws no
+  // Iceberg table now (tiles take its place, or the first draw is still
+  // running), the view is kept for the draw that follows.
+  setIcebergView({ offset = 0, where = '', snapshotId = '' } = {}) {
+    const nextOffset = Math.max(0, Number(offset) || 0);
+    const nextWhere = typeof where === 'string' ? where.trim() : '';
+    const nextSnapshot = snapshotId ? String(snapshotId) : '';
+    if (nextOffset === this._icebergOffset && nextWhere === this._icebergWhere
+      && nextSnapshot === this._icebergSnapshotId) {
+      return Promise.resolve();
+    }
+    this._icebergOffset = nextOffset;
+    this._icebergWhere = nextWhere;
+    this._icebergSnapshotId = nextSnapshot;
+    return this._refreshIcebergPage();
+  }
+
+  async _refreshIcebergPage() {
+    const targets = this._overlayAssetMeta.filter(meta => meta.sourceId.startsWith('stac-iceberg-'));
+    if (targets.length === 0) {return;}
+    const epoch = this._overlayEpoch;
+    const seq = ++this._icebergPageSeq;
+    const view = this._icebergViewKey();
+    // True while no newer page request and no teardown has replaced this one.
+    const current = () => epoch === this._overlayEpoch && seq === this._icebergPageSeq;
+
+    for (const meta of targets) {
+      const asset = (this.assets || []).find(a => icebergMetadataUrl(a) === meta.key);
+      if (!asset) {continue;}
+      const key = this._parquetCacheKey(meta.key, 'iceberg');
+      // A page the reader has already left is bytes nobody will read.
+      this._abortInflightParquet(new Set([key]));
+      try {
+        let result = this._readCachedParquet(key);
+        if (!result) {
+          const pending = this._parquetInflight.get(key) ?? this._startParquetRead(key, meta.key, asset, 'iceberg');
+          // eslint-disable-next-line no-await-in-loop -- one table at a time, and each page is the unit of work
+          result = await pending.promise;
+        }
+        if (!current()) {return;}
+        this.map.getSource(meta.sourceId)?.setData(result.featureCollection);
+        this._icebergDrawnView = view;
+        // The notice of the rows before these is out of date. Say again, below,
+        // if these rows hold no geometry either.
+        if (this._activeNotice?.format === 'iceberg') {this._postNotice(null);}
+        if (result.featureCollection.features.length === 0) {
+          this._postNotice({ format: 'iceberg', reason: VECTOR_NOTICE_NO_GEOMETRY_IN_ROWS });
+        }
+      } catch (err) {
+        if (err?.name === 'AbortError' || !current()) {return;}
+        console.warn('Failed to load the next rows of the Iceberg table', meta.key, err);
+        // The map keeps the rows it has. The notice says the new rows failed.
+        this._postNotice({ format: 'iceberg', reason: err?.noticeReason ?? VECTOR_NOTICE_ERROR });
+      }
+    }
   }
 
   // Concurrent setAssets calls can interleave across the awaits below (the
