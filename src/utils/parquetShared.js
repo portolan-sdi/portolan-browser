@@ -9,14 +9,15 @@ export const PARQUET_MEDIA_TYPES = [
   'application/x-parquet',
 ];
 
-// Row cap for the table preview in ParquetViewer.
-export const MAX_ROWS = 10000;
+// Row cap for the table preview in ParquetViewer: ten pages of the table.
+// The table reads every column, so on a wide file each row costs far more
+// than on the map, which reads only the geometry and the styled fields.
+export const MAX_ROWS = 1000;
 
 // Feature-count cap for rendering a GeoParquet directly on the map. Beyond
 // this the whole-file download and main-thread decode get expensive; MapLibre
-// handles the rendering itself fine (geojson-vt tiles client-side). Defined
-// as MAX_ROWS so the table preview and map share one limit.
-export const MAX_MAP_FEATURES = MAX_ROWS;
+// handles the rendering itself fine (geojson-vt tiles client-side).
+export const MAX_MAP_FEATURES = 10000;
 
 // Byte cap for rendering GeoParquet directly: files this large are too
 // expensive to download and decode on the main thread even if their row
