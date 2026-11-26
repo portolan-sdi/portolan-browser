@@ -82,6 +82,7 @@ describe('isZarrAsset', () => {
   it('accepts Icechunk, which reads as Zarr once open', () => {
     expect(isZarrAsset({ type: 'application/x-icechunk' })).toBe(true)
     expect(isIcechunkAsset({ type: 'application/x-icechunk' })).toBe(true)
+    expect(isIcechunkAsset({ type: 'application/vnd.zarr+icechunk' })).toBe(true)
     expect(isIcechunkAsset({ type: 'application/vnd.zarr; version=3' })).toBe(false)
   })
 
