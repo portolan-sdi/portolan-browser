@@ -43,7 +43,10 @@
         </section>
         <Assets v-if="hasAssets" :assets="assets" :shown="selectedReferences" @show-asset="showAsset" />
         <Assets v-if="hasItemAssets && !hasItems" :assets="itemAssets" :definition="true" />
-        <ParquetViewer v-if="hasAssets" :assets="assets" @zoom-to-bbox="zoomToBbox" @highlight-bbox="highlightBbox" />
+        <div class="data-previews">
+          <ParquetViewer v-if="hasAssets" :assets="assets" @zoom-to-bbox="zoomToBbox" @highlight-bbox="highlightBbox" />
+          <IcebergViewer v-if="hasAssets" :assets="assets" @zoom-to-bbox="zoomToBbox" @highlight-bbox="highlightBbox" @page-change="setIcebergView" />
+        </div>
         <Providers v-if="providers" :providers="providers" />
         <MetadataGroups class="mb-4" :type="data.type" :data="data" :ignoreFields="ignoredMetadataFields" />
         <LinkList v-if="linkPosition === 'right'" :title="$t('additionalResources')" :links="additionalLinks" />
@@ -117,6 +120,7 @@ export default defineComponent({
     Providers: defineAsyncComponent(() => import('../components/Providers.vue')),
     ReadMore,
     Thumbnails: defineAsyncComponent(() => import('../components/Thumbnails.vue')),
+    IcebergViewer: defineAsyncComponent(() => import('../components/IcebergViewer.vue')),
     ParquetViewer: defineAsyncComponent(() => import('../components/ParquetViewer.vue'))
   },
   mixins: [
@@ -350,6 +354,11 @@ export default defineComponent({
         this.$refs.mapView.zoomToBbox(bbox, crs, crsDefinition);
       }
     },
+    setIcebergView(view) {
+      if (this.$refs.mapView?.setIcebergView) {
+        this.$refs.mapView.setIcebergView(view);
+      }
+    },
     highlightBbox({ bbox, crs, crsDefinition }) {
       if (this.$refs.mapView?.highlightBbox) {
         this.$refs.mapView.highlightBbox(bbox, crs, crsDefinition);
@@ -414,6 +423,31 @@ export default defineComponent({
 
       > section {
         break-inside: avoid;
+      }
+
+      // A data preview stays in the second column. Multi-column layout balances
+      // its columns by height, so expanding an asset used to push the preview
+      // from under the assets into the other column. A grid pins it. Only a
+      // collection with a preview takes this layout. The others keep the two
+      // balanced columns, because a grid would leave their second column empty.
+      &:has(> .data-previews > section) {
+        column-count: auto;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        column-gap: 1rem;
+        row-gap: 0;
+        align-items: start;
+
+        > * {
+          grid-column: 1;
+        }
+
+        // Spans more rows than the column holds, so the preview sits beside
+        // all of them. Empty rows are zero tall, and row-gap is 0 to keep them so.
+        > .data-previews {
+          grid-column: 2;
+          grid-row: 1 / span 20;
+        }
       }
     }
   }

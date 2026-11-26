@@ -173,6 +173,45 @@
     "descriptionWithTitle": "@:goToParent.description: {title}",
     "label": "Arriba"
   },
+  "iceberg": {
+    "dataPreview": "Vista previa de datos Iceberg",
+    "loadFailed": "No se pudieron cargar los datos Iceberg: {message}",
+    "pager": {
+      "next": "Siguientes {count} filas",
+      "previous": "Anteriores {count} filas"
+    },
+    "query": {
+      "clear": "Borrar",
+      "columnName": "Nombre",
+      "columnType": "Tipo",
+      "columns": "Columnas",
+      "filteredBy": "Filtrado por",
+      "help": "Escribe la condición que sigue a WHERE y la tabla y el mapa mostrarán las filas que coincidan.",
+      "label": "Filtrar filas con SQL",
+      "limit": "La consulta añade LIMIT {limit}; usa los botones de página bajo la tabla para ver más filas.",
+      "placeholder": "columna = 'valor' AND otra_columna > 10",
+      "run": "Ejecutar consulta",
+      "snapshot": "Instantánea"
+    },
+    "rowRange": "Filas {from}–{to}",
+    "snapshots": {
+      "collection": "colección",
+      "committed": "Registrada",
+      "files": "Archivos",
+      "none": "Esta tabla no tiene instantáneas.",
+      "operation": "Operación",
+      "pinnedMismatch": "La colección indica la instantánea {id}, que no es la instantánea actual de la tabla.",
+      "query": "Consultar",
+      "rows": "Filas",
+      "snapshot": "Instantánea",
+      "tableCurrent": "actual de la tabla"
+    },
+    "tabs": {
+      "data": "Datos",
+      "snapshots": "Instantáneas",
+      "query": "Consulta"
+    }
+  },
   "in": "en {catalog}",
   "index": {
     "portolanRegistry": "Registro de Portolan",
@@ -256,6 +295,11 @@
       "title": "Capas",
       "unnamed": "Sin nombre #{id}"
     },
+    "iceberg": {
+      "loadError": "No se pudo cargar la tabla Iceberg para mostrarla.",
+      "noGeometry": "La tabla Iceberg no tiene ninguna columna de geometría ni de geografía, por lo que el navegador no puede colocarla en el mapa.",
+      "noGeometryInRows": "Ninguna de estas filas tiene geometría, por lo que el mapa no tiene nada que dibujar."
+    },
     "location": {
       "description": "Ve a tu ubicación"
     },
@@ -326,6 +370,7 @@
     "loadingRows": "Cargando fila ({count})... | Cargando filas ({count})...",
     "networkError": "No se puede mostrar la vista previa: el acceso entre orígenes no está permitido o hay un error de red.",
     "pageRows": "Fila {from}–{to} de {total} | Filas {from}–{to} de {total}",
+    "parquetDataPreview": "Vista previa de datos Parquet",
     "partitionedData": "Datos particionados | Datos particionados ({count} archivo) | Datos particionados ({count} archivos)",
     "partitionPreview": "Vista previa de la única partición: {name}. | Vista previa de la primera de {count} particiones: {name}.",
     "partitionLoadedRowCount": "{loaded} de {total} fila en esta partición | {loaded} de {total} filas en esta partición",

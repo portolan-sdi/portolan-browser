@@ -2145,6 +2145,523 @@ describe('StacMapLayer', () => {
     })
   })
 
+  // Exercises the Iceberg path, which runs through _addParquetAssets with
+  // kind 'iceberg', by injecting a loader test double via the
+  // `_loadIcebergDeps` seam. No network and no icebird involvement.
+  describe('Iceberg table', () => {
+    const METADATA_URL = 'https://example.com/wh/tbl/metadata/v1.metadata.json'
+    const FEATURE_COLLECTION = {
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [1, 2] }, properties: {} }],
+    }
+    const icebergAsset = (extra = {}) => ({
+      href: METADATA_URL,
+      type: 'application/vnd.apache.iceberg+json',
+      roles: ['data', 'metadata'],
+      title: 'Test table',
+      ...extra,
+    })
+    const parquetAsset = () => ({
+      href: 'https://example.com/data.parquet',
+      type: 'application/vnd.apache.parquet',
+      roles: ['data'],
+    })
+
+    function injectIcebergDeps(l, impl) {
+      const calls = []
+      const opts = []
+      const depsLoads = { count: 0 }
+      l._loadIcebergDeps = async () => {
+        depsLoads.count++
+        return {
+          loadGeoJsonFromIceberg: async (url, options = {}) => {
+            calls.push(url)
+            opts.push(options)
+            return impl(url, options)
+          },
+        }
+      }
+      calls.opts = opts
+      calls.depsLoads = depsLoads
+      return calls
+    }
+    function injectParquetDeps(l) {
+      const calls = []
+      l._loadParquetDeps = async () => ({
+        loadGeoJsonFromParquet: async (url) => {
+          calls.push(url)
+          return { exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1 }
+        },
+      })
+      return calls
+    }
+    const ok = (extra = {}) => ({
+      exceeded: false, featureCollection: FEATURE_COLLECTION, totalRows: 1, ...extra,
+    })
+
+    let notices
+    const lastNotice = () => notices[notices.length - 1]
+
+    beforeEach(() => {
+      pmtilesTestHooks.header = null
+      pmtilesTestHooks.metadata = async () => ({ vector_layers: [{ id: 'fields' }] })
+      notices = []
+      layer = new StacMapLayer(map, { onVectorNotice: n => notices.push(n) })
+    })
+
+    it('renders an Iceberg asset as a geojson source with default layers', async () => {
+      const calls = injectIcebergDeps(layer, () => ok())
+      await layer.setAssets([icebergAsset()])
+
+      expect([...calls]).toEqual([METADATA_URL])
+      expect(map.sources.get('stac-iceberg-0')).toEqual({ type: 'geojson', data: FEATURE_COLLECTION })
+      expect(layer._overlayLayerIds).toHaveLength(3)
+      expect(layer.getAssetOverlays()[0]).toMatchObject({ title: 'Test table', visible: true })
+      expect(lastNotice()).toBe(null)
+    })
+
+    it('passes the declared primary geometry and snapshot to the loader', async () => {
+      const calls = injectIcebergDeps(layer, () => ok())
+      await layer.setAssets([icebergAsset({
+        'table:primary_geometry': 'geom',
+        'iceberg:current_snapshot_id': '42',
+      })])
+
+      expect(calls.opts[0]).toMatchObject({ geometryColumn: 'geom', snapshotId: '42' })
+    })
+
+    it('does not apply the declared row count or file size gates', async () => {
+      const calls = injectIcebergDeps(layer, () => ok())
+      await layer.setAssets([icebergAsset({ 'table:row_count': 50000000, 'file:size': 900 * 1024 * 1024 })])
+
+      expect(calls).toHaveLength(1)
+      expect(map.sources.has('stac-iceberg-0')).toBe(true)
+    })
+
+    it('prefers Iceberg over GeoParquet and never loads the parquet file', async () => {
+      const iceberg = injectIcebergDeps(layer, () => ok())
+      const parquet = injectParquetDeps(layer)
+      await layer.setAssets([parquetAsset(), icebergAsset()])
+
+      expect(iceberg).toHaveLength(1)
+      expect(parquet).toHaveLength(0)
+      expect(map.sources.has('stac-parquet-0')).toBe(false)
+    })
+
+    it('prefers tiles over Iceberg and never loads the table', async () => {
+      const iceberg = injectIcebergDeps(layer, () => ok())
+      await layer.setAssets([
+        icebergAsset(),
+        { href: 'https://example.com/fields.pmtiles', type: 'application/vnd.pmtiles', title: 'Fields' },
+      ])
+
+      expect(iceberg.depsLoads.count).toBe(0)
+      expect(map.sources.has('stac-iceberg-0')).toBe(false)
+      expect(layer.getAssetOverlays().map(o => o.title)).toEqual(['Fields'])
+    })
+
+    it('draws a table in a REST catalog, since the browser reads its files and not the catalog', async () => {
+      const iceberg = injectIcebergDeps(layer, () => ok())
+      const parquet = injectParquetDeps(layer)
+      await layer.setAssets([icebergAsset({ 'iceberg:catalog_type': 'rest' }), parquetAsset()])
+
+      expect(iceberg).toHaveLength(1)
+      expect(parquet).toHaveLength(0)
+      expect(map.sources.has('stac-iceberg-0')).toBe(true)
+    })
+
+    it('ignores an Iceberg asset whose metadata file a browser cannot fetch', async () => {
+      const iceberg = injectIcebergDeps(layer, () => ok())
+      const parquet = injectParquetDeps(layer)
+      await layer.setAssets([icebergAsset({ href: 's3://bucket/tbl/metadata/v1.metadata.json' }), parquetAsset()])
+
+      expect(iceberg.depsLoads.count).toBe(0)
+      expect(parquet).toHaveLength(1)
+    })
+
+    it('posts the loader\'s own reason when the table cannot be drawn', async () => {
+      injectIcebergDeps(layer, () => {
+        throw Object.assign(new Error('no geometry'), { noticeReason: 'noGeometry' })
+      })
+      await layer.setAssets([icebergAsset()])
+
+      expect(map.sources.has('stac-iceberg-0')).toBe(false)
+      expect(lastNotice()).toEqual({ format: 'iceberg', reason: 'noGeometry' })
+    })
+
+    it('posts a generic error notice for any other failure', async () => {
+      injectIcebergDeps(layer, () => { throw new Error('network down') })
+      await layer.setAssets([icebergAsset()])
+
+      expect(lastNotice()).toEqual({ format: 'iceberg', reason: 'error' })
+    })
+
+    describe('paging', () => {
+      const pageOf = offset => ({
+        type: 'FeatureCollection',
+        features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [offset, 0] }, properties: {} }],
+      })
+      const byOffset = (url, options) => ok({ featureCollection: pageOf(options.offset) })
+      // The map's own source object. The layer swaps its data in place.
+      const sourceOf = () => {
+        const source = map.sources.get('stac-iceberg-0')
+        source.setData = vi.fn()
+        return source
+      }
+      const deferred = () => {
+        let resolve
+        let reject
+        const promise = new Promise((res, rej) => { resolve = res; reject = rej })
+        return { promise, resolve, reject }
+      }
+
+      it('draws the first page by default', async () => {
+        const calls = injectIcebergDeps(layer, byOffset)
+        await layer.setAssets([icebergAsset()])
+
+        expect(calls.opts[0].offset).toBe(0)
+      })
+
+      it('swaps the page into the source without tearing the overlay down', async () => {
+        const calls = injectIcebergDeps(layer, byOffset)
+        await layer.setAssets([icebergAsset()])
+        const source = sourceOf()
+        const layerIds = [...layer._overlayLayerIds]
+
+        await layer.setIcebergView({ offset: 1000 })
+
+        expect(calls.opts.map(o => o.offset)).toEqual([0, 1000])
+        expect(source.setData).toHaveBeenCalledTimes(1)
+        expect(source.setData).toHaveBeenCalledWith(pageOf(1000))
+        expect(layer._overlayLayerIds).toEqual(layerIds)
+        expect(map.sources.get('stac-iceberg-0')).toBe(source)
+      })
+
+      it('does nothing when the page is the one already drawn', async () => {
+        const calls = injectIcebergDeps(layer, byOffset)
+        await layer.setAssets([icebergAsset()])
+        const source = sourceOf()
+
+        await layer.setIcebergView({ offset: 0 })
+
+        expect(calls).toHaveLength(1)
+        expect(source.setData).not.toHaveBeenCalled()
+      })
+
+      it('shows a page the reader returns to from the cache without reading it again', async () => {
+        const calls = injectIcebergDeps(layer, byOffset)
+        await layer.setAssets([icebergAsset()])
+        const source = sourceOf()
+        await layer.setIcebergView({ offset: 1000 })
+
+        await layer.setIcebergView({ offset: 0 })
+
+        expect(calls.opts.map(o => o.offset)).toEqual([0, 1000])
+        expect(source.setData).toHaveBeenLastCalledWith(pageOf(0))
+      })
+
+      it('keeps the style fields and the other options on a later page', async () => {
+        const calls = injectIcebergDeps(layer, byOffset)
+        await layer.setAssets([icebergAsset({ 'table:primary_geometry': 'geom', 'iceberg:current_snapshot_id': '42' })])
+        sourceOf()
+
+        await layer.setIcebergView({ offset: 2000 })
+
+        expect(calls.opts[1]).toMatchObject({ offset: 2000, geometryColumn: 'geom', snapshotId: '42' })
+      })
+
+      it('drops a page that finishes after a newer one', async () => {
+        const slow = deferred()
+        injectIcebergDeps(layer, (url, options) => (options.offset === 1000 ? slow.promise : byOffset(url, options)))
+        await layer.setAssets([icebergAsset()])
+        const source = sourceOf()
+
+        const first = layer.setIcebergView({ offset: 1000 })
+        await layer.setIcebergView({ offset: 2000 })
+        slow.resolve(ok({ featureCollection: pageOf(1000) }))
+        await first
+
+        expect(source.setData).toHaveBeenCalledTimes(1)
+        expect(source.setData).toHaveBeenCalledWith(pageOf(2000))
+      })
+
+      it('aborts the read of a page the reader has left', async () => {
+        const signals = []
+        injectIcebergDeps(layer, (url, options) => {
+          signals.push(options.signal)
+          return options.offset === 0 ? ok() : new Promise(() => {})
+        })
+        await layer.setAssets([icebergAsset()])
+        sourceOf()
+
+        layer.setIcebergView({ offset: 1000 })
+        layer.setIcebergView({ offset: 2000 })
+        // The loader runs a microtask after the layer starts a read.
+        await new Promise(resolve => { setTimeout(resolve, 0) })
+
+        expect(signals).toHaveLength(3)
+        expect(signals[1].aborted).toBe(true)
+        expect(signals[2].aborted).toBe(false)
+      })
+
+      it('keeps the page on screen and posts an error when a new page fails', async () => {
+        injectIcebergDeps(layer, (url, options) => {
+          if (options.offset === 1000) {throw new Error('network down')}
+          return byOffset(url, options)
+        })
+        await layer.setAssets([icebergAsset()])
+        const source = sourceOf()
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        await layer.setIcebergView({ offset: 1000 })
+
+        expect(source.setData).not.toHaveBeenCalled()
+        expect(lastNotice()).toEqual({ format: 'iceberg', reason: 'error' })
+      })
+
+      it('clears that error when a later page loads', async () => {
+        injectIcebergDeps(layer, (url, options) => {
+          if (options.offset === 1000) {throw new Error('network down')}
+          return byOffset(url, options)
+        })
+        await layer.setAssets([icebergAsset()])
+        sourceOf()
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+        await layer.setIcebergView({ offset: 1000 })
+
+        await layer.setIcebergView({ offset: 2000 })
+
+        expect(lastNotice()).toBe(null)
+      })
+
+      it('draws a page change that arrives while the first draw is still reading', async () => {
+        const firstRead = deferred()
+        const calls = injectIcebergDeps(layer, (url, options) => (options.offset === 0 ? firstRead.promise : byOffset(url, options)))
+        // A MapLibre geojson source has setData. The plain mock source does not.
+        const addSource = map.addSource.bind(map)
+        const setData = vi.fn()
+        map.addSource = (id, spec) => {
+          addSource(id, spec)
+          map.sources.get(id).setData = setData
+        }
+        const drawing = layer.setAssets([icebergAsset()])
+        await Promise.resolve()
+
+        // No overlay exists yet, so the page is kept for the draw that is running.
+        await layer.setIcebergView({ offset: 1000 })
+        firstRead.resolve(ok({ featureCollection: pageOf(0) }))
+        await drawing
+        await new Promise(resolve => { setTimeout(resolve, 0) })
+
+        expect(calls.opts.map(o => o.offset)).toEqual([0, 1000])
+        expect(setData).toHaveBeenCalledTimes(1)
+        expect(setData).toHaveBeenCalledWith(pageOf(1000))
+        expect(layer._icebergDrawnView).toBe('1000||')
+      })
+
+      it('starts a later draw on the page the reader chose', async () => {
+        const calls = injectIcebergDeps(layer, byOffset)
+        await layer.setIcebergView({ offset: 2000 })
+
+        await layer.setAssets([icebergAsset()])
+
+        expect(calls.opts[0].offset).toBe(2000)
+        expect(map.sources.get('stac-iceberg-0').data).toEqual(pageOf(2000))
+      })
+
+      it('leaves a tile asset alone when the page changes', async () => {
+        const calls = injectIcebergDeps(layer, byOffset)
+        await layer.setAssets([
+          icebergAsset(),
+          { href: 'https://example.com/fields.pmtiles', type: 'application/vnd.pmtiles', title: 'Fields' },
+        ])
+
+        await layer.setIcebergView({ offset: 1000 })
+
+        expect(calls.depsLoads.count).toBe(0)
+        expect(map.sources.has('stac-iceberg-0')).toBe(false)
+      })
+
+      const EMPTY = { type: 'FeatureCollection', features: [] }
+
+      it('draws the rows a filter matches and reads them with the condition', async () => {
+        const calls = injectIcebergDeps(layer, (url, options) => ok({
+          featureCollection: options.where ? pageOf(7) : pageOf(options.offset),
+        }))
+        await layer.setAssets([icebergAsset()])
+        const source = sourceOf()
+
+        await layer.setIcebergView({ offset: 0, where: "name = 'a'" })
+
+        expect(calls.opts.at(-1)).toMatchObject({ offset: 0, where: "name = 'a'" })
+        expect(source.setData).toHaveBeenCalledWith(pageOf(7))
+      })
+
+      it('does nothing when neither the page nor the condition changed', async () => {
+        const calls = injectIcebergDeps(layer, byOffset)
+        await layer.setAssets([icebergAsset()])
+        sourceOf()
+
+        await layer.setIcebergView({ offset: 0, where: '' })
+        await layer.setIcebergView({ offset: 0 })
+        await layer.setIcebergView()
+
+        expect(calls).toHaveLength(1)
+      })
+
+      it('keeps a filtered page apart from the same page of the whole table', async () => {
+        const calls = injectIcebergDeps(layer, (url, options) => ok({
+          featureCollection: pageOf(options.where ? -1 : options.offset),
+        }))
+        await layer.setAssets([icebergAsset()])
+        const source = sourceOf()
+        await layer.setIcebergView({ where: "name = 'a'" })
+
+        await layer.setIcebergView({ where: '' })
+
+        // The whole table's page one is still in the cache. It is not read again.
+        expect(calls).toHaveLength(2)
+        expect(source.setData).toHaveBeenLastCalledWith(pageOf(0))
+      })
+
+      it('reads a filter that arrived during the first draw', async () => {
+        const firstRead = deferred()
+        const calls = injectIcebergDeps(layer, (url, options) => (options.where ? ok({ featureCollection: pageOf(7) }) : firstRead.promise))
+        const setData = vi.fn()
+        const addSource = map.addSource.bind(map)
+        map.addSource = (id, spec) => { addSource(id, spec); map.sources.get(id).setData = setData }
+        const drawing = layer.setAssets([icebergAsset()])
+        await Promise.resolve()
+
+        await layer.setIcebergView({ where: "name = 'a'" })
+        firstRead.resolve(ok({ featureCollection: pageOf(0) }))
+        await drawing
+        await new Promise(resolve => { setTimeout(resolve, 0) })
+
+        expect(calls.opts.map(o => o.where)).toEqual(['', "name = 'a'"])
+        expect(setData).toHaveBeenCalledWith(pageOf(7))
+      })
+
+      it('warns when the rows in the result have no geometry, and empties the map', async () => {
+        injectIcebergDeps(layer, (url, options) => ok({ featureCollection: options.where ? EMPTY : pageOf(0) }))
+        await layer.setAssets([icebergAsset()])
+        const source = sourceOf()
+
+        await layer.setIcebergView({ where: "name = 'nothing'" })
+
+        expect(source.setData).toHaveBeenCalledWith(EMPTY)
+        expect(lastNotice()).toEqual({ format: 'iceberg', reason: 'noGeometryInRows' })
+      })
+
+      it('warns about the first draw too when its rows have no geometry', async () => {
+        injectIcebergDeps(layer, () => ok({ featureCollection: EMPTY }))
+        await layer.setAssets([icebergAsset()])
+
+        expect(map.sources.has('stac-iceberg-0')).toBe(true)
+        expect(lastNotice()).toEqual({ format: 'iceberg', reason: 'noGeometryInRows' })
+      })
+
+      it('clears that warning when rows with a geometry come back', async () => {
+        injectIcebergDeps(layer, (url, options) => ok({ featureCollection: options.where ? EMPTY : pageOf(0) }))
+        await layer.setAssets([icebergAsset()])
+        sourceOf()
+        await layer.setIcebergView({ where: "name = 'nothing'" })
+
+        await layer.setIcebergView({ where: '' })
+
+        expect(lastNotice()).toBe(null)
+      })
+
+      it('does not warn when the rows have a geometry', async () => {
+        injectIcebergDeps(layer, byOffset)
+        await layer.setAssets([icebergAsset()])
+
+        expect(notices.filter(Boolean)).toEqual([])
+      })
+
+      it('keeps the rows on screen and posts an error when a filter fails', async () => {
+        injectIcebergDeps(layer, (url, options) => {
+          if (options.where) {throw new SyntaxError('Expected expression')}
+          return byOffset(url, options)
+        })
+        await layer.setAssets([icebergAsset()])
+        const source = sourceOf()
+        vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        await layer.setIcebergView({ where: '= =' })
+
+        expect(source.setData).not.toHaveBeenCalled()
+        expect(lastNotice()).toEqual({ format: 'iceberg', reason: 'error' })
+      })
+
+      it('reads the snapshot the reader chose, over the one the collection names', async () => {
+        const calls = injectIcebergDeps(layer, (url, options) => ok({
+          featureCollection: pageOf(options.snapshotId === '5' ? 5 : 0),
+        }))
+        await layer.setAssets([icebergAsset({ 'iceberg:current_snapshot_id': '7' })])
+        const source = sourceOf()
+
+        await layer.setIcebergView({ snapshotId: '5' })
+
+        expect(calls.opts.map(o => o.snapshotId)).toEqual(['7', '5'])
+        expect(source.setData).toHaveBeenCalledWith(pageOf(5))
+      })
+
+      it('goes back to the collection\'s snapshot when the choice is cleared', async () => {
+        const calls = injectIcebergDeps(layer, (url, options) => ok({
+          featureCollection: pageOf(options.snapshotId === '5' ? 5 : 0),
+        }))
+        await layer.setAssets([icebergAsset({ 'iceberg:current_snapshot_id': '7' })])
+        const source = sourceOf()
+        await layer.setIcebergView({ snapshotId: '5' })
+
+        await layer.setIcebergView({ snapshotId: '' })
+
+        // The first draw is cached, so the way back needs no read.
+        expect(calls).toHaveLength(2)
+        expect(source.setData).toHaveBeenLastCalledWith(pageOf(0))
+      })
+
+      it('keeps the same page of two snapshots apart', async () => {
+        const calls = injectIcebergDeps(layer, (url, options) => ok({ featureCollection: pageOf(Number(options.snapshotId || 0)) }))
+        await layer.setAssets([icebergAsset()])
+        const source = sourceOf()
+
+        await layer.setIcebergView({ snapshotId: '5' })
+        await layer.setIcebergView({ snapshotId: '6' })
+        await layer.setIcebergView({ snapshotId: '5' })
+
+        expect(calls.opts.map(o => o.snapshotId)).toEqual([undefined, '5', '6'])
+        expect(source.setData).toHaveBeenLastCalledWith(pageOf(5))
+      })
+
+      it('does nothing when the snapshot is the one already drawn', async () => {
+        const calls = injectIcebergDeps(layer, byOffset)
+        await layer.setAssets([icebergAsset()])
+        sourceOf()
+        await layer.setIcebergView({ snapshotId: '5' })
+
+        await layer.setIcebergView({ snapshotId: '5' })
+
+        expect(calls).toHaveLength(2)
+      })
+
+      it('redraws the current page after a basemap or style change', async () => {
+        const calls = injectIcebergDeps(layer, byOffset)
+        await layer.setAssets([icebergAsset()])
+        sourceOf()
+        await layer.setIcebergView({ offset: 1000 })
+
+        layer._assetsSig = null
+        await layer.setAssets([icebergAsset()])
+
+        // Page 1000 comes from the cache, so no third read.
+        expect(calls.opts.map(o => o.offset)).toEqual([0, 1000])
+        expect(map.sources.get('stac-iceberg-0').data).toEqual(pageOf(1000))
+      })
+    })
+  })
+
   // Exercises the epoch guard in the tile path (_addTileAssets and helpers) by
   // gating the mocked pm.getHeader() on a promise — the same interleaving the
   // parquet race test pins, but across the PMTiles awaits (todo 008).

@@ -4,6 +4,7 @@
 // for it. This module must stay free of maplibre-gl and hyparquet imports so
 // HrefActions can import it without pulling the map bundle into every page.
 
+import { isLoadableIcebergAsset } from './icebergShared.js';
 import { isLoadableParquetAsset } from './parquetShared.js';
 
 export const COG_MIME_TYPES = [
@@ -53,7 +54,7 @@ export function isTileJsonAsset(asset) {
 }
 
 // Everything StacMapLayer.setAssets can draw: COGs, PMTiles, XYZ vector
-// tiles, TileJSON, and GeoParquet. Plain browser images, SVG, GeoJSON, and
+// tiles, TileJSON, GeoParquet, and static-catalog Iceberg tables. Plain browser images, SVG, GeoJSON, and
 // Zarr assets have no renderer in the MapLibre layer, so they must not be
 // advertised as showable. A parquet asset with a glob href is not showable
 // either: the layer downloads one file, and a glob names many.
@@ -62,5 +63,6 @@ export function isMapRenderableAsset(asset) {
     || isPmtilesAsset(asset)
     || isXyzVectorAsset(asset)
     || isTileJsonAsset(asset)
-    || isLoadableParquetAsset(asset);
+    || isLoadableParquetAsset(asset)
+    || isLoadableIcebergAsset(asset);
 }

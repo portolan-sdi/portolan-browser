@@ -35,6 +35,12 @@ export const VECTOR_NOTICE_ERROR = 'error';
 // draw. Calling that a load failure points the user at the network when the
 // problem is the declared CRS or the coordinates themselves.
 export const VECTOR_NOTICE_REPROJECTION = 'reprojection';
+// Iceberg only. The table has no geometry or geography column to draw.
+export const VECTOR_NOTICE_NO_GEOMETRY = 'noGeometry';
+// Iceberg only. The table has a geometry column, but no row in the page on
+// screen has a geometry in it, so the map has nothing to draw. A filter can
+// cause this, and so can a stretch of a sparse table.
+export const VECTOR_NOTICE_NO_GEOMETRY_IN_ROWS = 'noGeometryInRows';
 
 // Error code on a rejection that says the files a pattern names cannot be
 // reached from the browser: an href whose wildcard no item expands, or a

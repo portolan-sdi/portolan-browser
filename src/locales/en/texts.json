@@ -173,6 +173,45 @@
     "descriptionWithTitle": "@:goToParent.description: {title}",
     "label": "Up"
   },
+  "iceberg": {
+    "dataPreview": "Iceberg data preview",
+    "loadFailed": "Failed to load Iceberg data: {message}",
+    "pager": {
+      "next": "Next {count} rows",
+      "previous": "Previous {count} rows"
+    },
+    "query": {
+      "clear": "Clear",
+      "columnName": "Name",
+      "columnType": "Type",
+      "columns": "Columns",
+      "filteredBy": "Filtered by",
+      "help": "Write the condition that follows WHERE and the table and the map will show the rows that match.",
+      "label": "Filter rows with SQL",
+      "limit": "The query adds LIMIT {limit}; use the page buttons under the table to see more rows.",
+      "placeholder": "column = 'value' AND other_column > 10",
+      "run": "Run query",
+      "snapshot": "Snapshot"
+    },
+    "rowRange": "Rows {from}–{to}",
+    "snapshots": {
+      "collection": "collection",
+      "committed": "Committed",
+      "files": "Files",
+      "none": "This table has no snapshots.",
+      "operation": "Operation",
+      "pinnedMismatch": "The collection names snapshot {id}, which is not the table's current snapshot.",
+      "query": "Query",
+      "rows": "Rows",
+      "snapshot": "Snapshot",
+      "tableCurrent": "table current"
+    },
+    "tabs": {
+      "data": "Data",
+      "snapshots": "Snapshots",
+      "query": "Query"
+    }
+  },
   "in": "in {catalog}",
   "index": {
     "api": "API",
@@ -256,6 +295,11 @@
       "title": "Layers",
       "unnamed": "Unnamed #{id}"
     },
+    "iceberg": {
+      "loadError": "Could not load the Iceberg table for display.",
+      "noGeometry": "The Iceberg table has no geometry or geography column, so the browser cannot place it on the map.",
+      "noGeometryInRows": "None of these rows has a geometry, so the map has nothing to draw."
+    },
     "location": {
       "description": "Go to your location"
     },
@@ -326,6 +370,7 @@
     "loadingRows": "Loading row ({count})... | Loading rows ({count})...",
     "networkError": "Unable to preview: cross-origin access not allowed or network error.",
     "pageRows": "Row {from}–{to} of {total} | Rows {from}–{to} of {total}",
+    "parquetDataPreview": "Parquet data preview",
     "partitionedData": "Partitioned data | Partitioned data ({count} file) | Partitioned data ({count} files)",
     "partitionPreview": "Preview of the only partition: {name}. | Preview of the first of {count} partitions: {name}.",
     "partitionLoadedRowCount": "{loaded} of {total} row in this partition | {loaded} of {total} rows in this partition",
