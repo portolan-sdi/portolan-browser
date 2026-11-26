@@ -34,11 +34,15 @@ export const ZARR_MEDIA_TYPES = [
 /**
  * Media types that identify an Icechunk repository. Icechunk is a transaction
  * log over Zarr chunks, so the store reads as Zarr once it is open, but the
- * reader differs. dynamical.org publishes `application/x-icechunk`.
+ * reader differs. dynamical.org publishes `application/x-icechunk`. The STAC
+ * Zarr best practices and xpystac use `application/vnd.zarr+icechunk`. Its
+ * prefix is a Zarr media type, so without this entry the repository is read
+ * as a plain store first.
  */
 export const ICECHUNK_MEDIA_TYPES = [
   'application/x-icechunk',
   'application/vnd.icechunk',
+  'application/vnd.zarr+icechunk',
 ];
 
 // A Zarr store is a directory, so its href has no file extension to match on.

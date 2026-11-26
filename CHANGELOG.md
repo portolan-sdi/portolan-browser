@@ -19,6 +19,11 @@ Portolan Browser 0.1.0 forked from upstream 5.1.0-dev.
 
 ## [Unreleased][]
 
+### Fixed
+
+- The map opens an asset of type `application/vnd.zarr+icechunk` with the Icechunk reader first.
+  Before, it tried the plain Zarr reader first, and five requests failed before the Icechunk reader opened the store.
+
 ## [0.2.0][] - 2026-11-24
 
 Second release of the Portolan fork, and the reference implementation for
